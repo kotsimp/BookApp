@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Translate PDF, DOCX, and EPUB documents between English and Greek, and generate professional audiobooks with neural AI voices." />
+  <title>DocTranslate & AudioBook — English ↔ Greek Document Processor</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+</head>
+<body>
+
+<div class="app-wrapper">
+
+  <!-- ── Hero ── -->
+  <header class="hero animate-in">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      Neural AI Powered
+    </div>
+    <h1>DocTranslate &amp; AudioBook</h1>
+    <p>Translate large documents between <strong>English &amp; Greek</strong> and generate professional-quality audiobooks with neural voices — up to 2,500 pages.</p>
+  </header>
+
+  <!-- ── Tabs ── -->
+  <nav class="tab-nav" role="tablist" aria-label="Main navigation">
+    <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-translate" id="btn-translate" onclick="switchTab('translate')">
+      <span class="tab-icon">🌐</span>
+      <span class="tab-label">Translate Document</span>
+    </button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-audiobook" id="btn-audiobook" onclick="switchTab('audiobook')">
+      <span class="tab-icon">🎧</span>
+      <span class="tab-label">Generate Audiobook</span>
+    </button>
+  </nav>
+
+  <!-- ════════════════════════════════════
+       TAB 1: TRANSLATE
+       ════════════════════════════════════ -->
+  <section id="tab-translate" class="tab-content active" role="tabpanel" aria-labelledby="btn-translate">
+
+    <!-- Upload Card -->
+    <div class="card animate-in">
+      <div class="card-title">
+        <span class="card-title-icon">📄</span>
+        Upload Document
+      </div>
+
+      <div class="upload-zone" id="tr-upload-zone"
+           onclick="document.getElementById('tr-file-input').click()"
+           ondragover="handleDragOver(event, 'tr-upload-zone')"
+           ondragleave="handleDragLeave(event, 'tr-upload-zone')"
+           ondrop="handleDrop(event, 'tr-file-input', 'tr')"
+           role="button" tabindex="0"
+           aria-label="Upload document for translation">
+        <span class="upload-icon">📂</span>
+        <h3>Drop your document here</h3>
+        <p>or click to browse your files</p>
+        <div class="file-types">
+          <span class="file-badge">PDF</span>
+          <span class="file-badge">DOCX</span>
+          <span class="file-badge">EPUB</span>
+        </div>
+        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub" hidden onchange="handleFileSelect(event, 'tr')" />
+      </div>
+
+      <div class="selected-file" id="tr-selected-file">
+        <span class="file-icon-large" id="tr-file-icon">📄</span>
+        <div class="file-info">
+          <div class="file-info-name" id="tr-file-name">filename.pdf</div>
+          <div class="file-info-meta" id="tr-file-meta">Loading...</div>
+        </div>
+        <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
+      </div>
+    </div>
+
+    <!-- Options Card -->
+    <div class="card animate-in">
+      <div class="card-title">
+        <span class="card-title-icon">⚙️</span>
+        Translation Settings
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Translation Direction</label>
+        <div class="lang-direction">
+          <div class="lang-chip" id="tr-source-display">🇬🇧 English</div>
+          <button class="lang-swap-btn" onclick="swapLangs()" title="Swap languages" aria-label="Swap source and target languages">⇄</button>
+          <div class="lang-chip" id="tr-target-display">🇬🇷 Greek</div>
+        </div>
+        <input type="hidden" id="tr-source-lang" value="english" />
+        <input type="hidden" id="tr-target-lang" value="greek" />
+      </div>
+
+      <div class="info-box">
+        <span class="info-box-icon">ℹ️</span>
+        <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
+      </div>
+
+      <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled>
+        🌐 Start Translation
+      </button>
+    </div>
+
+    <!-- Progress Card -->
+    <div class="card" id="tr-progress-card" style="display:none">
+      <div class="card-title">
+        <span class="card-title-icon">⏳</span>
+        <span>Translation Progress</span>
+        <span class="status-badge status-running" id="tr-status-badge" style="margin-left:auto">
+          <span class="status-dot"></span> Running
+        </span>
+      </div>
+
+      <div class="progress-header">
+        <span class="progress-label" id="tr-progress-step">Starting...</span>
+        <span class="progress-pct" id="tr-progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill shimmer" id="tr-progress-bar" style="width:0%"></div>
+      </div>
+      <p class="progress-step" id="tr-progress-detail">Preparing document...</p>
+    </div>
+
+    <!-- Result Card -->
+    <div class="result-card" id="tr-result-card">
+      <div style="font-size:3rem; margin-bottom:12px">✅</div>
+      <h3>Translation Complete!</h3>
+      <p id="tr-result-meta">Your document has been translated successfully.</p>
+      <button class="btn btn-download" onclick="downloadOutput('tr')" id="tr-download-btn">
+        ⬇️ Download Translated Text
+      </button>
+    </div>
+
+    <!-- Error Card -->
+    <div class="error-card" id="tr-error-card">
+      ❌ <strong>Error:</strong> <span id="tr-error-msg"></span>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════════════════════
+       TAB 2: AUDIOBOOK
+       ════════════════════════════════════ -->
+  <section id="tab-audiobook" class="tab-content" role="tabpanel" aria-labelledby="btn-audiobook">
+
+    <!-- Upload Card -->
+    <div class="card animate-in">
+      <div class="card-title">
+        <span class="card-title-icon">📄</span>
+        Upload Document
+      </div>
+
+      <div class="upload-zone" id="ab-upload-zone"
+           onclick="document.getElementById('ab-file-input').click()"
+           ondragover="handleDragOver(event, 'ab-upload-zone')"
+           ondragleave="handleDragLeave(event, 'ab-upload-zone')"
+           ondrop="handleDrop(event, 'ab-file-input', 'ab')"
+           role="button" tabindex="0"
+           aria-label="Upload document for audiobook generation">
+        <span class="upload-icon">🎙️</span>
+        <h3>Drop your document here</h3>
+        <p>or click to browse your files</p>
+        <div class="file-types">
+          <span class="file-badge">PDF</span>
+          <span class="file-badge">DOCX</span>
+          <span class="file-badge">EPUB</span>
+        </div>
+        <input type="file" id="ab-file-input" accept=".pdf,.docx,.epub" hidden onchange="handleFileSelect(event, 'ab')" />
+      </div>
+
+      <div class="selected-file" id="ab-selected-file">
+        <span class="file-icon-large" id="ab-file-icon">📄</span>
+        <div class="file-info">
+          <div class="file-info-name" id="ab-file-name">filename.pdf</div>
+          <div class="file-info-meta" id="ab-file-meta">Loading...</div>
+        </div>
+        <button class="remove-file-btn" onclick="removeFile('ab')" aria-label="Remove file">✕</button>
+      </div>
+    </div>
+
+    <!-- Options Card -->
+    <div class="card animate-in">
+      <div class="card-title">
+        <span class="card-title-icon">⚙️</span>
+        Audiobook Settings
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="ab-lang-select">Audio Language</label>
+        <select class="form-select" id="ab-lang-select" onchange="updateVoices()">
+          <option value="english">🇬🇧 English</option>
+          <option value="greek">🇬🇷 Greek</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Select Voice</label>
+        <div class="voice-grid" id="ab-voice-grid">
+          <!-- Populated by JS -->
+        </div>
+        <input type="hidden" id="ab-voice-selected" value="" />
+      </div>
+
+      <div class="form-group" id="ab-translate-option" style="display:none">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
+          <input type="checkbox" id="ab-use-translated" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span style="font-size:0.9rem">Use previously translated text (if available from Translate tab)</span>
+        </label>
+      </div>
+
+      <div class="info-box">
+        <span class="info-box-icon">🎵</span>
+        <span>Audiobook uses Microsoft Edge neural voices — high-quality, free, requires internet. Output is a single MP3 file. Very large documents may take a long time to process.</span>
+      </div>
+
+      <button class="btn btn-primary" id="ab-start-btn" onclick="startAudiobook()" disabled>
+        🎧 Generate Audiobook
+      </button>
+    </div>
+
+    <!-- Progress Card -->
+    <div class="card" id="ab-progress-card" style="display:none">
+      <div class="card-title">
+        <span class="card-title-icon">⏳</span>
+        <span>Audiobook Generation Progress</span>
+        <span class="status-badge status-running" id="ab-status-badge" style="margin-left:auto">
+          <span class="status-dot"></span> Running
+        </span>
+      </div>
+
+      <div class="progress-header">
+        <span class="progress-label" id="ab-progress-step">Starting...</span>
+        <span class="progress-pct" id="ab-progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill shimmer" id="ab-progress-bar" style="width:0%"></div>
+      </div>
+      <p class="progress-step" id="ab-progress-detail">Preparing document...</p>
+    </div>
+
+    <!-- Result Card -->
+    <div class="result-card" id="ab-result-card">
+      <div style="font-size:3rem; margin-bottom:12px">🎉</div>
+      <h3>Audiobook Ready!</h3>
+      <p id="ab-result-meta">Your audiobook has been generated successfully.</p>
+      <button class="btn btn-download" onclick="downloadOutput('ab')" id="ab-download-btn">
+        ⬇️ Download MP3 Audiobook
+      </button>
+    </div>
+
+    <!-- Error Card -->
+    <div class="error-card" id="ab-error-card">
+      ❌ <strong>Error:</strong> <span id="ab-error-msg"></span>
+    </div>
+
+  </section>
+
+  <!-- ── Session History ── -->
+  <section class="history-section" id="history-section">
+    <div class="history-title">
+      🕑 Session History
+    </div>
+    <div class="history-grid" id="history-grid">
+      <p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>
+    </div>
+  </section>
+
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

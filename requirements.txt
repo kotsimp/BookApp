@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+pymupdf
+python-docx
+EbookLib
+beautifulsoup4
+deep-translator
+edge-tts
