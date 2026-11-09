@@ -23,7 +23,7 @@ def export_docx(text: str, out_path: Path) -> Path:
     return out_path
 
 
-# PDF (uses pymupdf which supports full Unicode / Greek)
+# PDF (uses pymupdf which supports full Unicode / Greek with styled headings)
 def export_pdf(text: str, out_path: Path) -> Path:
     import pymupdf
 
@@ -40,48 +40,106 @@ def export_pdf(text: str, out_path: Path) -> Path:
     font_path = next((f for f in candidate_fonts if os.path.exists(f)), None)
 
     # Split text into sections by PAGE markers if present
-    sections = re.split(r"={3,}\s*PAGE\s+\d+\s*={3,}", text)
-    pages_content = [s.strip() for s in sections if s.strip()]
-    if not pages_content:
-        pages_content = [text.strip()]
+    sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text)
+    pages_data = []
 
-    margin = 45.0
+    if len(sections) > 1:
+        i = 1
+        while i < len(sections):
+            pnum = sections[i]
+            pcontent = sections[i+1] if i + 1 < len(sections) else ""
+            pages_data.append((f"Page {pnum}", pcontent.strip()))
+            i += 2
+    else:
+        pages_data.append(("", text.strip()))
+
+    margin = 48.0
     width = 595.0   # A4 width
     height = 842.0  # A4 height
-    line_height = 15.0
-    max_lines = int((height - 2 * margin) / line_height)
+    content_bottom = height - margin - 20.0
 
-    for section in pages_content:
-        paras = section.split("\n")
-        lines = []
+    def is_heading(line: str) -> bool:
+        s = line.strip()
+        if not s or len(s) > 75:
+            return False
+        # Starts with common heading markers
+        keywords = ("ΚΕΦΑΛΑΙΟ", "CHAPTER", "ΘΕΜΑ:", "ΠΡΟΣ:", "ΑΠΟ:", "ΥΠΗΡΕΣΙΑΚΟ", "ΕΝΟΤΗΤΑ", "SECTION", "TITLE")
+        if any(s.upper().startswith(k) for k in keywords):
+            return True
+        # Or short uppercase line
+        if s.isupper() and len(s) < 50:
+            return True
+        return False
+
+    for header_title, content in pages_data:
+        page = doc.new_page(width=width, height=height)
+        fname = "unicode_font" if font_path else "helv"
+        if font_path:
+            page.insert_font(fontname="unicode_font", fontfile=font_path)
+
+        y = margin
+
+        # If page header exists, render subtle header
+        if header_title:
+            page.insert_text(pymupdf.Point(margin, y), header_title, fontsize=10.0, fontname=fname, color=(0.4, 0.4, 0.4))
+            y += 18.0
+
+        paras = content.split("\n")
         for para in paras:
-            words = para.split(" ")
-            current_line = ""
+            p_strip = para.strip()
+            if not p_strip:
+                y += 8.0
+                continue
+
+            heading = is_heading(p_strip)
+            font_size = 13.5 if heading else 10.5
+            line_height = 18.0 if heading else 14.5
+            color = (0.05, 0.05, 0.15) if heading else (0.1, 0.1, 0.1)
+
+            # Extra space before headings
+            if heading and y > margin + 20:
+                y += 6.0
+
+            # Wrap paragraph words to fit printable width (~500pt)
+            words = p_strip.split(" ")
+            line_words = []
             for w in words:
-                if len(current_line) + len(w) + 1 <= 80:
-                    current_line = current_line + " " + w if current_line else w
+                test_line = " ".join(line_words + [w])
+                # Approx 75 chars for 10.5pt, 55 chars for 13.5pt
+                max_chars = 55 if heading else 75
+                if len(test_line) <= max_chars:
+                    line_words.append(w)
                 else:
-                    lines.append(current_line)
-                    current_line = w
-            if current_line:
-                lines.append(current_line)
-            lines.append("")  # Blank line between paragraphs
+                    if y + line_height > content_bottom:
+                        # Page break
+                        page = doc.new_page(width=width, height=height)
+                        if font_path:
+                            page.insert_font(fontname="unicode_font", fontfile=font_path)
+                        y = margin
 
-        # Flow lines across pages
-        for i in range(0, max(len(lines), 1), max_lines):
-            chunk = lines[i:i + max_lines]
-            page = doc.new_page(width=width, height=height)
-            if font_path:
-                page.insert_font(fontname="unicode_font", fontfile=font_path)
-                fname = "unicode_font"
-            else:
-                fname = "helv"
+                    line_str = " ".join(line_words)
+                    page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
+                    y += line_height
+                    line_words = [w]
 
-            y = margin + 12
-            for l in chunk:
-                if l.strip():
-                    page.insert_text(pymupdf.Point(margin, y), l, fontsize=10.5, fontname=fname)
+            if line_words:
+                if y + line_height > content_bottom:
+                    page = doc.new_page(width=width, height=height)
+                    if font_path:
+                        page.insert_font(fontname="unicode_font", fontfile=font_path)
+                    y = margin
+                line_str = " ".join(line_words)
+                page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
                 y += line_height
+
+            # Paragraph gap
+            y += 4.0
+
+    # Add page numbers to all pages
+    total_pages = len(doc)
+    for p_no, pg in enumerate(doc, 1):
+        footer = f"{p_no} / {total_pages}"
+        pg.insert_text(pymupdf.Point(width - margin - 35, height - margin + 15), footer, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
 
     doc.save(str(out_path))
     doc.close()

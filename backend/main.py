@@ -185,35 +185,70 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
+from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
+
+
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path):
     try:
-        # Step 1: Translate to temporary txt file
-        await translate_document(
-            job_id=job_id,
-            file_path=file_path,
-            file_type=file_type,
-            source_lang=source_lang,
-            target_lang=target_lang,
-            output_path=output_path,
-        )
-        # Read translated content
-        txt_content = Path(output_path).read_text(encoding="utf-8")
-        # Determine requested format (default txt) from job metadata
         job = get_job(job_id)
         fmt = getattr(job, "output_format", "txt") or "txt"
-        # Step 2: Export to final format
-        update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
+        fmt = fmt.lower()
         out_dir = Path(output_path).parent
-        base_name = Path(output_path).stem.replace(f"_translated_{target_lang}", "_translated")
-        final_path = export_text(txt_content, out_dir, fmt, base_name)
-        # Step 3: Mark job done
+        stem = Path(file_path).stem
+        base_name = f"{stem}_translated_{target_lang}"
+
+        # 1. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
+        if file_type == "docx" and fmt in ("docx", "doc"):
+            final_docx_path = out_dir / f"{base_name}.docx"
+
+            def docx_prog(done, total, msg):
+                pct = int((done / max(total, 1)) * 92)
+                update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
+
+            translated_txt = await translate_docx_in_place(
+                file_path, str(final_docx_path), source_lang, target_lang, docx_prog
+            )
+            # Save plain text version for audiobooks / fallback
+            Path(output_path).write_text(translated_txt, encoding="utf-8")
+            final_path = final_docx_path
+
+        # 2. EPUB In-Place Format Preservation (HTML tags, CSS, headings, styles, images)
+        elif file_type == "epub" and fmt == "epub":
+            final_epub_path = out_dir / f"{base_name}.epub"
+
+            def epub_prog(done, total, msg):
+                pct = int((done / max(total, 1)) * 92)
+                update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
+
+            translated_txt = await translate_epub_in_place(
+                file_path, str(final_epub_path), source_lang, target_lang, epub_prog
+            )
+            Path(output_path).write_text(translated_txt, encoding="utf-8")
+            final_path = final_epub_path
+
+        # 3. Standard parsing + rich styled export (for PDF or cross-format exports)
+        else:
+            await translate_document(
+                job_id=job_id,
+                file_path=file_path,
+                file_type=file_type,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                output_path=output_path,
+            )
+            txt_content = Path(output_path).read_text(encoding="utf-8")
+            update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
+            final_path = export_text(txt_content, out_dir, fmt, base_name)
+
+        # Mark job complete
         update_job(job_id,
             status="done",
             progress=100,
-            current_step=f"Exported {fmt.upper()}",
+            current_step=f"Exported {fmt.upper()} (Formatting Preserved)",
             output_path=str(final_path),
             output_format=fmt,
-            done_chunks=0,
+            done_chunks=1,
+            total_chunks=1,
         )
     except Exception as e:
         logger.error(f"Translation/export error [{job_id}]: {e}", exc_info=True)
