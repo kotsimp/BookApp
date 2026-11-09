@@ -139,6 +139,36 @@ try:
             content_type = resp.headers.get("Content-Type", "")
             content = resp.read()
             print(f"  GET /download: OK ({len(content)} bytes, type={content_type})")
+
+    # Test 6g: Audiobook Generation via API
+    print("  --- Integration: Greek Audiobook Generation ---")
+    status, data = api_post_json("/audiobook", {
+        "job_id": job_id,
+        "language": "greek",
+        "voice_name": "Nestoras (Male)",
+        "use_translated": True,
+    })
+    assert status == 200
+    assert data["status"] == "started"
+    print(f"  POST /audiobook: OK (status=started)")
+
+    for i in range(120):
+        time.sleep(0.5)
+        status, sdata = api_get(f"/status/{job_id}")
+        if sdata["status"] == "done":
+            print(f"  Audiobook completed in ~{(i+1)*0.5:.1f}s (progress={sdata['progress']}%)")
+            break
+        elif sdata["status"] == "error":
+            print(f"  Audiobook ERROR: {sdata.get('error')}")
+            break
+
+    if sdata["status"] == "done":
+        req = urllib.request.Request(f"{API}/download/{job_id}")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            content = resp.read()
+            assert len(content) > 10000
+            print(f"  GET /download (audiobook MP3): OK ({len(content)} bytes)")
 except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")
