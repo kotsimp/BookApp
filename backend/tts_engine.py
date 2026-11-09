@@ -98,7 +98,7 @@ async def generate_audiobook(
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
-               current_step=f"Generating audio for {total_chunks} text segments using {voice_name}...")
+               current_step=f"Generating audio in {total_chunks} parts using {voice_name}...")
 
     logger.info(f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, source={text_source}")
 
@@ -113,7 +113,7 @@ async def generate_audiobook(
 
         chunk_path = temp_dir / f"chunk_{idx:06d}.mp3"
         update_job(job_id,
-                   current_step=f"Generating audio segment {idx+1} of {total_chunks}...",
+                   current_step=f"Generating audio part {idx+1} of {total_chunks}...",
                    done_chunks=idx,
                    progress=int((idx / total_chunks) * 85))
 

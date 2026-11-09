@@ -355,10 +355,14 @@ function updateProgress(prefix, data) {
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
   document.getElementById(`${prefix}-progress-step`).textContent = step;
 
-  // Show segment detail only while actively translating
+  // Show detail while actively running
   const detailEl = document.getElementById(`${prefix}-progress-detail`);
   if (data.total_chunks > 0 && data.status !== 'done') {
-    detailEl.textContent = `Processed ${data.done_chunks} of ${data.total_chunks} segments`;
+    if (prefix === 'tr') {
+      detailEl.textContent = `Translated ${data.done_chunks} of ${data.total_chunks} pages`;
+    } else {
+      detailEl.textContent = `Generated audio part ${data.done_chunks} of ${data.total_chunks}`;
+    }
   } else if (data.status === 'done') {
     detailEl.textContent = '';
   }
