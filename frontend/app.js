@@ -422,6 +422,42 @@ async function downloadOutput(prefix) {
   window.location.href = `${API}/download/${jobId}`;
 }
 
+function sendToAudiobook() {
+  if (!state.tr.jobId) return;
+  // Transfer job ID and file metadata to the audiobook tab
+  state.ab.jobId = state.tr.jobId;
+  state.ab.file = state.tr.file;
+
+  const trName = document.getElementById('tr-file-name')?.textContent || 'Document';
+  const trMeta = document.getElementById('tr-file-meta')?.textContent || 'Ready';
+
+  const abName = document.getElementById('ab-file-name');
+  const abMeta = document.getElementById('ab-file-meta');
+  if (abName) abName.textContent = trName;
+  if (abMeta) abMeta.textContent = trMeta;
+
+  document.getElementById('ab-upload-zone').style.display = 'none';
+  document.getElementById('ab-selected-file').style.display = 'flex';
+  document.getElementById('ab-start-btn').disabled = false;
+
+  // Set language dropdown to Greek and refresh voice cards
+  const langSelect = document.getElementById('ab-lang-select');
+  if (langSelect) {
+    langSelect.value = 'greek';
+    updateVoices();
+  }
+
+  // Check the "Use previously translated text" checkbox
+  const transOpt = document.getElementById('ab-translate-option');
+  if (transOpt) transOpt.style.display = 'block';
+  const useTranslated = document.getElementById('ab-use-translated');
+  if (useTranslated) useTranslated.checked = true;
+
+  // Switch to the Audiobook tab
+  switchTab('audiobook');
+  toast('Ready to create Greek audiobook from translated text!', 'info');
+}
+
 // ── History ────────────────────────────────────────────────
 async function refreshHistory() {
   try {

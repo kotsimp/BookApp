@@ -154,9 +154,14 @@
       <div style="font-size:3rem; margin-bottom:12px">✅</div>
       <h3>Translation Complete!</h3>
       <p id="tr-result-meta">Your document has been translated successfully.</p>
-      <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
-        ⬇️ Download <span id="tr-format-label">TXT</span> File
-      </a>
+      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px">
+        <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
+          ⬇️ Download <span id="tr-format-label">TXT</span> File
+        </a>
+        <button class="btn btn-secondary" onclick="sendToAudiobook()" id="tr-to-audio-btn" style="display:inline-flex; align-items:center; gap:8px">
+          🎧 Convert to Greek Audiobook
+        </button>
+      </div>
     </div>
 
     <!-- Error Card -->
