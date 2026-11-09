@@ -500,10 +500,15 @@ async function refreshHistory() {
 
 function renderHistory(jobs) {
   const grid = document.getElementById('history-grid');
+  const clearBtn = document.getElementById('clear-history-btn');
+
   if (!jobs || jobs.length === 0) {
     grid.innerHTML = '<p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>';
+    if (clearBtn) clearBtn.style.display = 'none';
     return;
   }
+
+  if (clearBtn) clearBtn.style.display = 'inline-flex';
 
   const modeIcon = { translate: '🌐', audiobook: '🎧', '': '📄' };
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
@@ -520,8 +525,41 @@ function renderHistory(jobs) {
         </div>
       </div>
       ${j.has_output ? `<span style="color:var(--emerald);font-size:0.8rem;font-weight:600">⬇️ Ready</span>` : ''}
+      <button class="history-delete-btn" onclick="deleteHistoryJob(event, '${j.job_id}')" title="Delete this job">✕</button>
     </div>
   `).join('');
+}
+
+async function deleteHistoryJob(event, jobId) {
+  event.stopPropagation();
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast('Job removed from history.', 'info');
+      if (state.tr.jobId === jobId) resetProgress('tr');
+      if (state.ab.jobId === jobId) resetProgress('ab');
+      await refreshHistory();
+    }
+  } catch (err) {
+    toast('Failed to delete job.', 'error');
+  }
+}
+
+async function clearAllHistory() {
+  if (!confirm('Are you sure you want to delete all session history and temporary files?')) {
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/jobs`, { method: 'DELETE' });
+    if (res.ok) {
+      toast('All session history deleted.', 'success');
+      resetProgress('tr');
+      resetProgress('ab');
+      await refreshHistory();
+    }
+  } catch (err) {
+    toast('Failed to clear history.', 'error');
+  }
 }
 
 async function loadHistoryJob(jobId, mode) {

@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.2.1" />
+  <link rel="stylesheet" href="style.css?v=2.3.0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -294,7 +294,10 @@
   <!-- ── Session History ── -->
   <section class="history-section" id="history-section">
     <div class="history-title">
-      🕑 Session History
+      <span>🕑 Session History</span>
+      <button class="clear-history-btn" id="clear-history-btn" onclick="clearAllHistory()" style="display:none">
+        🗑️ Clear All
+      </button>
     </div>
     <div class="history-grid" id="history-grid">
       <p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>
@@ -306,6 +309,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.2.1"></script>
+<script src="app.js?v=2.3.0"></script>
 </body>
 </html>
