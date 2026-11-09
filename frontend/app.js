@@ -160,8 +160,14 @@ function selectFormat(fmt, btn) {
 
   // Also update result card text if already completed
   const metaEl = document.getElementById('tr-result-meta');
-  if (metaEl && document.getElementById('tr-result-card').classList.contains('visible')) {
+  if (metaEl) {
     metaEl.textContent = `Your document has been translated. Click below to download the ${label} file.`;
+  }
+
+  // Update download button href directly
+  const dlBtn = document.getElementById('tr-download-btn');
+  if (dlBtn && state.tr.jobId) {
+    dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}`;
   }
 }
 
@@ -404,11 +410,16 @@ function showResult(prefix, data) {
   const card = document.getElementById(`${prefix}-result-card`);
   const meta = document.getElementById(`${prefix}-result-meta`);
   if (prefix === 'tr') {
-    const fmt = document.getElementById('tr-output-format')?.value?.toUpperCase() || 'TXT';
-    meta.textContent = `Your document has been translated. Click below to download the ${fmt} file.`;
+    const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
+    const label = fmt.toUpperCase();
+    meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
     // Keep format label in download button in sync
     const labelEl = document.getElementById('tr-format-label');
-    if (labelEl) labelEl.textContent = fmt;
+    if (labelEl) labelEl.textContent = label;
+    const dlBtn = document.getElementById('tr-download-btn');
+    if (dlBtn && state.tr.jobId) {
+      dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}`;
+    }
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download the MP3 file.';
   }
@@ -432,7 +443,9 @@ async function downloadOutput(prefix) {
   if (!jobId) return;
   if (prefix === 'tr') {
     const fmt = document.getElementById('tr-output-format')?.value || 'txt';
-    window.location.href = `${API}/download/${jobId}?format=${fmt}`;
+    const targetUrl = `${API}/download/${jobId}?format=${fmt}`;
+    console.log('Initiating download:', targetUrl);
+    window.location.href = targetUrl;
   } else {
     window.location.href = `${API}/download/${jobId}`;
   }
