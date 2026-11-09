@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-5%2F5%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-6%2F6%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), and **generate professional AI audiobooks** using Microsoft Edge neural voices.
 
@@ -24,13 +24,15 @@ A modern, high-performance local web application to **translate documents** betw
 |---|---|
 | **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API (milliseconds per chunk, zero bot-blocking). |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
+| **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
+| **Bullet & Glyph Normalization** | Replaces proprietary Wingdings/PUA symbols with standard Unicode bullets (`•`) and native Word `List Bullet` paragraphs. |
 | **Multi-Format Export** | Export translated output to **DOCX**, **PDF** (Unicode Greek with TrueType fonts), **EPUB**, or **TXT**. |
 | **AI Neural Audiobooks** | Generates high-fidelity MP3 audiobooks using Microsoft Edge neural voices. |
 | **Greek Audio Support** | Native Greek neural voices: **Nestoras (Male)** with 100% dictionary coverage & **Athina (Female)** with automatic fallback. |
 | **One-Click Direct Audio** | Convert any completed translation directly into a Greek Audiobook with a single click. |
 | **Live Progress Streaming** | Real-time progress updates via Server-Sent Events (SSE) distinguishing between document pages and audio parts. |
 | **Disk Recovery Architecture** | Completed jobs and download links survive server restarts by automatically recovering from disk. |
-| **Automated Test Suite** | Comprehensive 5-part test suite verifying parsers, translator, exporters, format preservation, and end-to-end APIs. |
+| **Automated Test Suite** | Comprehensive 6-part test suite verifying parsers, translator, exporters, format preservation, dynamic download, and end-to-end APIs. |
 
 ---
 
@@ -93,6 +95,7 @@ BookApp/
 │   ├── test_exporter.py
 │   ├── test_translator.py
 │   ├── test_format_preservation.py
+│   ├── test_dynamic_download.py # On-demand format conversion tests
 │   └── test_api.py          # End-to-end integration tests
 ├── temp/                    # Uploads and outputs directory (auto-created)
 │   ├── uploads/

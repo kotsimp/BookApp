@@ -56,6 +56,8 @@
 * **python-docx:** In-place ανάγνωση και εγγραφή εγγράφων Word με διατήρηση στυλ, γραμματοσειρών και πινάκων.
 * **EbookLib & BeautifulSoup4:** Ανάγνωση, ανάλυση και ανακατασκευή EPUB κεφαλαίων διατηρώντας το HTML/CSS.
 * **edge-tts:** Παραγωγή ήχου μέσω των δωρεάν νευρωνικών φωνών της Microsoft.
+* **On-Demand Dynamic Exporter:** Δυναμική εξαγωγή σε οποιαδήποτε υποστηριζόμενη μορφή (`format=pdf|docx|epub|txt`) κατά τη λήψη, χωρίς επανυπολογισμό μετάφρασης.
+* **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
 
 ---
 
@@ -241,7 +243,7 @@ BookApp/
 
 ```bash
 # Βεβαιωθείτε ότι το .venv είναι ενεργό και ο server εκτελείται
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api"
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api, tests.test_dynamic_download"
 ```
 
 Όλοι οι έλεγχοι πρέπει να ολοκληρωθούν με **`PASSED`**.
@@ -252,6 +254,8 @@ python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests
 
 | Σύμπτωμα | Πιθανή Αιτία | Λύση |
 |---|---|---|
+| **Σύμβολα με ερωτηματικό (`[?]`) σε bullets στο DOCX** | Μη συμβατοί χαρακτήρες Private Use Area (PUA) από γραμματοσειρές Wingdings/Symbol στο πρωτότυπο έγγραφο. | Έχει επιλυθεί αυτόματα: το backend φιλτράρει όλα τα PUA σύμβολα, τα μετατρέπει σε Unicode κουκίδες (`•`) και εφαρμόζει native Word `List Bullet` παραγράφους. |
+| **Αλλαγή μορφής κατά τη λήψη κατέβαζε το αρχικό format** | Το download endpoint δεν λάμβανε παραμέτρους μορφής. | Έχει επιλυθεί: το endpoint υποστηρίζει πλέον `GET /api/download/{job_id}?format=pdf\|docx\|epub\|txt` και μετατρέπει ακαριαία το αποτέλεσμα on-demand. |
 | **Σφάλμα 404 κατά τη λήψη (`Job not found`)** | Επανεκκίνηση του server με απώλεια μνήμης. | Έχει επιλυθεί αυτόματα: ο `job_manager.py` ανακτά αυτόματα τις εργασίες απευθείας από τον φάκελο `temp/outputs/` στο δίσκο. |
 | **Σφάλμα `NoAudioReceived` στο Audiobook** | Ελλιπές λεξικό της φωνής Athina σε σύνθετα ακρωνύμια (π.χ. `UPS`, `Server Room`). | Έχει επιλυθεί αυτόματα: ορίστηκε ως κύρια φωνή ο **Nestoras** και προστέθηκε αυτόματο fallback. |
 | **Η μπάρα προόδου δεν κινείται (μένει στο 0%)** | Ο proxy ή το firewall μπλοκάρει τα Server-Sent Events (SSE). | Βεβαιωθείτε ότι στο Nginx έχει τεθεί `proxy_buffering off;` και `proxy_read_timeout 86400s;`. |
