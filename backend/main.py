@@ -346,20 +346,42 @@ async def job_status(job_id: str):
     }
 
 
+MIME_MAP = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".epub": "application/epub+zip",
+    ".txt": "text/plain; charset=utf-8",
+    ".mp3": "audio/mpeg",
+}
+
+
 @app.get("/api/download/{job_id}")
 async def download_output(job_id: str):
     """Download the output file for a completed job."""
     job = get_job(job_id)
-    if not job:
-        raise HTTPException(404, f"Job '{job_id}' not found.")
-    if job.status != "done" or not job.output_path:
-        raise HTTPException(400, "Job is not complete or has no output.")
+    out_path = None
 
-    out_path = Path(job.output_path)
-    if not out_path.exists():
-        raise HTTPException(404, "Output file not found.")
+    if job and job.output_path:
+        p = Path(job.output_path)
+        if p.exists():
+            out_path = p
 
-    media_type = "audio/mpeg" if out_path.suffix == ".mp3" else "text/plain; charset=utf-8"
+    # Fallback to inspecting the output folder on disk
+    if not out_path:
+        out_dir = OUTPUT_DIR / job_id
+        if out_dir.exists():
+            files = [f for f in out_dir.iterdir() if f.is_file()]
+            if files:
+                # Prefer exported formats or mp3 over raw txt
+                preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
+                files_to_check = preferred if preferred else files
+                files_to_check.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                out_path = files_to_check[0]
+
+    if not out_path or not out_path.exists():
+        raise HTTPException(404, f"Output file for job '{job_id}' not found.")
+
+    media_type = MIME_MAP.get(out_path.suffix.lower(), "application/octet-stream")
     return FileResponse(
         path=str(out_path),
         media_type=media_type,

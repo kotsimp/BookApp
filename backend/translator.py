@@ -1,11 +1,15 @@
 """
-Translator Engine - chunked English <-> Greek translation using Google Translate
-via the deep_translator library (no API key required).
+Translator Engine - fast chunked English <-> Greek translation.
+Uses Google's direct GTX client API for high-speed, reliable translations without 429 bot-blocking,
+with deep_translator as an automatic fallback.
 """
 
 import asyncio
 import time
 import logging
+import urllib.request
+import urllib.parse
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -21,15 +25,72 @@ LANG_CODES = {
     "greek": "el",
 }
 
-# Maximum characters per translation request (Google limit is 5000, use 4500 for safety)
-CHUNK_SIZE = 4500
+# Maximum characters per translation request
+CHUNK_SIZE = 4000
 
-# Delay between API calls in seconds to avoid rate limiting
-# Google's unofficial limit: 5 req/sec, 200k/day
-RATE_LIMIT_DELAY = 1.2  # wait 1.2s between each chunk to stay well under 5 req/sec
+# Inter-chunk delay in seconds (GTX client handles rapid calls cleanly; 0.2s is fast and safe)
+RATE_LIMIT_DELAY = 0.2
 
-# If a whole page fails, pause before moving on
-PAGE_PAUSE = 2.0
+
+def _translate_gtx(text: str, source_lang: str, target_lang: str) -> str:
+    """Translates text using Google's direct GTX client endpoint."""
+    if not text.strip():
+        return text
+    src_code = LANG_CODES.get(source_lang, "en")
+    tgt_code = LANG_CODES.get(target_lang, "el")
+
+    url = (
+        f"https://translate.googleapis.com/translate_a/single?client=gtx"
+        f"&sl={src_code}&tl={tgt_code}&dt=t&q=" + urllib.parse.quote(text)
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        return "".join(part[0] for part in data[0] if part and part[0])
+
+
+async def _translate_with_retry(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    deep_trans: Optional[GoogleTranslator] = None,
+    retries: int = 3,
+) -> str:
+    """Translates text with GTX, fast retries, and deep_translator fallback."""
+    if not text.strip():
+        return text
+
+    loop = asyncio.get_event_loop()
+
+    # 1. Direct GTX client API (fast, no bot-blocking)
+    for attempt in range(retries):
+        try:
+            result = await loop.run_in_executor(None, _translate_gtx, text, source_lang, target_lang)
+            if result and result.strip():
+                return result
+        except Exception as e:
+            logger.warning(f"GTX translation attempt {attempt+1}/{retries} error: {e}")
+            await asyncio.sleep(0.4 * (attempt + 1))
+
+    # 2. Fallback to deep_translator
+    if deep_trans:
+        try:
+            logger.info("Attempting fallback via deep_translator...")
+            result = await loop.run_in_executor(None, deep_trans.translate, text)
+            if result and result.strip():
+                return result
+        except Exception as e:
+            logger.error(f"Fallback translation error: {e}")
+
+    logger.error("All translation retries failed for chunk. Returning original text.")
+    return text
 
 
 async def translate_document(
@@ -45,13 +106,10 @@ async def translate_document(
     Translates a document file from source_lang to target_lang.
     Writes output as a UTF-8 text file with page markers.
     Returns the output path.
-
-    source_lang / target_lang: 'english' or 'greek'
     """
     src_code = LANG_CODES.get(source_lang, "en")
     tgt_code = LANG_CODES.get(target_lang, "el")
-
-    translator = GoogleTranslator(source=src_code, target=tgt_code)
+    fallback_translator = GoogleTranslator(source=src_code, target=tgt_code)
 
     update_job(job_id,
                status="running",
@@ -65,6 +123,15 @@ async def translate_document(
     if total_pages == 0:
         update_job(job_id, status="error", error="No readable text found in document.")
         raise ValueError("No readable text found in document.")
+
+    # Check if document has suspicious lack of text (e.g. scanned image PDF)
+    total_chars = sum(len(p.get("text", "").strip()) for p in pages)
+    avg_chars_per_page = total_chars / max(total_pages, 1)
+    if avg_chars_per_page < 30:
+        logger.warning(
+            f"[{job_id}] Document has very little extracted text (avg {avg_chars_per_page:.1f} chars/page). "
+            f"This is likely an image-only or scanned PDF."
+        )
 
     update_job(job_id,
                total_chunks=total_pages,
@@ -82,34 +149,35 @@ async def translate_document(
                    done_chunks=idx,
                    progress=int((idx / total_pages) * 90))
 
+        if not page_text.strip():
+            # Empty page
+            output_lines.append(f"\n{'='*60}")
+            output_lines.append(f"PAGE {page_num}")
+            output_lines.append(f"{'='*60}\n")
+            continue
+
         # Split page text into API-safe chunks
         chunks = split_into_chunks(page_text, CHUNK_SIZE)
         translated_chunks = []
-        any_failed = False
 
         for chunk in chunks:
             if not chunk.strip():
                 translated_chunks.append(chunk)
                 continue
 
-            translated = await _translate_with_retry(translator, chunk)
-            if translated == chunk:
-                # This means translation may have failed (returned original)
-                any_failed = True
+            translated = await _translate_with_retry(
+                chunk,
+                source_lang,
+                target_lang,
+                deep_trans=fallback_translator,
+            )
             translated_chunks.append(translated)
 
-            # Respect rate limit
-            await asyncio.sleep(RATE_LIMIT_DELAY)
+            # Brief delay between chunks
+            if len(chunks) > 1:
+                await asyncio.sleep(RATE_LIMIT_DELAY)
 
         translated_page = "\n\n".join(translated_chunks)
-
-        # If the page had failures, add a note in the output
-        if any_failed and len(chunks) > 0:
-            logger.warning(f"[{job_id}] Page {page_num}: some chunks may not have been translated.")
-
-        # Extra pause between pages to let rate limit cool down
-        if idx < total_pages - 1:
-            await asyncio.sleep(PAGE_PAUSE)
 
         # Write page marker
         output_lines.append(f"\n{'='*60}")
@@ -134,23 +202,3 @@ async def translate_document(
 
     logger.info(f"[{job_id}] Translation complete → {output_path}")
     return output_path
-
-
-async def _translate_with_retry(translator: GoogleTranslator, text: str, retries: int = 5) -> str:
-    """Translates text with exponential backoff retry on failure."""
-    for attempt in range(retries):
-        try:
-            # deep_translator is synchronous; run in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, translator.translate, text)
-            if result:
-                return result
-            # Empty result — treat as soft failure, retry
-            await asyncio.sleep(2.0)
-        except Exception as e:
-            wait = min((2 ** attempt) * 1.5, 30.0)  # cap backoff at 30s
-            logger.warning(f"Translation attempt {attempt+1}/{retries} failed: {e}. Retrying in {wait:.1f}s...")
-            await asyncio.sleep(wait)
-
-    logger.error(f"All {retries} translation retries failed for chunk. Returning original text.")
-    return text

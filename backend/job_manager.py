@@ -56,7 +56,56 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
 
 
 def get_job(job_id: str) -> Optional[Job]:
-    return _jobs.get(job_id)
+    if job_id in _jobs:
+        return _jobs[job_id]
+
+    # Reconstruct from disk if server restarted
+    try:
+        from pathlib import Path
+        base_temp = Path(__file__).resolve().parent.parent / "temp"
+        out_dir = base_temp / "outputs" / job_id
+        up_dir = base_temp / "uploads" / job_id
+        if out_dir.exists():
+            files = [f for f in out_dir.iterdir() if f.is_file()]
+            if files:
+                # Prefer final export or mp3 over intermediate txt
+                preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
+                files_to_pick = preferred if preferred else files
+                files_to_pick.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                out_file = files_to_pick[0]
+
+                up_file = None
+                if up_dir.exists():
+                    ufiles = [f for f in up_dir.iterdir() if f.is_file()]
+                    if ufiles:
+                        up_file = ufiles[0]
+
+                file_name = up_file.name if up_file else out_file.name
+                file_type = out_file.suffix.lstrip(".").lower()
+                mode = "audiobook" if out_file.suffix.lower() == ".mp3" else "translate"
+                mtime = out_file.stat().st_mtime
+                job = Job(
+                    job_id=job_id,
+                    file_path=str(up_file) if up_file else str(out_file),
+                    file_name=file_name,
+                    file_type=file_type,
+                    status="done",
+                    mode=mode,
+                    progress=100,
+                    current_step="Completed",
+                    total_chunks=1,
+                    done_chunks=1,
+                    output_path=str(out_file),
+                    output_format=out_file.suffix.lstrip(".").lower(),
+                    created_at=mtime,
+                    updated_at=mtime,
+                )
+                _jobs[job_id] = job
+                return job
+    except Exception:
+        pass
+
+    return None
 
 
 def update_job(job_id: str, **kwargs):
@@ -94,6 +143,18 @@ def _notify_subscribers(job: Job):
 
 
 def list_jobs() -> list[Job]:
+    # Check disk for any jobs from previous runs
+    try:
+        from pathlib import Path
+        base_temp = Path(__file__).resolve().parent.parent / "temp"
+        out_root = base_temp / "outputs"
+        if out_root.exists():
+            for d in out_root.iterdir():
+                if d.is_dir() and d.name not in _jobs:
+                    get_job(d.name)
+    except Exception:
+        pass
+
     # Return jobs sorted by creation time, newest first
     return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
 
