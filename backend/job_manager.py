@@ -20,10 +20,12 @@ class Job:
     current_step: str       # human-readable status message
     total_chunks: int       # total processing units
     done_chunks: int        # completed units
-    output_path: Optional[str]
-    error: Optional[str]
     created_at: float
     updated_at: float
+    # Optional / nullable fields (must have defaults)
+    output_path: Optional[str] = None
+    output_format: Optional[str] = None  # txt, docx, pdf, epub
+    error: Optional[str] = None
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -34,6 +36,7 @@ _jobs: dict[str, Job] = {}
 
 def create_job(file_path: str, file_name: str, file_type: str) -> Job:
     job_id = str(uuid.uuid4())
+    now = time.time()
     job = Job(
         job_id=job_id,
         file_path=file_path,
@@ -45,11 +48,8 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
         current_step="Waiting to start...",
         total_chunks=0,
         done_chunks=0,
-        output_path=None,
-        error=None,
-        created_at=time.time(),
-        updated_at=time.time(),
-        subscribers=[],
+        created_at=now,
+        updated_at=now,
     )
     _jobs[job_id] = job
     return job

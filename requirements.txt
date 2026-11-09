@@ -8,3 +8,4 @@ EbookLib
 beautifulsoup4
 deep-translator
 edge-tts
+fpdf2

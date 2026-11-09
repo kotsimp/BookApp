@@ -4,28 +4,93 @@ Returns text in manageable chunks suitable for translation and TTS.
 """
 
 import re
+import logging
 from pathlib import Path
 from typing import Generator
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
 # PDF Parsing via PyMuPDF
 # ---------------------------------------------------------------------------
 
+def _extract_page_text(page) -> str:
+    """
+    Tries multiple PyMuPDF extraction modes in order of preference,
+    returning the richest result. Falls back to block-level extraction.
+    """
+    # 1. Try "text" mode first
+    text = page.get_text("text") or ""
+    if len(text.strip()) > 50:
+        return text
+
+    # 2. Try extracting from blocks (handles some complex PDFs better)
+    blocks_text = ""
+    try:
+        blocks = page.get_text("blocks")  # list of (x0,y0,x1,y1,text,block_no,block_type)
+        # Sort blocks by vertical position (top to bottom) then horizontal
+        blocks = sorted(blocks, key=lambda b: (round(b[1] / 20), b[0]))
+        lines = []
+        for b in blocks:
+            if b[6] == 0:  # block_type 0 = text block
+                t = b[4].strip()
+                if t:
+                    lines.append(t)
+        blocks_text = "\n\n".join(lines)
+    except Exception:
+        pass
+
+    if len(blocks_text.strip()) > len(text.strip()):
+        return blocks_text
+
+    # 3. Try "html" stripped version
+    try:
+        from bs4 import BeautifulSoup
+        html = page.get_text("html") or ""
+        soup = BeautifulSoup(html, "html.parser")
+        html_text = soup.get_text(separator="\n", strip=True)
+        if len(html_text.strip()) > len(text.strip()):
+            return html_text
+    except Exception:
+        pass
+
+    # 4. Try "rawdict" to get every span
+    try:
+        raw = page.get_text("rawdict")
+        span_texts = []
+        for block in raw.get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    t = span.get("text", "").strip()
+                    if t:
+                        span_texts.append(t)
+        rawdict_text = " ".join(span_texts)
+        if len(rawdict_text.strip()) > len(text.strip()):
+            return rawdict_text
+    except Exception:
+        pass
+
+    return text
+
+
 def parse_pdf(file_path: str) -> Generator[dict, None, None]:
     """
     Yields dicts: {page: int, text: str} for each page of a PDF.
-    Handles large files efficiently via PyMuPDF's memory-mapped access.
+    Tries multiple extraction modes for best text coverage.
     """
     import pymupdf  # fitz
 
     with pymupdf.open(file_path) as doc:
         total_pages = len(doc)
+        logger.info(f"PDF has {total_pages} pages: {file_path}")
         for page_num in range(total_pages):
             page = doc[page_num]
-            text = page.get_text("text")
+            text = _extract_page_text(page)
             text = _clean_text(text)
-            if text.strip():
+            char_count = len(text.strip())
+            logger.info(f"  Page {page_num + 1}: extracted {char_count} chars")
+            if char_count > 0:
                 yield {"page": page_num + 1, "text": text, "total": total_pages}
 
 

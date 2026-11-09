@@ -147,6 +147,18 @@ function setLangs(src, tgt) {
   document.getElementById('tr-target-display').textContent = langConfig[tgt].label;
 }
 
+// ── Output Format Selection ─────────────────────────────────
+function selectFormat(fmt, btn) {
+  // Deselect all format buttons
+  document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tr-output-format').value = fmt;
+  // Update download button label immediately
+  const label = fmt.toUpperCase();
+  const labelEl = document.getElementById('tr-format-label');
+  if (labelEl) labelEl.textContent = label;
+}
+
 // ── Voice Selection (Audiobook Tab) ────────────────────────
 async function loadVoices() {
   try {
@@ -214,11 +226,17 @@ async function startTranslation() {
 
   const sourceLang = document.getElementById('tr-source-lang').value;
   const targetLang = document.getElementById('tr-target-lang').value;
+  const outputFormat = document.getElementById('tr-output-format').value || 'txt';
+
+  // Update download button label to show chosen format
+  const labelEl = document.getElementById('tr-format-label');
+  if (labelEl) labelEl.textContent = outputFormat.toUpperCase();
 
   // Show progress UI
   document.getElementById('tr-progress-card').style.display = 'block';
   document.getElementById('tr-result-card').classList.remove('visible');
   document.getElementById('tr-error-card').classList.remove('visible');
+  document.getElementById('tr-progress-detail').textContent = '';
   document.getElementById('tr-start-btn').disabled = true;
   setStatusBadge('tr', 'running');
 
@@ -226,7 +244,12 @@ async function startTranslation() {
     const res = await fetch(`${API}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: jobId, source_lang: sourceLang, target_lang: targetLang }),
+      body: JSON.stringify({
+        job_id: jobId,
+        source_lang: sourceLang,
+        target_lang: targetLang,
+        output_format: outputFormat,
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -332,14 +355,18 @@ function updateProgress(prefix, data) {
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
   document.getElementById(`${prefix}-progress-step`).textContent = step;
 
-  const detail = data.total_chunks > 0
-    ? `Processed ${data.done_chunks} of ${data.total_chunks} segments`
-    : 'Processing...';
-  document.getElementById(`${prefix}-progress-detail`).textContent = detail;
+  // Show segment detail only while actively translating
+  const detailEl = document.getElementById(`${prefix}-progress-detail`);
+  if (data.total_chunks > 0 && data.status !== 'done') {
+    detailEl.textContent = `Processed ${data.done_chunks} of ${data.total_chunks} segments`;
+  } else if (data.status === 'done') {
+    detailEl.textContent = '';
+  }
 
   if (data.status === 'done') {
     setStatusBadge(prefix, 'done');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
+    document.getElementById(`${prefix}-progress-step`).textContent = '✅ Complete';
     showResult(prefix, data);
     refreshHistory();
     toast(prefix === 'tr' ? '✅ Translation complete!' : '🎉 Audiobook ready!', 'success');
@@ -366,7 +393,11 @@ function showResult(prefix, data) {
   const card = document.getElementById(`${prefix}-result-card`);
   const meta = document.getElementById(`${prefix}-result-meta`);
   if (prefix === 'tr') {
-    meta.textContent = 'Your document has been translated. Click below to download the text file.';
+    const fmt = document.getElementById('tr-output-format')?.value?.toUpperCase() || 'TXT';
+    meta.textContent = `Your document has been translated. Click below to download the ${fmt} file.`;
+    // Keep format label in download button in sync
+    const labelEl = document.getElementById('tr-format-label');
+    if (labelEl) labelEl.textContent = fmt;
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download the MP3 file.';
   }

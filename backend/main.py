@@ -21,7 +21,7 @@ from backend.job_manager import create_job, get_job, update_job, list_jobs, clea
 from backend.parsers import count_pages
 from backend.translator import translate_document
 from backend.tts_engine import generate_audiobook, get_available_voices
-
+from backend.exporter import export_text
 # ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
@@ -60,6 +60,7 @@ class TranslateRequest(BaseModel):
     job_id: str
     source_lang: str   # 'english' or 'greek'
     target_lang: str   # 'english' or 'greek'
+    output_format: str = "txt"  # txt, docx, pdf, epub
 
 
 class AudiobookRequest(BaseModel):
@@ -185,6 +186,7 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
 
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path):
     try:
+        # Step 1: Translate to temporary txt file
         await translate_document(
             job_id=job_id,
             file_path=file_path,
@@ -193,8 +195,27 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             target_lang=target_lang,
             output_path=output_path,
         )
+        # Read translated content
+        txt_content = Path(output_path).read_text(encoding="utf-8")
+        # Determine requested format (default txt) from job metadata
+        job = get_job(job_id)
+        fmt = getattr(job, "output_format", "txt") or "txt"
+        # Step 2: Export to final format
+        update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
+        out_dir = Path(output_path).parent
+        base_name = Path(output_path).stem.replace(f"_translated_{target_lang}", "_translated")
+        final_path = export_text(txt_content, out_dir, fmt, base_name)
+        # Step 3: Mark job done
+        update_job(job_id,
+            status="done",
+            progress=100,
+            current_step=f"Exported {fmt.upper()}",
+            output_path=str(final_path),
+            output_format=fmt,
+            done_chunks=0,
+        )
     except Exception as e:
-        logger.error(f"Translation error [{job_id}]: {e}", exc_info=True)
+        logger.error(f"Translation/export error [{job_id}]: {e}", exc_info=True)
         update_job(job_id, status="error", error=str(e))
 
 
@@ -368,6 +389,40 @@ async def all_jobs():
         }
         for j in jobs
     ]
+
+@app.get("/api/debug/extract/{job_id}")
+async def debug_extract(job_id: str, max_chars: int = 500):
+    """
+    Returns the raw extracted text (first max_chars chars per page) for debugging.
+    Use this to verify that the PDF/DOCX has readable text before translating.
+    """
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' not found.")
+
+    from backend.parsers import parse_document
+    pages = []
+    try:
+        for p in parse_document(job.file_path, job.file_type):
+            excerpt = p["text"][:max_chars]
+            pages.append({
+                "page": p["page"],
+                "char_count": len(p["text"]),
+                "excerpt": excerpt,
+            })
+            if len(pages) >= 5:   # limit to first 5 pages for speed
+                break
+    except Exception as e:
+        raise HTTPException(500, f"Extraction error: {e}")
+
+    return {
+        "job_id": job_id,
+        "file_name": job.file_name,
+        "file_type": job.file_type,
+        "pages_sampled": len(pages),
+        "pages": pages,
+    }
+
 
 
 @app.delete("/api/jobs/{job_id}")
