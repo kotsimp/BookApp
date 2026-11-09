@@ -169,7 +169,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     stem = Path(job.file_name).stem
     output_path = str(output_dir / f"{stem}_translated_{req.target_lang}.txt")
 
-    update_job(req.job_id, mode="translate", status="running")
+    output_format = getattr(req, "output_format", "txt") or "txt"
+    update_job(req.job_id, mode="translate", status="running", output_format=output_format)
 
     background_tasks.add_task(
         _run_translation,

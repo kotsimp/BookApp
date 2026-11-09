@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # Available voices grouped by language
 VOICES = {
     "greek": {
-        "Athina (Female)": "el-GR-AthinaNeural",
         "Nestoras (Male)": "el-GR-NestorasNeural",
+        "Athina (Female)": "el-GR-AthinaNeural",
     },
     "english": {
         "Aria (Female)": "en-US-AriaNeural",
@@ -33,8 +33,8 @@ VOICES = {
     },
 }
 
-# Max chars per TTS request (edge-tts handles large text but we chunk for progress tracking)
-TTS_CHUNK_SIZE = 3000
+# Max chars per TTS request (1200 chars ensures edge-tts WebSocket stays within safe buffer limits)
+TTS_CHUNK_SIZE = 1200
 
 
 async def generate_audiobook(
@@ -149,20 +149,49 @@ async def generate_audiobook(
     return output_path
 
 
+def _clean_tts_text(text: str) -> str:
+    """Prepares text for TTS by removing redundant whitespace and control characters."""
+    # Replace newlines with spaces so edge-tts SSML parsing doesn't break
+    text = re.sub(r"[\r\n]+", " ", text)
+    # Collapse multiple spaces
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
 async def _tts_chunk_with_retry(text: str, voice: str, output_path: str, retries: int = 3):
-    """Generates TTS for a text chunk with retry logic."""
+    """Generates TTS for a text chunk with retry logic and voice fallback."""
+    clean_text = _clean_tts_text(text)
+    if not clean_text:
+        Path(output_path).write_bytes(b"")
+        return
+
+    # Fallback to Nestoras if Athina fails (Nestoras has more complete lexicon coverage)
+    fallback_voice = "el-GR-NestorasNeural" if "Athina" in voice else None
+
     for attempt in range(retries):
         try:
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(clean_text, voice)
             await communicate.save(output_path)
-            return
+            if Path(output_path).stat().st_size > 0:
+                return
         except Exception as e:
-            wait = (2 ** attempt) * 1.5
-            logger.warning(f"TTS attempt {attempt+1} failed: {e}. Retrying in {wait}s...")
+            wait = (attempt + 1) * 1.0
+            logger.warning(f"TTS attempt {attempt+1} failed ({voice}): {e}. Retrying in {wait}s...")
             await asyncio.sleep(wait)
 
+    # Try fallback voice if available
+    if fallback_voice:
+        try:
+            logger.info(f"Retrying chunk with fallback voice {fallback_voice}...")
+            communicate = edge_tts.Communicate(clean_text, fallback_voice)
+            await communicate.save(output_path)
+            if Path(output_path).stat().st_size > 0:
+                return
+        except Exception as e:
+            logger.error(f"Fallback voice {fallback_voice} failed: {e}")
+
     # If all retries fail, create a silent placeholder
-    logger.error(f"TTS failed after {retries} attempts for chunk. Writing empty file.")
+    logger.error(f"TTS failed after retries for chunk. Writing empty file.")
     Path(output_path).write_bytes(b"")
 
 
