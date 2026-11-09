@@ -1,0 +1,259 @@
+# 🛠️ Εγχειρίδιο Διαχειριστή & Τεχνικής Εγκατάστασης
+### (Administrator & Deployment Manual)
+**DocTranslate & AudioBook Generator**
+
+Το παρόν εγχειρίδιο απευθύνεται σε διαχειριστές συστημάτων (System Administrators), τεχνικούς πληροφορικής και DevOps engineers που αναλαμβάνουν την εγκατάσταση, διαμόρφωση, λειτουργία και συντήρηση της εφαρμογής **DocTranslate & AudioBook Generator** σε τοπικό περιβάλλον ή διακομιστή (On-Premises / Cloud Server).
+
+---
+
+## 📑 Πίνακας Περιεχομένων
+1. [Τεχνική Αρχιτεκτονική](#1-τεχνική-αρχιτεκτονική)
+2. [Προαπαιτούμενα Συστήματος](#2-προαπαιτούμενα-συστήματος)
+3. [Εγκατάσταση Βήμα-Βήμα](#3-εγκατάσταση-βήμα-βήμα)
+4. [Εκτέλεση σε Περιβάλλον Παραγωγής (Production)](#4-εκτέλεση-σε-περιβάλλον-παραγωγής-production)
+   - [Επιλογή Α: Windows Service (NSSM)](#επιλογή-α-λειτουργία-ως-windows-service-μέσω-nssm)
+   - [Επιλογή Β: Linux Systemd Service](#επιλογή-β-λειτουργία-ως-linux-systemd-service)
+   - [Διαμόρφωση Reverse Proxy (Nginx) με SSE](#διαμόρφωση-reverse-proxy-nginx-με-υποστήριξη-sse)
+5. [Δομή Αρχείων & Διαχείριση Χώρου (Storage)](#5-δομή-αρχείων--διαχείριση-χώρου-storage)
+6. [Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)](#6-εκτέλεση-αυτοματοποιημένων-ελέγχων-testing)
+7. [Αντιμετώπιση Τεχνικών Προβλημάτων (Troubleshooting)](#7-αντιμετώπιση-τεχνικών-προβλημάτων-troubleshooting)
+
+---
+
+## 1. Τεχνική Αρχιτεκτονική
+
+Η εφαρμογή ακολουθεί αρχιτεκτονική ασύγχρονου API με Event-Driven ροή εργασιών:
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   Web Browser (Client)                 │
+│         Single Page App (HTML5 / Vanilla JS / CSS)     │
+└──────────────┬────────────────────────▲────────────────┘
+               │ REST API (JSON/Files)  │ SSE Streaming
+               ▼                        │ (/api/progress)
+┌───────────────────────────────────────┴────────────────┐
+│               FastAPI / Uvicorn Server                 │
+│ ┌────────────────────────────────────────────────────┐ │
+│ │  Job Manager (In-Memory + Disk Recovery Fallback)  │ │
+│ └────────────────────────────────────────────────────┘ │
+│ ┌──────────────────────┐    ┌────────────────────────┐ │
+│ │  Format Preserver    │    │      TTS Engine        │ │
+│ │  - python-docx       │    │  - edge-tts (Neural)   │ │
+│ │  - PyMuPDF           │    │  - MP3 Concatenation   │ │
+│ │  - EbookLib / BS4    │    │  - Fallback: Nestoras  │ │
+│ └──────────────────────┘    └────────────────────────┘ │
+└──────────────┬────────────────────────┬────────────────┘
+               │ Outbound HTTPS         │ Outbound WSS/HTTPS
+               ▼                        ▼
+     Google Translate API     Microsoft Speech Services
+     (client=gtx endpoint)     (Neural Voices: el-GR, en-US)
+```
+
+### Βασικές Τεχνολογίες Backend:
+* **FastAPI + Uvicorn:** Υψηλής απόδοσης ασύγχρονος Web server.
+* **Server-Sent Events (SSE):** Μηχανισμός ζωντανής ενημέρωσης προόδου (0–100%) χωρίς polling.
+* **PyMuPDF (fitz):** Εξαγωγή κειμένου και παραγωγή PDF με ελληνικές TrueType γραμματοσειρές (Arial/Calibri).
+* **python-docx:** In-place ανάγνωση και εγγραφή εγγράφων Word με διατήρηση στυλ, γραμματοσειρών και πινάκων.
+* **EbookLib & BeautifulSoup4:** Ανάγνωση, ανάλυση και ανακατασκευή EPUB κεφαλαίων διατηρώντας το HTML/CSS.
+* **edge-tts:** Παραγωγή ήχου μέσω των δωρεάν νευρωνικών φωνών της Microsoft.
+
+---
+
+## 2. Προαπαιτούμενα Συστήματος
+
+### Λειτουργικό Σύστημα
+* **Windows:** Windows 10, Windows 11 ή Windows Server 2016/2019/2022.
+* **Linux:** Ubuntu 20.04+, Debian 11+, RHEL/CentOS 8+, AlmaLinux/Rocky Linux.
+* **macOS:** macOS 11 Big Sur ή νεότερο.
+
+### Λογισμικό
+* **Python 3.9 έως 3.12** εγκατεστημένη στο σύστημα με `pip` και `venv`.
+* **Git** (για λήψη και ενημέρωση του κώδικα).
+
+### Δικτυακές Απαιτήσεις (Firewall / Network Rules)
+* **Inbound:**
+  * Θύρα `8000` (ή `80`/`443` αν εκτελείται μέσω Reverse Proxy) προσβάσιμη από τους χρήστες του τοπικού δικτύου.
+* **Outbound (απαραίτητη πρόσβαση στο διαδίκτυο):**
+  * `translate.googleapis.com:443` (HTTPS) για τις μεταφράσεις.
+  * `*.speech.microsoft.com:443` (WSS / HTTPS) για τις νευρωνικές φωνές του Audiobook.
+
+---
+
+## 3. Εγκατάσταση Βήμα-Βήμα
+
+### Βήμα 1: Λήψη Αποθετηρίου
+```bash
+git clone https://github.com/kotsimp/BookApp.git
+cd BookApp
+```
+
+### Βήμα 2: Δημιουργία και Ενεργοποίηση Virtual Environment
+* **Σε Windows (PowerShell / Command Prompt):**
+  ```powershell
+  python -m venv .venv
+  .\.venv\Scripts\activate
+  ```
+* **Σε Linux / macOS:**
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+### Βήμα 3: Εγκατάσταση Εξαρτήσεων
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Βήμα 4: Δοκιμαστική Εκκίνηση
+```bash
+python run.py
+```
+*Η εφαρμογή θα ξεκινήσει στη διεύθυνση `http://localhost:8000` και θα ανοίξει αυτόματα τον browser.*
+
+---
+
+## 4. Εκτέλεση σε Περιβάλλον Παραγωγής (Production)
+
+Για μόνιμη λειτουργία 24/7 σε server χωρίς την ανάγκη ανοιχτού παραθύρου τερματικού, προτείνεται η λειτουργία ως Service.
+
+### Επιλογή Α: Λειτουργία ως Windows Service (μέσω NSSM)
+
+1. Κατεβάστε το [NSSM (Non-Sucking Service Manager)](https://nssm.cc/download).
+2. Ανοίξτε το PowerShell ως Διαχειριστής (Administrator) και εκτελέστε:
+   ```powershell
+   nssm install BookApp
+   ```
+3. Στο παράθυρο διαλόγου ρυθμίστε:
+   * **Path:** `C:\Users\User\Documents\BookApp\.venv\Scripts\uvicorn.exe`
+   * **Startup directory:** `C:\Users\User\Documents\BookApp`
+   * **Arguments:** `backend.main:app --host 0.0.0.0 --port 8000 --log-level info`
+4. Εκκινήστε το Service:
+   ```powershell
+   nssm start BookApp
+   ```
+
+### Επιλογή Β: Λειτουργία ως Linux Systemd Service
+
+1. Δημιουργήστε το αρχείο μονάδας systemd:
+   ```bash
+   sudo nano /etc/systemd/system/bookapp.service
+   ```
+2. Προσθέστε την ακόλουθη παραμετροποίηση:
+   ```ini
+   [Unit]
+   Description=DocTranslate and AudioBook Generator Service
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=www-data
+   WorkingDirectory=/opt/BookApp
+   ExecStart=/opt/BookApp/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --log-level info
+   Restart=always
+   RestartSec=5
+   Environment=PYTHONUNBUFFERED=1
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+3. Ενεργοποιήστε και εκκινήστε την υπηρεσία:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable bookapp
+   sudo systemctl start bookapp
+   sudo systemctl status bookapp
+   ```
+
+---
+
+### Διαμόρφωση Reverse Proxy (Nginx) με υποστήριξη SSE
+
+Επειδή η εφαρμογή χρησιμοποιεί **Server-Sent Events (SSE)** για τη ζωντανή ροή της μπάρας προόδου, είναι **κρίσιμο** να απενεργοποιηθεί το proxy buffering στο Nginx:
+
+```nginx
+server {
+    listen 80;
+    server_name bookapp.internal.domain;
+
+    client_max_body_size 100M;  # Επιτρέπει μεγάλα PDF/EPUB
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+
+        # Ρυθμίσεις για Server-Sent Events (SSE)
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+
+        # Standard headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+---
+
+## 5. Δομή Αρχείων & Διαχείριση Χώρου (Storage)
+
+### Δομή Καταλόγων:
+```
+BookApp/
+├── backend/
+│   ├── main.py              # Endpoints API (Upload, Translate, Audiobook, Download)
+│   ├── format_preserver.py  # In-place DOCX/EPUB styling preservation
+│   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF
+│   ├── translator.py        # Μηχανή μετάφρασης (Google GTX client API)
+│   ├── tts_engine.py        # Παραγωγή ήχου edge-tts (Nestoras / Athina)
+│   ├── job_manager.py       # Διαχείριση εργασιών & ανάκτηση από δίσκο
+│   └── parsers.py           # Αναλυτές εγγράφων PDF, DOCX, EPUB
+├── frontend/                # Static files (HTML, CSS, JS)
+├── temp/
+│   ├── uploads/{job_id}/    # Αποθηκευμένα αρχεία εισόδου
+│   └── outputs/{job_id}/    # Μεταφρασμένα αρχεία και MP3 audiobooks
+├── tests/                   # Αυτοματοποιημένα τεστ
+└── requirements.txt
+```
+
+### Αυτόματος Καθαρισμός Προσωρινών Αρχείων (Housekeeping)
+Μετά από μακροχρόνια χρήση, τα αρχεία στον κατάλογο `temp/` μπορούν να καταλάβουν αρκετό αποθηκευτικό χώρο. Προτείνεται η εκτέλεση προγραμματισμένης εργασίας για διαγραφή αρχείων παλαιότερων των 7 ημερών:
+
+* **Σε Linux (Cron Job):**
+  ```bash
+  # Καθημερινός καθαρισμός αρχείων παλαιότερων των 7 ημερών στις 03:00 π.μ.
+  0 3 * * * find /opt/BookApp/temp/ -type f -mtime +7 -delete
+  ```
+* **Σε Windows (PowerShell Script μέσω Task Scheduler):**
+  ```powershell
+  Get-ChildItem -Path "C:\Users\User\Documents\BookApp\temp" -Recurse | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Force -Recurse
+  ```
+
+---
+
+## 6. Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)
+
+Η εφαρμογή περιλαμβάνει πλήρη σουίτα αυτοματοποιημένων ελέγχων στο φάκελο `tests/`. Για να επιβεβαιώσετε την ορθή λειτουργία όλων των υποσυστημάτων:
+
+```bash
+# Βεβαιωθείτε ότι το .venv είναι ενεργό και ο server εκτελείται
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api"
+```
+
+Όλοι οι έλεγχοι πρέπει να ολοκληρωθούν με **`PASSED`**.
+
+---
+
+## 7. Αντιμετώπιση Τεχνικών Προβλημάτων (Troubleshooting)
+
+| Σύμπτωμα | Πιθανή Αιτία | Λύση |
+|---|---|---|
+| **Σφάλμα 404 κατά τη λήψη (`Job not found`)** | Επανεκκίνηση του server με απώλεια μνήμης. | Έχει επιλυθεί αυτόματα: ο `job_manager.py` ανακτά αυτόματα τις εργασίες απευθείας από τον φάκελο `temp/outputs/` στο δίσκο. |
+| **Σφάλμα `NoAudioReceived` στο Audiobook** | Ελλιπές λεξικό της φωνής Athina σε σύνθετα ακρωνύμια (π.χ. `UPS`, `Server Room`). | Έχει επιλυθεί αυτόματα: ορίστηκε ως κύρια φωνή ο **Nestoras** και προστέθηκε αυτόματο fallback. |
+| **Η μπάρα προόδου δεν κινείται (μένει στο 0%)** | Ο proxy ή το firewall μπλοκάρει τα Server-Sent Events (SSE). | Βεβαιωθείτε ότι στο Nginx έχει τεθεί `proxy_buffering off;` και `proxy_read_timeout 86400s;`. |
+| **Η μετάφραση αποδίδει μόνο «Page 1, Page 2»** | Το PDF είναι σκαναρισμένο (εικόνες) χωρίς ψηφιακό επίπεδο κειμένου. | Ενημερώστε τον χρήστη ότι απαιτείται OCR πριν την εισαγωγή του αρχείου. |
+| **Σφάλμα HTTP 429 στη μετάφραση** | Υπερβολικά γρήγορα αιτήματα στο scraping endpoint. | Έχει επιλυθεί: η εφαρμογή χρησιμοποιεί πλέον το direct client API (`client=gtx`) που αποκρίνεται σε χιλιοστά του δευτερολέπτου χωρίς bot-blocking. |

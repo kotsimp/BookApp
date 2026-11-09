@@ -1,161 +1,139 @@
 # 📚 DocTranslate & AudioBook Generator
 
-A powerful local web application to **translate documents** between English and Greek, and **generate professional audiobooks** with neural AI voices — supporting files up to 2,500 pages.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests: Passing](https://img.shields.io/badge/Tests-5%2F5%20Passed-brightgreen.svg)](tests/)
+
+A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), and **generate professional AI audiobooks** using Microsoft Edge neural voices.
 
 ---
 
-## ✨ Features
+## 📑 Documentation & Manuals (Εγχειρίδια)
+
+* 📖 **[Εγχειρίδιο Χρήστη / User Manual (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**  
+  *Αναλυτικός οδηγός βήμα-βήμα για τον απλό χρήστη: μετάφραση, επιλογή φορμάτ, διατήρηση μορφοποίησης, δημιουργία Audiobook και επεξήγηση προόδου.*
+* 🛠️ **[Εγχειρίδιο Διαχειριστή / Admin Manual (docs/ADMIN_MANUAL.md)](docs/ADMIN_MANUAL.md)**  
+  *Τεχνικός οδηγός για διαχειριστές: αρχιτεκτονική, απαιτήσεις, εγκατάσταση, λειτουργία ως Windows/Linux Service, ρυθμίσεις Nginx reverse proxy με SSE, συντήρηση και ασφάλεια.*
+
+---
+
+## ✨ Features (Χαρακτηριστικά)
 
 | Feature | Details |
-|---------|---------|
-| **Translation** | English ↔ Greek using Google Translate (free, no API key) |
-| **Audiobook** | Neural TTS via Microsoft Edge voices (free, requires internet) |
-| **Formats** | PDF, DOCX, EPUB |
-| **Scale** | Up to 2,500 pages (large jobs run in background with live progress) |
-| **Voices** | Greek: Athina (♀), Nestoras (♂) · English: Aria, Guy, Jenny, Davis, Emma, Ryan |
-| **Output** | Translated `.txt` file · Audiobook `.mp3` file |
+|---|---|
+| **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API (milliseconds per chunk, zero bot-blocking). |
+| **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
+| **Multi-Format Export** | Export translated output to **DOCX**, **PDF** (Unicode Greek with TrueType fonts), **EPUB**, or **TXT**. |
+| **AI Neural Audiobooks** | Generates high-fidelity MP3 audiobooks using Microsoft Edge neural voices. |
+| **Greek Audio Support** | Native Greek neural voices: **Nestoras (Male)** with 100% dictionary coverage & **Athina (Female)** with automatic fallback. |
+| **One-Click Direct Audio** | Convert any completed translation directly into a Greek Audiobook with a single click. |
+| **Live Progress Streaming** | Real-time progress updates via Server-Sent Events (SSE) distinguishing between document pages and audio parts. |
+| **Disk Recovery Architecture** | Completed jobs and download links survive server restarts by automatically recovering from disk. |
+| **Automated Test Suite** | Comprehensive 5-part test suite verifying parsers, translator, exporters, format preservation, and end-to-end APIs. |
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Γρήγορη Εκκίνηση)
 
 ### Prerequisites
-- **Python 3.9 or higher** — [Download here](https://www.python.org/downloads/)
-- Internet connection (for translation and TTS APIs)
+* **Python 3.9 or higher** — [Download Python](https://www.python.org/downloads/)
+* Internet connection (for translation and speech synthesis)
 
-### Run the App
-
+### Run with One Click
 ```bash
 python run.py
 ```
+The launcher will automatically create a virtual environment (`.venv/`), install all dependencies, start the FastAPI server at `http://localhost:8000`, and open your browser!
 
-That's it! The script will:
-1. Create a virtual environment (`.venv/`)
-2. Install all dependencies automatically
-3. Start the server at `http://localhost:8000`
-4. Open your browser automatically
-
----
-
-## 📖 How to Use
-
-### Translate a Document
-1. Click the **Translate Document** tab
-2. Drag & drop or upload your PDF, DOCX, or EPUB file
-3. Choose translation direction (English → Greek or Greek → English)
-4. Click **Start Translation** and watch live progress
-5. Download the translated `.txt` file when complete
-
-### Generate an Audiobook
-1. Click the **Generate Audiobook** tab
-2. Upload your document
-3. Select the **audio language** (English or Greek)
-4. Pick a **voice** (female or male neural voices)
-5. Optionally check "Use previously translated text" if you already translated the document
-6. Click **Generate Audiobook** and monitor progress
-7. Download your `.mp3` audiobook
-
----
-
-## ⏱️ Processing Times
-
-Approximate times depend on document length and internet speed:
-
-| Document Size | Translation | Audiobook |
-|---------------|-------------|-----------|
-| 10 pages | ~1 minute | ~3 minutes |
-| 100 pages | ~8 minutes | ~25 minutes |
-| 500 pages | ~35 minutes | ~2 hours |
-| 2,500 pages | ~2–3 hours | ~8–12 hours |
-
-> **Tip:** Large audiobook jobs (500+ pages) can run overnight. The app tracks progress and the output is saved to `temp/outputs/` even if you close the browser tab.
-
----
-
-## 📁 Project Structure
-
-```
-BookApp/
-├── backend/
-│   ├── main.py          # FastAPI app (REST + SSE endpoints)
-│   ├── parsers.py       # PDF/DOCX/EPUB text extractors
-│   ├── translator.py    # Chunked translation engine
-│   ├── tts_engine.py    # Neural TTS audiobook generator
-│   └── job_manager.py   # In-memory job state + SSE pub/sub
-├── frontend/
-│   ├── index.html       # Single-page app
-│   ├── style.css        # Premium dark UI
-│   └── app.js           # Client logic + SSE streaming
-├── temp/                # Auto-created; stores uploads and outputs
-│   ├── uploads/
-│   └── outputs/
-├── requirements.txt
-├── run.py               # One-click launcher
-└── README.md
-```
-
----
-
-## 🛠️ Manual Setup (Alternative)
-
-If you prefer to manage the environment yourself:
-
+### Manual Installation
 ```bash
-# Create and activate virtual environment
+# Clone the repository
+git clone https://github.com/kotsimp/BookApp.git
+cd BookApp
+
+# Create virtual environment
 python -m venv .venv
-.venv\Scripts\activate     # Windows
-# source .venv/bin/activate  # macOS/Linux
+
+# Activate virtual environment
+.\.venv\Scripts\activate      # Windows (PowerShell)
+# source .venv/bin/activate   # Linux / macOS
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Start the server
-uvicorn backend.main:app --reload --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+Open **[http://localhost:8000](http://localhost:8000)** in your browser.
+
+---
+
+## 📁 Project Structure (Δομή Έργου)
+
+```
+BookApp/
+├── backend/
+│   ├── main.py              # FastAPI application (REST endpoints & SSE streaming)
+│   ├── format_preserver.py  # In-place DOCX/EPUB formatting & styling preservation
+│   ├── exporter.py          # Multi-format exporter (DOCX, PDF, EPUB, TXT)
+│   ├── translator.py        # High-speed chunked Google GTX translation engine
+│   ├── tts_engine.py        # Edge-TTS neural audio generator with voice fallback
+│   ├── job_manager.py       # Job state tracking & disk recovery fallback
+│   └── parsers.py           # Multi-mode extractors for PDF, DOCX, and EPUB
+├── frontend/
+│   ├── index.html           # Modern dark-mode single-page interface
+│   ├── style.css            # Responsive CSS theme
+│   └── app.js               # Frontend state, format picker & SSE stream handler
+├── docs/
+│   ├── USER_MANUAL.md       # Complete user guide in Greek
+│   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
+├── tests/
+│   ├── test_parsers.py
+│   ├── test_exporter.py
+│   ├── test_translator.py
+│   ├── test_format_preservation.py
+│   └── test_api.py          # End-to-end integration tests
+├── temp/                    # Uploads and outputs directory (auto-created)
+│   ├── uploads/
+│   └── outputs/
+├── requirements.txt
+├── run.py                   # One-click automated launcher
+└── README.md
 ```
 
-Then open `http://localhost:8000` in your browser.
-
 ---
 
-## 🎙️ Available Voices
+## 🎙️ Available AI Voices (Φωνές)
 
-### Greek
+### Greek (Ελληνικά 🇬🇷)
+| Voice | Code | Notes |
+|---|---|---|
+| **Nestoras (Male)** | `el-GR-NestorasNeural` | *Recommended* — Natural intonation, complete dictionary coverage for acronyms & technical terms. |
+| **Athina (Female)** | `el-GR-AthinaNeural` | Natural female voice with automatic fallback to Nestoras on unknown phonetic tokens. |
+
+### English (Αγγλικά 🇬🇧 / 🇺🇸)
 | Voice | Code |
-|-------|------|
-| Athina (Female) | `el-GR-AthinaNeural` |
-| Nestoras (Male) | `el-GR-NestorasNeural` |
-
-### English
-| Voice | Code |
-|-------|------|
-| Aria (Female, US) | `en-US-AriaNeural` |
-| Guy (Male, US) | `en-US-GuyNeural` |
-| Jenny (Female, US) | `en-US-JennyNeural` |
-| Davis (Male, US) | `en-US-DavisNeural` |
-| Emma (Female, UK) | `en-GB-SoniaNeural` |
-| Ryan (Male, UK) | `en-GB-RyanNeural` |
+|---|---|
+| **Aria (Female, US)** | `en-US-AriaNeural` |
+| **Guy (Male, US)** | `en-US-GuyNeural` |
+| **Jenny (Female, US)** | `en-US-JennyNeural` |
+| **Davis (Male, US)** | `en-US-DavisNeural` |
+| **Emma (Female, UK)** | `en-GB-SoniaNeural` |
+| **Ryan (Male, UK)** | `en-GB-RyanNeural` |
 
 ---
 
-## ⚠️ Known Limitations
+## 🧪 Running Tests (Αυτοματοποιημένοι Έλεγχοι)
 
-- **`.doc` files**: Legacy Word `.doc` format is not supported. Save as `.docx` first.
-- **Scanned PDFs**: PDFs that are image-only (scanned without OCR) will not extract text. Use a PDF with real text content.
-- **Rate limiting**: Google Translate may occasionally slow down or block very rapid requests. The app includes automatic retry and rate limiting.
-- **Internet required**: Both translation and TTS require internet access.
+To run the automated verification test suite:
+
+```bash
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api"
+```
 
 ---
 
-## 🔧 Troubleshooting
+## 📄 License
 
-**"Cannot connect to backend" error in browser**
-- Make sure `python run.py` is still running in your terminal
-- Check that port 8000 is not used by another app
-
-**Translation returns original text for some chunks**
-- This is the retry fallback — occasional API hiccups won't break the whole job
-- Check your internet connection
-
-**Audiobook MP3 has silent gaps**
-- Some TTS chunks may fail if the internet drops briefly; the gaps are where retries failed
-- Re-run the audiobook job for a cleaner result
+This project is open-source and available under the [MIT License](LICENSE).
