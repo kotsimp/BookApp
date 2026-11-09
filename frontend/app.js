@@ -157,6 +157,12 @@ function selectFormat(fmt, btn) {
   const label = fmt.toUpperCase();
   const labelEl = document.getElementById('tr-format-label');
   if (labelEl) labelEl.textContent = label;
+
+  // Also update result card text if already completed
+  const metaEl = document.getElementById('tr-result-meta');
+  if (metaEl && document.getElementById('tr-result-card').classList.contains('visible')) {
+    metaEl.textContent = `Your document has been translated. Click below to download the ${label} file.`;
+  }
 }
 
 // ── Voice Selection (Audiobook Tab) ────────────────────────
@@ -371,6 +377,7 @@ function updateProgress(prefix, data) {
     setStatusBadge(prefix, 'done');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
     document.getElementById(`${prefix}-progress-step`).textContent = '✅ Complete';
+    document.getElementById(`${prefix}-start-btn`).disabled = false;
     showResult(prefix, data);
     refreshHistory();
     toast(prefix === 'tr' ? '✅ Translation complete!' : '🎉 Audiobook ready!', 'success');
@@ -423,7 +430,12 @@ function setStatusBadge(prefix, status) {
 async function downloadOutput(prefix) {
   const jobId = state[prefix].jobId;
   if (!jobId) return;
-  window.location.href = `${API}/download/${jobId}`;
+  if (prefix === 'tr') {
+    const fmt = document.getElementById('tr-output-format')?.value || 'txt';
+    window.location.href = `${API}/download/${jobId}?format=${fmt}`;
+  } else {
+    window.location.href = `${API}/download/${jobId}`;
+  }
 }
 
 function sendToAudiobook() {

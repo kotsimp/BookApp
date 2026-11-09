@@ -16,6 +16,23 @@ from backend.translator import _translate_with_retry
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_pua(text: str) -> str:
+    """Map Wingdings / Symbol Private Use Area (PUA) bullet characters to standard Unicode."""
+    pua_map = {
+        "\uf0b7": "• ",  # Wingdings round bullet
+        "\uf0a7": "• ",  # Wingdings square bullet
+        "\uf076": "✓ ",  # Checkmark
+        "\uf0d8": "➢ ",  # Arrow
+        "\uf0fc": "✔ ",  # Heavy check
+        "\uf0e0": "✉ ",  # Envelope
+        "\uf0a8": "❖ ",
+        "\uf02d": "-",
+    }
+    for pua, repl in pua_map.items():
+        text = text.replace(pua, repl)
+    return re.sub(r"[\ue000-\uf8ff]", "• ", text)
+
+
 async def translate_docx_in_place(
     input_path: str,
     output_path: str,
@@ -61,8 +78,9 @@ async def translate_docx_in_place(
 
         if not has_mixed_styles or len(runs_with_text) <= 1:
             # Uniform styling: translate full text for best grammatical quality
-            orig_text = p.text.strip()
+            orig_text = _sanitize_pua(p.text.strip())
             translated = await _translate_with_retry(orig_text, source_lang, target_lang)
+            translated = _sanitize_pua(translated)
             if p.runs:
                 p.runs[0].text = translated
                 for r in p.runs[1:]:
@@ -76,9 +94,11 @@ async def translate_docx_in_place(
             for r in p.runs:
                 if not r.text.strip():
                     continue
-                leading_ws = len(r.text) - len(r.text.lstrip())
-                trailing_ws = len(r.text) - len(r.text.rstrip())
-                tr_text = await _translate_with_retry(r.text.strip(), source_lang, target_lang)
+                sanitized_run = _sanitize_pua(r.text)
+                leading_ws = len(sanitized_run) - len(sanitized_run.lstrip())
+                trailing_ws = len(sanitized_run) - len(sanitized_run.rstrip())
+                tr_text = await _translate_with_retry(sanitized_run.strip(), source_lang, target_lang)
+                tr_text = _sanitize_pua(tr_text)
                 r.text = (" " * leading_ws) + tr_text + (" " * trailing_ws)
                 para_translated_parts.append(tr_text)
             all_translated_lines.append(" ".join(para_translated_parts))

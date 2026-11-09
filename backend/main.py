@@ -392,23 +392,47 @@ MIME_MAP = {
 
 
 @app.get("/api/download/{job_id}")
-async def download_output(job_id: str):
-    """Download the output file for a completed job."""
+async def download_output(job_id: str, format: Optional[str] = None):
+    """
+    Download the output file for a completed job.
+    If 'format' is requested (e.g. ?format=pdf), dynamically converts the translated
+    content to the requested format on-demand if it hasn't been exported yet.
+    """
     job = get_job(job_id)
+    out_dir = OUTPUT_DIR / job_id
     out_path = None
 
-    if job and job.output_path:
-        p = Path(job.output_path)
-        if p.exists():
-            out_path = p
-
-    # Fallback to inspecting the output folder on disk
-    if not out_path:
-        out_dir = OUTPUT_DIR / job_id
+    if format:
+        fmt = format.lower().lstrip(".")
+        # 1. Check if a file in the requested format already exists
         if out_dir.exists():
+            matching = [f for f in out_dir.iterdir() if f.is_file() and f.suffix.lower() == f".{fmt}"]
+            if matching:
+                matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                out_path = matching[0]
+
+        # 2. If not, generate it on-demand from the translated text
+        if not out_path and out_dir.exists():
+            txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+            if txt_files:
+                txt_file = txt_files[0]
+                txt_content = txt_file.read_text(encoding="utf-8")
+                base_name = txt_file.stem
+                out_path = export_text(txt_content, out_dir, fmt, base_name)
+                if job:
+                    job.output_path = str(out_path)
+                    job.output_format = fmt
+
+    # Fallback to existing output_path or newest file
+    if not out_path:
+        if job and job.output_path:
+            p = Path(job.output_path)
+            if p.exists():
+                out_path = p
+
+        if not out_path and out_dir.exists():
             files = [f for f in out_dir.iterdir() if f.is_file()]
             if files:
-                # Prefer exported formats or mp3 over raw txt
                 preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
                 files_to_check = preferred if preferred else files
                 files_to_check.sort(key=lambda f: f.stat().st_mtime, reverse=True)
