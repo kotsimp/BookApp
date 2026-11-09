@@ -209,7 +209,23 @@ def count_pages(file_path: str, file_type: str) -> int:
 # ---------------------------------------------------------------------------
 
 def _clean_text(text: str) -> str:
-    """Remove excessive whitespace and control characters."""
+    """Remove excessive whitespace, control characters, and proprietary Wingdings PUA symbols."""
+    # Map common Wingdings/Symbol Private Use Area (PUA) characters to standard Unicode
+    pua_map = {
+        '\uf0b7': '• ',  # Wingdings round bullet
+        '\uf0a7': '• ',  # Wingdings square bullet
+        '\uf076': '✓ ',  # Checkmark
+        '\uf0d8': '➢ ',  # Arrow
+        '\uf0fc': '✔ ',  # Heavy checkmark
+        '\uf0e0': '✉ ',  # Envelope
+        '\uf0a8': '❖ ',
+        '\uf02d': '-',
+    }
+    for pua, repl in pua_map.items():
+        text = text.replace(pua, repl)
+    # Replace any remaining Private Use Area characters with a standard bullet
+    text = re.sub(r'[\ue000-\uf8ff]', '• ', text)
+
     # Replace multiple newlines with double newline (paragraph break)
     text = re.sub(r'\n{3,}', '\n\n', text)
     # Remove null bytes and other control chars except newline/tab

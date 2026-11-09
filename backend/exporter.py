@@ -14,11 +14,69 @@ def export_txt(text: str, out_path: Path) -> Path:
 # DOCX (requires python-docx)
 def export_docx(text: str, out_path: Path) -> Path:
     from docx import Document
+    from docx.shared import Pt
+
+    # Map Wingdings / Symbol Private Use Area (PUA) bullet characters to standard Unicode
+    pua_map = {
+        "\uf0b7": "• ",  # Wingdings round bullet
+        "\uf0a7": "• ",  # Wingdings square bullet
+        "\uf076": "✓ ",  # Checkmark
+        "\uf0d8": "➢ ",  # Arrow
+        "\uf0fc": "✔ ",  # Heavy check
+        "\uf0e0": "✉ ",  # Envelope
+        "\uf0a8": "❖ ",
+        "\uf02d": "-",
+    }
+    for pua, repl in pua_map.items():
+        text = text.replace(pua, repl)
+    text = re.sub(r"[\ue000-\uf8ff]", "• ", text)
+
     doc = Document()
-    for para in text.split("\n\n"):
-        p = para.strip()
-        if p:
-            doc.add_paragraph(p)
+
+    # Split by PAGE markers to replace ASCII dividers with real Word page breaks
+    sections = re.split(r"={3,}\s*PAGE\s+\d+\s*={3,}", text)
+    pages = [s.strip() for s in sections if s.strip()]
+    if not pages:
+        pages = [text.strip()]
+
+    header_prefixes = ("ΠΡΟΣ:", "ΑΠΟ:", "ΘΕΜΑ:", "Συνημμένο:", "TO:", "FROM:", "SUBJECT:", "DATE:", "Ημερομηνία:")
+
+    for p_idx, page_content in enumerate(pages):
+        if p_idx > 0 and len(doc.paragraphs) > 0:
+            doc.add_page_break()
+
+        for block in page_content.split("\n\n"):
+            b = block.strip()
+            if not b:
+                continue
+
+            lines = b.split("\n")
+            for line in lines:
+                l = line.strip()
+                if not l:
+                    continue
+
+                # Native bullet points
+                if l.startswith("• ") or l.startswith("- ") or l.startswith("* "):
+                    bullet_text = re.sub(r"^[•\-\*]\s*", "", l)
+                    doc.add_paragraph(bullet_text, style="List Bullet")
+                # Main titles (short, uppercase)
+                elif l.isupper() and len(l) < 60:
+                    p = doc.add_paragraph()
+                    run = p.add_run(l)
+                    run.bold = True
+                    run.font.size = Pt(13)
+                # Form headers like ΠΡΟΣ: / ΘΕΜΑ:
+                elif any(l.startswith(k) for k in header_prefixes):
+                    p = doc.add_paragraph()
+                    parts = l.split(":", 1)
+                    r1 = p.add_run(parts[0] + ":")
+                    r1.bold = True
+                    if len(parts) > 1:
+                        p.add_run(parts[1])
+                else:
+                    doc.add_paragraph(l)
+
     doc.save(str(out_path))
     return out_path
 
