@@ -90,6 +90,8 @@ function removeFile(prefix) {
   document.getElementById(`${prefix}-selected-file`).classList.remove('visible');
   document.getElementById(`${prefix}-upload-zone`).style.display = '';
   document.getElementById(`${prefix}-start-btn`).disabled = true;
+  const directBtn = document.getElementById('tr-direct-polish-btn');
+  if (directBtn) directBtn.disabled = true;
   resetProgress(prefix);
   // Reset file input
   const inp = document.getElementById(`${prefix}-file-input`);
@@ -114,6 +116,8 @@ async function uploadFile(prefix, file) {
       `${(file.size / 1024 / 1024).toFixed(1)} MB · ${pages}${data.file_type.toUpperCase()} · Ready`;
 
     document.getElementById(`${prefix}-start-btn`).disabled = false;
+    const directBtn = document.getElementById('tr-direct-polish-btn');
+    if (directBtn) directBtn.disabled = false;
     toast(`✅ "${file.name}" uploaded successfully.`, 'success');
 
     // Show translate option in audiobook tab
@@ -405,6 +409,8 @@ function resetProgress(prefix) {
   document.getElementById(`${prefix}-progress-bar`).classList.add('shimmer');
   document.getElementById(`${prefix}-progress-pct`).textContent = '0%';
   document.getElementById(`${prefix}-start-btn`).disabled = true;
+  const directBtn = document.getElementById('tr-direct-polish-btn');
+  if (directBtn) directBtn.disabled = true;
 
   if (prefix === 'tr') {
     closeEditor();
@@ -791,10 +797,43 @@ function closeAiPolishModal() {
   if (btn) btn.disabled = false;
 }
 
+function openDirectPolishModal() {
+  if (!state.tr.jobId) {
+    toast('Please upload a document or paste text in Editor first.', 'error');
+    return;
+  }
+  openAiPolishModal();
+}
+
+async function openDirectEditor() {
+  const editorCard = document.getElementById('tr-editor-card');
+  editorCard.style.display = 'block';
+  editorCard.scrollIntoView({ behavior: 'smooth' });
+
+  if (state.tr.jobId) {
+    await openEditor();
+  } else {
+    document.getElementById('editor-original-text').value = '';
+    const tr = document.getElementById('editor-translated-text');
+    if (!tr.value) {
+      tr.placeholder = 'Επικολλήστε ή πληκτρολογήστε εδώ το ελληνικό κείμενο που θέλετε να επιμεληθείτε (AI Polish)...';
+    }
+    updateEditorStats();
+  }
+}
+
 async function runAiPolish() {
   const jobId = state.tr.jobId;
-  if (!jobId) {
-    toast('No translated job available.', 'error');
+
+  // If editor is open and modified, pass current editor text
+  let currentText = null;
+  const editorCard = document.getElementById('tr-editor-card');
+  if (editorCard.style.display !== 'none') {
+    currentText = document.getElementById('editor-translated-text').value;
+  }
+
+  if (!jobId && !currentText) {
+    toast('Please upload a document or paste text in Editor first.', 'error');
     return;
   }
 
@@ -881,6 +920,14 @@ async function runAiPolish() {
     if (pagesEl) pagesEl.textContent = 'Complete';
 
     toast('✨ AI Polish complete! Text has been refined.', 'success');
+
+    // Update job state and show result card so user can download the polished file in any format
+    state.tr.jobId = data.job_id;
+    showResult('tr', { has_output: true, job_id: data.job_id });
+    const meta = document.getElementById('tr-result-meta');
+    if (meta) {
+      meta.textContent = 'Your document has been polished with Gemini AI. Click below to download the file.';
+    }
 
     // If editor is open, put the polished text into it
     document.getElementById('editor-translated-text').value = data.polished_text;

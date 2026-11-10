@@ -131,9 +131,19 @@
         <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
       </div>
 
-      <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled>
-        🌐 Start Translation
-      </button>
+      <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
+        <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled style="flex:1; min-width:200px">
+          🌐 Start Translation
+        </button>
+        <button class="btn btn-secondary" id="tr-direct-polish-btn" onclick="openDirectPolishModal()" disabled style="flex:1; min-width:200px; border-color:var(--violet); color:var(--violet); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px">
+          ✨ AI Polish (Χωρίς Μετάφραση)
+        </button>
+      </div>
+      <div style="text-align:center; margin-top:12px">
+        <button type="button" class="btn-text" onclick="openDirectEditor()" style="color:var(--text-secondary); font-size:0.85rem; text-decoration:underline; background:none; border:none; cursor:pointer">
+          ✏️ Ή ανοίξτε τον Editor για επικόλληση / απευθείας έλεγχο κειμένου (Paste / Write Directly)
+        </button>
+      </div>
     </div>
 
     <!-- Progress Card -->
@@ -466,6 +476,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.5.4"></script>
+<script src="app.js?v=2.6.0"></script>
 </body>
 </html>

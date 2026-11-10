@@ -579,7 +579,10 @@ async def get_job_text(job_id: str):
     job = get_job(job_id)
     out_dir = OUTPUT_DIR / job_id
     if not out_dir.exists():
-        raise HTTPException(404, "Job output not found.")
+        if job and job.file_path and Path(job.file_path).exists():
+            out_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise HTTPException(404, "Job output not found.")
 
     txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
     translated_text = ""
@@ -595,6 +598,10 @@ async def get_job_text(job_id: str):
             original_text = "\n\n".join(f"=== PAGE {p['page']} ===\n{p['text']}" for p in pages)
         except Exception:
             pass
+
+    # If document hasn't been translated yet, populate translated_text with original for direct editing / polishing
+    if not translated_text and original_text:
+        translated_text = original_text
 
     return {
         "job_id": job_id,
@@ -674,9 +681,21 @@ async def get_polish_status(job_id: str):
 
 @app.post("/api/polish")
 async def polish_translation(req: PolishRequest):
-    """Polish and proofread translated text using Gemini API."""
-    job = get_job(req.job_id)
+    """Polish and proofread document or text directly using Gemini API (with or without prior translation)."""
+    if not req.job_id:
+        out_dir_tmp = OUTPUT_DIR / "direct"
+        out_dir_tmp.mkdir(parents=True, exist_ok=True)
+        placeholder_file = out_dir_tmp / "direct_text.txt"
+        if not placeholder_file.exists():
+            placeholder_file.write_text("", encoding="utf-8")
+        job = create_job(str(placeholder_file), "direct_text.txt", "txt")
+        job.mode = "translate"
+        req.job_id = job.job_id
+    else:
+        job = get_job(req.job_id)
+
     out_dir = OUTPUT_DIR / req.job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
     text_to_polish = req.text
 
     if req.api_key and req.api_key.strip():
@@ -685,9 +704,25 @@ async def polish_translation(req: PolishRequest):
 
     if not text_to_polish:
         txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
-        if not txt_files:
-            raise HTTPException(404, "No translated text found to polish.")
-        text_to_polish = txt_files[0].read_text(encoding="utf-8")
+        if txt_files:
+            text_to_polish = txt_files[0].read_text(encoding="utf-8")
+        elif job and job.file_path and Path(job.file_path).exists():
+            # DIRECT STANDALONE DOCUMENT POLISH: Extract text from original uploaded file
+            from backend.parsers import parse_document
+            pages = list(parse_document(job.file_path, job.file_type))
+            sections = []
+            for p in pages:
+                p_num = p.get("page", 1)
+                t = p.get("text", "").strip()
+                if t:
+                    sections.append(f"=== PAGE {p_num} ===\n{t}")
+            text_to_polish = "\n\n".join(sections)
+            if not text_to_polish.strip():
+                raise HTTPException(400, "Could not extract readable text from the uploaded document.")
+            stem = Path(job.file_name).stem
+            (out_dir / f"{stem}_original.txt").write_text(text_to_polish, encoding="utf-8")
+        else:
+            raise HTTPException(404, "No document or text found to polish.")
 
     from backend.ai_polisher import polish_text_with_gemini
 
@@ -735,21 +770,27 @@ async def polish_translation(req: PolishRequest):
         logger.error(f"AI Polishing failed: {e}", exc_info=True)
         raise HTTPException(500, f"AI Polishing failed: {str(e)}")
 
-    # Update on disk
-    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
-    if txt_files:
-        txt_file = txt_files[0]
-        txt_file.write_text(polished, encoding="utf-8")
-        base_name = txt_file.stem
-        fmt = (job.output_format if job else "docx") or "docx"
-        export_text(polished, out_dir, fmt, base_name)
-        # Also refresh other formats
-        for f in list(out_dir.iterdir()):
-            if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"]:
-                try:
-                    export_text(polished, out_dir, f.suffix.lower().lstrip("."), base_name)
-                except Exception:
-                    pass
+    # Update or create output files on disk
+    stem = Path(job.file_name).stem if job else "polished_document"
+    txt_file = out_dir / f"{stem}_translated_greek.txt"
+    txt_file.write_text(polished, encoding="utf-8")
+    base_name = txt_file.stem
+    fmt = (job.output_format if job else "docx") or "docx"
+    export_path = export_text(polished, out_dir, fmt, base_name)
+
+    # Refresh other standard formats on-demand
+    for ext in [".pdf", ".epub", ".docx"]:
+        try:
+            export_text(polished, out_dir, ext.lstrip("."), base_name)
+        except Exception:
+            pass
+
+    if job:
+        job.status = "done"
+        job.progress = 100
+        job.output_path = str(export_path)
+        job.output_format = fmt
+        job.current_step = "AI Polishing complete!"
 
     return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
 
