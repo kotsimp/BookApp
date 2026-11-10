@@ -640,6 +640,25 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     return {"status": "saved", "job_id": job_id, "output_path": str(export_path)}
 
 
+class SettingsRequest(BaseModel):
+    gemini_api_key: Optional[str] = None
+
+
+@app.get("/api/settings")
+async def get_app_settings():
+    from backend.settings_manager import get_setting
+    key = get_setting("gemini_api_key", "")
+    return {"gemini_api_key": key}
+
+
+@app.post("/api/settings")
+async def update_app_settings(req: SettingsRequest):
+    from backend.settings_manager import save_setting
+    if req.gemini_api_key is not None:
+        save_setting("gemini_api_key", req.gemini_api_key.strip())
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------
@@ -659,6 +678,10 @@ async def polish_translation(req: PolishRequest):
     job = get_job(req.job_id)
     out_dir = OUTPUT_DIR / req.job_id
     text_to_polish = req.text
+
+    if req.api_key and req.api_key.strip():
+        from backend.settings_manager import save_setting
+        save_setting("gemini_api_key", req.api_key.strip())
 
     if not text_to_polish:
         txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))

@@ -734,12 +734,32 @@ function toggleApiKeyVisibility() {
   }
 }
 
-function openAiPolishModal() {
+async function openAiPolishModal() {
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
-  const savedKey = localStorage.getItem('gemini_api_key') || '';
+  let savedKey = localStorage.getItem('gemini_api_key') || '';
+
+  // If not found in browser localStorage, load from persistent server settings
+  if (!savedKey) {
+    try {
+      const sRes = await fetch(`${API}/settings`);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        if (sData.gemini_api_key) {
+          savedKey = sData.gemini_api_key;
+          localStorage.setItem('gemini_api_key', savedKey);
+        }
+      }
+    } catch (_) {}
+  }
+
   const input = document.getElementById('gemini-api-key');
   input.value = savedKey;
+
+  const badge = document.getElementById('gemini-key-saved-badge');
+  if (badge) {
+    badge.style.display = savedKey ? 'inline' : 'none';
+  }
 
   const prog = document.getElementById('ai-polish-progress-container');
   if (prog) prog.style.display = 'none';
@@ -779,6 +799,12 @@ async function runAiPolish() {
     return;
   }
   localStorage.setItem('gemini_api_key', apiKey);
+  // Persist permanently on server settings as well
+  fetch(`${API}/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gemini_api_key: apiKey }),
+  }).catch(() => {});
 
   const style = document.getElementById('ai-polish-style').value;
   const progEl = document.getElementById('ai-polish-progress-container');

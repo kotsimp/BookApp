@@ -31,6 +31,7 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment variables
+# Environment variables and sensitive settings
 .env
 .env.local
+config/settings.json

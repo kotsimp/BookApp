@@ -115,7 +115,8 @@ async def polish_text_with_gemini(
     Splits into manageable chunks/pages if multiple pages are present,
     reporting real-time progress through progress_callback.
     """
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    from backend.settings_manager import get_setting
+    key = api_key or os.environ.get("GEMINI_API_KEY") or get_setting("gemini_api_key")
     if not key:
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 

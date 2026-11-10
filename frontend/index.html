@@ -390,9 +390,14 @@
           <input type="password" id="gemini-api-key" class="form-input" placeholder="AIzaSy..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="padding-right:40px" />
           <button type="button" onclick="toggleApiKeyVisibility()" style="position:absolute; right:10px; background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1rem" title="Show / Hide Key" id="btn-toggle-key">👁️</button>
         </div>
-        <small style="color:var(--text-muted); font-size:0.75rem; display:block; margin-top:4px">
-          Key is saved safely in your browser (localStorage). 100% free with no credit card required.
-        </small>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px">
+          <small style="color:var(--text-muted); font-size:0.75rem">
+            Key is saved permanently on your device & server.
+          </small>
+          <span id="gemini-key-saved-badge" style="display:none; color:var(--emerald); font-size:0.75rem; font-weight:500">
+            ✓ Saved
+          </span>
+        </div>
       </div>
 
       <!-- AI Polish Progress Bar -->
@@ -461,6 +466,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.5.2"></script>
+<script src="app.js?v=2.5.3"></script>
 </body>
 </html>
