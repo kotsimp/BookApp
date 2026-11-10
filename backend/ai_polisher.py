@@ -73,10 +73,35 @@ async def polish_text_with_gemini(
     return await _call_gemini_api(text, key, system_instruction)
 
 
+_CACHED_WORKING_MODEL: Optional[str] = None
+
+
+async def _get_available_models(api_key: str, session: aiohttp.ClientSession) -> list[str]:
+    """Queries Gemini ModelService to get the exact list of supported models for this API key."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                models = data.get("models", [])
+                valid_models = [
+                    m["name"].replace("models/", "")
+                    for m in models
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                logger.info(f"Discovered {len(valid_models)} Gemini models: {valid_models}")
+                return valid_models
+            else:
+                err = await resp.text()
+                logger.warning(f"Could not list models ({resp.status}): {err}")
+    except Exception as e:
+        logger.warning(f"Error querying Gemini ModelService: {e}")
+    return []
+
+
 async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) -> str:
-    """Invokes Gemini 1.5 Flash via direct REST call."""
-    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    """Invokes Gemini generateContent with auto-discovery of supported models and resilient fallback."""
+    global _CACHED_WORKING_MODEL
 
     payload = {
         "contents": [
@@ -94,18 +119,67 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
-            if resp.status != 200:
-                err_text = await resp.text()
-                logger.error(f"Gemini API error ({resp.status}): {err_text}")
-                raise RuntimeError(f"Gemini API error ({resp.status}): {err_text}")
+        # 1. Determine candidate models
+        candidates = []
+        if _CACHED_WORKING_MODEL:
+            candidates.append(_CACHED_WORKING_MODEL)
 
-            result = await resp.json()
+        discovered = await _get_available_models(api_key, session)
+        if discovered:
+            # Sort with preferred flash models first
+            preferences = [
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-flash-002",
+                "gemini-1.5-flash-latest",
+                "gemini-1.5-flash",
+                "gemini-2.5-pro",
+                "gemini-1.5-pro",
+            ]
+            for pref in preferences:
+                if pref in discovered and pref not in candidates:
+                    candidates.append(pref)
+            for m in discovered:
+                if m not in candidates:
+                    candidates.append(m)
+
+        # Fallback list if discovery returned nothing
+        fallback_list = [
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-flash-002",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-pro",
+        ]
+        for fb in fallback_list:
+            if fb not in candidates:
+                candidates.append(fb)
+
+        last_error = None
+        for model in candidates:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             try:
-                candidates = result.get("candidates", [])
-                if not candidates:
-                    raise RuntimeError("No response returned from Gemini API.")
-                polished = candidates[0]["content"]["parts"][0]["text"].strip()
-                return polished
-            except (KeyError, IndexError) as e:
-                raise RuntimeError(f"Unexpected response structure from Gemini API: {result}")
+                async with session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        cand_list = result.get("candidates", [])
+                        if not cand_list:
+                            continue
+                        polished = cand_list[0]["content"]["parts"][0]["text"].strip()
+                        _CACHED_WORKING_MODEL = model
+                        logger.info(f"Gemini API success using model: {model}")
+                        return polished
+                    elif resp.status == 404:
+                        logger.info(f"Model {model} returned 404, trying next candidate...")
+                        continue
+                    else:
+                        err_text = await resp.text()
+                        last_error = f"Gemini API error ({resp.status}): {err_text}"
+                        logger.warning(f"Model {model} failed: {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Call to {model} failed: {e}")
+
+        raise RuntimeError(last_error or "All Gemini candidate models failed.")
