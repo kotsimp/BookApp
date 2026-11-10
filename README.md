@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-6%2F6%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-7%2F7%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), and **generate professional AI audiobooks** using Microsoft Edge neural voices.
 
@@ -24,6 +24,9 @@ A modern, high-performance local web application to **translate documents** betw
 |---|---|
 | **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API (milliseconds per chunk, zero bot-blocking). |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
+| **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
+| **AI Polish & Proofreading** | Google Gemini AI integration to refine, correct grammar, and adapt stylistic tone (Formal Administrative, Technical, Natural). |
+| **Custom Glossary & Terminology** | Custom terminology mapping engine with regex word boundaries to enforce exact translations for domain terms. |
 | **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
 | **Bullet & Glyph Normalization** | Replaces proprietary Wingdings/PUA symbols with standard Unicode bullets (`•`) and native Word `List Bullet` paragraphs. |
 | **Multi-Format Export** | Export translated output to **DOCX**, **PDF** (Unicode Greek with TrueType fonts), **EPUB**, or **TXT**. |
@@ -96,6 +99,7 @@ BookApp/
 │   ├── test_translator.py
 │   ├── test_format_preservation.py
 │   ├── test_dynamic_download.py # On-demand format conversion tests
+│   ├── test_editor_glossary_ai.py # Editor, Glossary & AI Polish tests
 │   └── test_api.py          # End-to-end integration tests
 ├── temp/                    # Uploads and outputs directory (auto-created)
 │   ├── uploads/

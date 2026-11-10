@@ -81,6 +81,22 @@ class AudiobookRequest(BaseModel):
     use_translated: bool = False  # if True, use the translated text from a prior translation job
 
 
+class UpdateTextRequest(BaseModel):
+    translated_text: str
+
+
+class PolishRequest(BaseModel):
+    job_id: str
+    text: Optional[str] = None
+    style: str = "formal"
+    api_key: Optional[str] = None
+
+
+class GlossaryTermRequest(BaseModel):
+    source: str
+    target: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -551,6 +567,151 @@ async def delete_job(job_id: str):
     from backend.job_manager import _jobs
     _jobs.pop(job_id, None)
     return {"deleted": job_id}
+
+
+# ---------------------------------------------------------------------------
+# Text Review, Editing & Re-Export
+# ---------------------------------------------------------------------------
+
+@app.get("/api/jobs/{job_id}/text")
+async def get_job_text(job_id: str):
+    """Retrieve original and translated text for a job."""
+    job = get_job(job_id)
+    out_dir = OUTPUT_DIR / job_id
+    if not out_dir.exists():
+        raise HTTPException(404, "Job output not found.")
+
+    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+    translated_text = ""
+    if txt_files:
+        translated_text = txt_files[0].read_text(encoding="utf-8")
+
+    # Read original text if available
+    original_text = ""
+    if job and job.file_path and Path(job.file_path).exists():
+        try:
+            from backend.parsers import parse_document
+            pages = list(parse_document(job.file_path, job.file_type))
+            original_text = "\n\n".join(f"=== PAGE {p['page']} ===\n{p['text']}" for p in pages)
+        except Exception:
+            pass
+
+    return {
+        "job_id": job_id,
+        "file_name": job.file_name if job else "",
+        "translated_text": translated_text,
+        "original_text": original_text,
+    }
+
+
+@app.put("/api/jobs/{job_id}/text")
+async def update_job_text(job_id: str, req: UpdateTextRequest):
+    """Save user edits to the translated text and re-export current outputs."""
+    job = get_job(job_id)
+    out_dir = OUTPUT_DIR / job_id
+    if not out_dir.exists():
+        raise HTTPException(404, "Job output not found.")
+
+    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+    if not txt_files:
+        stem = Path(job.file_name).stem if job else job_id
+        txt_file = out_dir / f"{stem}_translated_greek.txt"
+    else:
+        txt_file = txt_files[0]
+
+    # Save edited text
+    txt_file.write_text(req.translated_text, encoding="utf-8")
+    base_name = txt_file.stem
+
+    # Re-export active format if job has one
+    fmt = (job.output_format if job else "docx") or "docx"
+    export_path = export_text(req.translated_text, out_dir, fmt, base_name)
+    if job:
+        job.output_path = str(export_path)
+
+    # Invalidate older non-txt exported files so download endpoint serves the new edited version
+    for f in list(out_dir.iterdir()):
+        if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"] and f.name != export_path.name:
+            try:
+                export_text(req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name)
+            except Exception:
+                pass
+
+    return {"status": "saved", "job_id": job_id, "output_path": str(export_path)}
+
+
+# ---------------------------------------------------------------------------
+# AI Polish via Gemini
+# ---------------------------------------------------------------------------
+
+@app.post("/api/polish")
+async def polish_translation(req: PolishRequest):
+    """Polish and proofread translated text using Gemini API."""
+    job = get_job(req.job_id)
+    out_dir = OUTPUT_DIR / req.job_id
+    text_to_polish = req.text
+
+    if not text_to_polish:
+        txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+        if not txt_files:
+            raise HTTPException(404, "No translated text found to polish.")
+        text_to_polish = txt_files[0].read_text(encoding="utf-8")
+
+    from backend.ai_polisher import polish_text_with_gemini
+    try:
+        polished = await polish_text_with_gemini(
+            text=text_to_polish,
+            api_key=req.api_key,
+            style=req.style,
+        )
+    except Exception as e:
+        logger.error(f"AI Polishing failed: {e}", exc_info=True)
+        raise HTTPException(500, f"AI Polishing failed: {str(e)}")
+
+    # Update on disk
+    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+    if txt_files:
+        txt_file = txt_files[0]
+        txt_file.write_text(polished, encoding="utf-8")
+        base_name = txt_file.stem
+        fmt = (job.output_format if job else "docx") or "docx"
+        export_text(polished, out_dir, fmt, base_name)
+        # Also refresh other formats
+        for f in list(out_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"]:
+                try:
+                    export_text(polished, out_dir, f.suffix.lower().lstrip("."), base_name)
+                except Exception:
+                    pass
+
+    return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
+
+
+# ---------------------------------------------------------------------------
+# Glossary Management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/glossary")
+async def get_glossary_terms():
+    """Retrieve all custom glossary mappings."""
+    from backend.glossary import load_glossary
+    return load_glossary()
+
+
+@app.post("/api/glossary")
+async def add_glossary_term(req: GlossaryTermRequest):
+    """Add or update a glossary term."""
+    from backend.glossary import set_term
+    updated = set_term(req.source, req.target)
+    return {"status": "saved", "glossary": updated}
+
+
+@app.delete("/api/glossary/{term}")
+async def remove_glossary_term(term: str):
+    """Delete a glossary term."""
+    from backend.glossary import delete_term
+    updated = delete_term(term)
+    return {"status": "deleted", "glossary": updated}
 
 
 # ---------------------------------------------------------------------------

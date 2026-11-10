@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.3.0" />
+  <link rel="stylesheet" href="style.css?v=2.4.0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -34,6 +34,10 @@
     <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-audiobook" id="btn-audiobook" onclick="switchTab('audiobook')">
       <span class="tab-icon">🎧</span>
       <span class="tab-label">Generate Audiobook</span>
+    </button>
+    <button class="tab-btn" id="btn-glossary" onclick="openGlossaryModal()" style="margin-left:auto">
+      <span class="tab-icon">⚙️</span>
+      <span class="tab-label">Glossary (Γλωσσάρι)</span>
     </button>
   </nav>
 
@@ -161,9 +165,59 @@
         <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
           ⬇️ Download <span id="tr-format-label">TXT</span> File
         </a>
+        <button class="btn btn-secondary" onclick="openEditor()" id="tr-edit-btn" style="display:inline-flex; align-items:center; gap:8px">
+          ✏️ Review &amp; Edit (Έλεγχος)
+        </button>
+        <button class="btn btn-secondary" onclick="openAiPolishModal()" id="tr-polish-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet)">
+          ✨ AI Polish (Gemini)
+        </button>
         <button class="btn btn-secondary" onclick="sendToAudiobook()" id="tr-to-audio-btn" style="display:inline-flex; align-items:center; gap:8px">
           🎧 Convert to Greek Audiobook
         </button>
+      </div>
+    </div>
+
+    <!-- Editor Card (Review & Edit Translation) -->
+    <div class="card editor-card" id="tr-editor-card" style="display:none; margin-top:20px">
+      <div class="editor-header">
+        <div class="editor-title">
+          <span class="card-title-icon">✏️</span>
+          <span>Review &amp; Edit Translation (Έλεγχος &amp; Διόρθωση)</span>
+        </div>
+        <div class="editor-actions">
+          <button class="btn-sm btn-outline" onclick="toggleFindReplace()" id="btn-toggle-find">🔍 Find &amp; Replace</button>
+          <button class="btn-sm btn-ai" onclick="openAiPolishModal()">✨ AI Polish</button>
+          <button class="btn-sm btn-primary" onclick="saveEditorText()" id="btn-save-editor">💾 Save &amp; Update Files</button>
+          <button class="btn-sm btn-icon" onclick="closeEditor()" title="Close Editor">✕</button>
+        </div>
+      </div>
+
+      <!-- Find & Replace Toolbar -->
+      <div class="find-replace-bar" id="find-replace-bar" style="display:none">
+        <input type="text" id="find-input" class="form-input-sm" placeholder="Find text..." />
+        <input type="text" id="replace-input" class="form-input-sm" placeholder="Replace with..." />
+        <button class="btn-sm btn-outline" onclick="applyReplace(false)">Replace</button>
+        <button class="btn-sm btn-primary" onclick="applyReplace(true)">Replace All</button>
+      </div>
+
+      <!-- Editor Panes -->
+      <div class="editor-view-toggle">
+        <div style="display:flex; gap:6px">
+          <button class="view-btn active" id="btn-view-split" onclick="setEditorView('split')">Split View (Original ↔ Translation)</button>
+          <button class="view-btn" id="btn-view-full" onclick="setEditorView('full')">Full Editor</button>
+        </div>
+        <span class="editor-stats" id="editor-stats">0 words · 0 characters</span>
+      </div>
+
+      <div class="editor-grid" id="editor-grid">
+        <div class="editor-pane" id="editor-orig-pane">
+          <label class="editor-label">Original Document Text (Read-Only)</label>
+          <textarea id="editor-original-text" class="editor-textarea" readonly placeholder="Original text will appear here..."></textarea>
+        </div>
+        <div class="editor-pane" id="editor-trans-pane">
+          <label class="editor-label">Editable Translated Text (Επεξεργασία Μετάφρασης)</label>
+          <textarea id="editor-translated-text" class="editor-textarea" oninput="updateEditorStats()" placeholder="Translated text will appear here..."></textarea>
+        </div>
       </div>
     </div>
 
@@ -306,9 +360,91 @@
 
 </div>
 
+<!-- AI Polish Modal -->
+<div class="modal-overlay" id="ai-polish-modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">✨ AI Translation Polish &amp; Proofreading</div>
+      <button class="modal-close" onclick="closeAiPolishModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px">
+        Refine the Greek translation into flawless, natural language using Google Gemini AI. Select your preferred style:
+      </p>
+
+      <div class="form-group">
+        <label class="form-label" for="ai-polish-style">Stylistic Tone / Ύφος Κειμένου</label>
+        <select class="form-select" id="ai-polish-style">
+          <option value="formal">🏛️ Επίσημο &amp; Υπηρεσιακό (Official Administrative / Public Sector)</option>
+          <option value="technical">💻 Τεχνικό &amp; Ακριβές (Technical Documentation / IT)</option>
+          <option value="natural">📖 Φυσική Ροή &amp; Λογοτεχνικό (Natural &amp; Fluent Greek)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" style="display:flex; justify-content:space-between">
+          <span>Gemini API Key (Free)</span>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--violet); font-size:0.8rem; text-decoration:underline">Get Free Key ↗</a>
+        </label>
+        <input type="password" id="gemini-api-key" class="form-input" placeholder="Paste your Gemini API key here..." />
+        <small style="color:var(--text-muted); font-size:0.75rem; display:block; margin-top:4px">
+          Key is saved safely in your browser (localStorage). 100% free with no credit card required.
+        </small>
+      </div>
+
+      <div id="ai-polish-status" style="display:none; margin:16px 0; padding:12px; border-radius:var(--radius-md); background:rgba(168,85,247,0.1); color:var(--violet); font-size:0.85rem; text-align:center">
+        <span class="status-dot"></span> AI is analyzing and polishing the text... Please wait.
+      </div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px">
+        <button class="btn btn-secondary" onclick="closeAiPolishModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-run-polish" onclick="runAiPolish()">✨ Polish Translation</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Glossary Modal -->
+<div class="modal-overlay" id="glossary-modal" style="display:none">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ Custom Terminology &amp; Glossary (Γλωσσάρι Όρων)</div>
+      <button class="modal-close" onclick="closeGlossaryModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px">
+        Define custom terminology mappings. Technical terms and abbreviations will be translated accurately according to these rules.
+      </p>
+
+      <!-- Add New Term Form -->
+      <div class="glossary-add-form">
+        <input type="text" id="glossary-source" class="form-input" placeholder="English Term (e.g. Server Room)" />
+        <input type="text" id="glossary-target" class="form-input" placeholder="Greek Term (e.g. Αίθουσα Διακομιστών)" />
+        <button class="btn btn-primary" onclick="addGlossaryRule()">➕ Add Term</button>
+      </div>
+
+      <!-- Glossary Terms Table -->
+      <div class="glossary-table-wrapper">
+        <table class="glossary-table">
+          <thead>
+            <tr>
+              <th>Source Term (English)</th>
+              <th>Target Translation (Greek)</th>
+              <th style="width:50px">Action</th>
+            </tr>
+          </thead>
+          <tbody id="glossary-tbody">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.3.0"></script>
+<script src="app.js?v=2.4.0"></script>
 </body>
 </html>

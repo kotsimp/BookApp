@@ -188,6 +188,8 @@ async def translate_document(
     # Write output file
     update_job(job_id, current_step="Writing translated file...", progress=95)
     output_text = "\n".join(output_lines)
+    from backend.glossary import apply_glossary
+    output_text = apply_glossary(output_text, target_lang)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

@@ -600,6 +600,274 @@ function escHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Translation Editor ──────────────────────────────────────
+async function openEditor() {
+  const jobId = state.tr.jobId;
+  if (!jobId) {
+    toast('No translated document to edit.', 'error');
+    return;
+  }
+
+  const editorCard = document.getElementById('tr-editor-card');
+  editorCard.style.display = 'block';
+
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/text`);
+    if (!res.ok) throw new Error('Could not fetch document text');
+    const data = await res.json();
+
+    document.getElementById('editor-original-text').value = data.original_text || '';
+    document.getElementById('editor-translated-text').value = data.translated_text || '';
+    updateEditorStats();
+    editorCard.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    toast(`Failed to load text for editor: ${err.message}`, 'error');
+  }
+}
+
+function closeEditor() {
+  document.getElementById('tr-editor-card').style.display = 'none';
+}
+
+function setEditorView(mode) {
+  const grid = document.getElementById('editor-grid');
+  const btnSplit = document.getElementById('btn-view-split');
+  const btnFull = document.getElementById('btn-view-full');
+
+  if (mode === 'full') {
+    grid.classList.add('full-view');
+    btnFull.classList.add('active');
+    btnSplit.classList.remove('active');
+  } else {
+    grid.classList.remove('full-view');
+    btnSplit.classList.add('active');
+    btnFull.classList.remove('active');
+  }
+}
+
+function updateEditorStats() {
+  const text = document.getElementById('editor-translated-text').value || '';
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const chars = text.length;
+  document.getElementById('editor-stats').textContent = `${words.toLocaleString()} words · ${chars.toLocaleString()} characters`;
+}
+
+function toggleFindReplace() {
+  const bar = document.getElementById('find-replace-bar');
+  bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
+  if (bar.style.display === 'flex') {
+    document.getElementById('find-input').focus();
+  }
+}
+
+function applyReplace(replaceAll = false) {
+  const findVal = document.getElementById('find-input').value;
+  const replVal = document.getElementById('replace-input').value;
+  if (!findVal) {
+    toast('Please enter text to find.', 'error');
+    return;
+  }
+
+  const textarea = document.getElementById('editor-translated-text');
+  let text = textarea.value;
+
+  if (replaceAll) {
+    const count = (text.split(findVal).length - 1);
+    text = text.replaceAll(findVal, replVal);
+    textarea.value = text;
+    updateEditorStats();
+    toast(`Replaced ${count} occurrences.`, 'success');
+  } else {
+    if (text.includes(findVal)) {
+      textarea.value = text.replace(findVal, replVal);
+      updateEditorStats();
+      toast('Replaced first occurrence.', 'success');
+    } else {
+      toast('Text not found.', 'info');
+    }
+  }
+}
+
+async function saveEditorText() {
+  const jobId = state.tr.jobId;
+  if (!jobId) return;
+
+  const text = document.getElementById('editor-translated-text').value;
+  const btn = document.getElementById('btn-save-editor');
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving...';
+
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/text`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ translated_text: text }),
+    });
+
+    if (!res.ok) throw new Error('Failed to save corrections');
+    toast('✅ Corrections saved and export files updated!', 'success');
+
+    // Also update download button URL
+    const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
+    const dlBtn = document.getElementById('tr-download-btn');
+    if (dlBtn) dlBtn.href = `${API}/download/${jobId}?format=${fmt}`;
+  } catch (err) {
+    toast(`Save error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Save & Update Files';
+  }
+}
+
+// ── AI Polish via Gemini ───────────────────────────────────
+function openAiPolishModal() {
+  const modal = document.getElementById('ai-polish-modal');
+  modal.style.display = 'flex';
+  const savedKey = localStorage.getItem('gemini_api_key') || '';
+  document.getElementById('gemini-api-key').value = savedKey;
+}
+
+function closeAiPolishModal() {
+  document.getElementById('ai-polish-modal').style.display = 'none';
+  document.getElementById('ai-polish-status').style.display = 'none';
+  const btn = document.getElementById('btn-run-polish');
+  if (btn) btn.disabled = false;
+}
+
+async function runAiPolish() {
+  const jobId = state.tr.jobId;
+  if (!jobId) {
+    toast('No translated job available.', 'error');
+    return;
+  }
+
+  const apiKey = document.getElementById('gemini-api-key').value.trim();
+  if (!apiKey) {
+    toast('Please enter your Gemini API Key.', 'error');
+    return;
+  }
+  localStorage.setItem('gemini_api_key', apiKey);
+
+  const style = document.getElementById('ai-polish-style').value;
+  const statusEl = document.getElementById('ai-polish-status');
+  const btn = document.getElementById('btn-run-polish');
+  statusEl.style.display = 'block';
+  btn.disabled = true;
+
+  // If editor is open and modified, pass current editor text
+  let currentText = null;
+  const editorCard = document.getElementById('tr-editor-card');
+  if (editorCard.style.display !== 'none') {
+    currentText = document.getElementById('editor-translated-text').value;
+  }
+
+  try {
+    const res = await fetch(`${API}/polish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: jobId,
+        text: currentText,
+        style: style,
+        api_key: apiKey,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'AI Polishing failed');
+    }
+
+    const data = await res.json();
+    toast('✨ AI Polish complete! Text has been refined.', 'success');
+
+    // If editor is open, put the polished text into it
+    document.getElementById('editor-translated-text').value = data.polished_text;
+    updateEditorStats();
+    if (editorCard.style.display === 'none') {
+      openEditor();
+    }
+    closeAiPolishModal();
+  } catch (err) {
+    toast(`AI Error: ${err.message}`, 'error');
+    statusEl.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+// ── Glossary Management ────────────────────────────────────
+async function openGlossaryModal() {
+  document.getElementById('glossary-modal').style.display = 'flex';
+  await loadGlossary();
+}
+
+function closeGlossaryModal() {
+  document.getElementById('glossary-modal').style.display = 'none';
+}
+
+async function loadGlossary() {
+  const tbody = document.getElementById('glossary-tbody');
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted)">Loading terms...</td></tr>';
+
+  try {
+    const res = await fetch(`${API}/glossary`);
+    const terms = await res.json();
+    const entries = Object.entries(terms);
+
+    if (entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted)">No glossary terms yet. Add one above!</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = entries.map(([src, tgt]) => `
+      <tr>
+        <td><strong>${escHtml(src)}</strong></td>
+        <td>${escHtml(tgt)}</td>
+        <td style="text-align:center">
+          <button class="glossary-del-btn" onclick="deleteGlossaryRule('${escHtml(src)}')" title="Delete term">✕</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="3" style="color:#f87171">Failed to load glossary: ${err.message}</td></tr>`;
+  }
+}
+
+async function addGlossaryRule() {
+  const src = document.getElementById('glossary-source').value.trim();
+  const tgt = document.getElementById('glossary-target').value.trim();
+  if (!src || !tgt) {
+    toast('Please enter both source and target terms.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/glossary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: src, target: tgt }),
+    });
+    if (!res.ok) throw new Error('Failed to add term');
+    document.getElementById('glossary-source').value = '';
+    document.getElementById('glossary-target').value = '';
+    toast(`Added "${src}" ➔ "${tgt}"`, 'success');
+    await loadGlossary();
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'error');
+  }
+}
+
+async function deleteGlossaryRule(term) {
+  try {
+    const res = await fetch(`${API}/glossary/${encodeURIComponent(term)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete term');
+    toast(`Deleted term "${term}"`, 'info');
+    await loadGlossary();
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'error');
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────
 async function init() {
   // Check backend is reachable

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 from backend.translator import _translate_with_retry
+from backend.glossary import apply_glossary
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def translate_docx_in_place(
             # Uniform styling: translate full text for best grammatical quality
             orig_text = _sanitize_pua(p.text.strip())
             translated = await _translate_with_retry(orig_text, source_lang, target_lang)
-            translated = _sanitize_pua(translated)
+            translated = apply_glossary(_sanitize_pua(translated), target_lang)
             if p.runs:
                 p.runs[0].text = translated
                 for r in p.runs[1:]:
@@ -98,7 +99,7 @@ async def translate_docx_in_place(
                 leading_ws = len(sanitized_run) - len(sanitized_run.lstrip())
                 trailing_ws = len(sanitized_run) - len(sanitized_run.rstrip())
                 tr_text = await _translate_with_retry(sanitized_run.strip(), source_lang, target_lang)
-                tr_text = _sanitize_pua(tr_text)
+                tr_text = apply_glossary(_sanitize_pua(tr_text), target_lang)
                 r.text = (" " * leading_ws) + tr_text + (" " * trailing_ws)
                 para_translated_parts.append(tr_text)
             all_translated_lines.append(" ".join(para_translated_parts))
@@ -150,16 +151,19 @@ async def translate_epub_in_place(
 
             if len(tag.find_all()) == 0:
                 tr = await _translate_with_retry(orig_text, source_lang, target_lang)
+                tr = apply_glossary(tr, target_lang)
                 tag.string = tr
                 all_translated_lines.append(tr)
             else:
                 for child in list(tag.children):
                     if isinstance(child, NavigableString) and child.strip():
                         tr = await _translate_with_retry(str(child).strip(), source_lang, target_lang)
+                        tr = apply_glossary(tr, target_lang)
                         child.replace_with(tr)
                         all_translated_lines.append(tr)
                     elif hasattr(child, "get_text") and child.get_text(strip=True):
                         tr = await _translate_with_retry(child.get_text(strip=True), source_lang, target_lang)
+                        tr = apply_glossary(tr, target_lang)
                         child.string = tr
                         all_translated_lines.append(tr)
 

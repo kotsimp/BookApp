@@ -1,0 +1,16 @@
+{
+  "Server Room": "Αίθουσα Διακομιστών (Server Room)",
+  "server room": "αίθουσα διακομιστών",
+  "File Server": "Διακομιστής Αρχείων (File Server)",
+  "file server": "διακομιστής αρχείων",
+  "in-house applications": "εσωτερικές εφαρμογές (in-house applications)",
+  "In-house applications": "Εσωτερικές εφαρμογές (in-house applications)",
+  "in house applications": "εσωτερικές εφαρμογές",
+  "UPS": "Σύστημα Αδιάλειπτης Τροφοδοσίας (UPS)",
+  "online double conversion": "online διπλής μετατροπής",
+  "double conversion": "διπλής μετατροπής",
+  "backup": "αντίγραφο ασφαλείας (backup)",
+  "data loss": "απώλεια δεδομένων",
+  "power outage": "διακοπή ρεύματος",
+  "voltage fluctuations": "διακυμάνσεις τάσης"
+}
