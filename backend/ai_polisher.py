@@ -8,8 +8,9 @@ import os
 import re
 import json
 import logging
+import asyncio
 import aiohttp
-from typing import Optional
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +40,79 @@ STYLE_PROMPTS = {
     ),
 }
 
+# Cached discoveries to avoid querying Google ModelService on every single page
+_CACHED_WORKING_MODEL: Optional[str] = None
+_CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
+
+EXCLUDE_PATTERNS = [
+    "-tts", "-image", "-audio", "-transcribe", "clip", "banana",
+    "robotics", "customtools", "computer-use", "argon"
+]
+
+PREFERRED_FLASH_MODELS = [
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-002",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-pro-latest",
+    "gemini-2.5-pro",
+    "gemini-1.5-pro",
+]
+
+
+async def _get_available_models(api_key: str, session: aiohttp.ClientSession) -> list[str]:
+    """Queries Gemini ModelService to get supported text-generation models for this API key."""
+    global _CACHED_AVAILABLE_MODELS
+    if _CACHED_AVAILABLE_MODELS:
+        return _CACHED_AVAILABLE_MODELS
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                models = data.get("models", [])
+                valid_models = []
+                for m in models:
+                    name = m.get("name", "").replace("models/", "")
+                    methods = m.get("supportedGenerationMethods", [])
+                    if "generateContent" not in methods:
+                        continue
+                    # Skip audio/image/specialized models
+                    if any(p in name.lower() for p in EXCLUDE_PATTERNS):
+                        continue
+                    valid_models.append(name)
+
+                logger.info(f"Discovered {len(valid_models)} valid text Gemini models: {valid_models}")
+                _CACHED_AVAILABLE_MODELS = valid_models
+                return valid_models
+            else:
+                err = await resp.text()
+                logger.warning(f"Could not list models ({resp.status}): {err}")
+    except Exception as e:
+        logger.warning(f"Error querying Gemini ModelService: {e}")
+    return []
+
 
 async def polish_text_with_gemini(
     text: str,
     api_key: Optional[str] = None,
     style: str = "formal",
     original_text: Optional[str] = None,
+    progress_callback: Optional[Callable[[int, int], Any]] = None,
 ) -> str:
     """
     Polishes and proofreads translated text using Google's Gemini API.
-    Splits into manageable chunks if text is very large.
+    Splits into manageable chunks/pages if multiple pages are present,
+    reporting real-time progress through progress_callback.
     """
     key = api_key or os.environ.get("GEMINI_API_KEY")
     if not key:
@@ -59,48 +123,42 @@ async def polish_text_with_gemini(
     # If document has multiple pages marked by dividers, polish section by section
     page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
     if len(page_sections) > 1:
-        polished_parts = []
-        for part in page_sections:
-            if re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", part.strip()):
-                polished_parts.append(part)
-            elif part.strip():
-                polished = await _call_gemini_api(part.strip(), key, system_instruction)
-                polished_parts.append(polished)
-            else:
-                polished_parts.append(part)
+        # Filter content pages to polish
+        content_items = [
+            (idx, part) for idx, part in enumerate(page_sections)
+            if not re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", part.strip()) and part.strip()
+        ]
+        total_pages = max(1, len(content_items))
+        polished_parts = list(page_sections)
+
+        for current_idx, (orig_idx, part_text) in enumerate(content_items, start=1):
+            if progress_callback:
+                try:
+                    res = progress_callback(current_idx, total_pages)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as ex:
+                    logger.warning(f"Progress callback error: {ex}")
+
+            logger.info(f"Polishing page {current_idx} of {total_pages}...")
+            polished = await _call_gemini_api(part_text.strip(), key, system_instruction)
+            polished_parts[orig_idx] = polished
+
         return "\n\n".join(polished_parts)
+
+    if progress_callback:
+        try:
+            res = progress_callback(1, 1)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception:
+            pass
 
     return await _call_gemini_api(text, key, system_instruction)
 
 
-_CACHED_WORKING_MODEL: Optional[str] = None
-
-
-async def _get_available_models(api_key: str, session: aiohttp.ClientSession) -> list[str]:
-    """Queries Gemini ModelService to get the exact list of supported models for this API key."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    try:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                models = data.get("models", [])
-                valid_models = [
-                    m["name"].replace("models/", "")
-                    for m in models
-                    if "generateContent" in m.get("supportedGenerationMethods", [])
-                ]
-                logger.info(f"Discovered {len(valid_models)} Gemini models: {valid_models}")
-                return valid_models
-            else:
-                err = await resp.text()
-                logger.warning(f"Could not list models ({resp.status}): {err}")
-    except Exception as e:
-        logger.warning(f"Error querying Gemini ModelService: {e}")
-    return []
-
-
 async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) -> str:
-    """Invokes Gemini generateContent with auto-discovery of supported models and resilient fallback."""
+    """Invokes Gemini generateContent with auto-discovery prioritizing ultra-fast Flash models."""
     global _CACHED_WORKING_MODEL
 
     payload = {
@@ -118,44 +176,35 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
         }
     }
 
-    async with aiohttp.ClientSession() as session:
-        # 1. Determine candidate models
+    # Set 30s timeout so we never hang indefinitely on slow models
+    client_timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=client_timeout) as session:
         candidates = []
-        if _CACHED_WORKING_MODEL:
+
+        # If a fast working model was already cached (and is not slow gemma), try it first
+        if _CACHED_WORKING_MODEL and not _CACHED_WORKING_MODEL.startswith("gemma"):
             candidates.append(_CACHED_WORKING_MODEL)
 
         discovered = await _get_available_models(api_key, session)
         if discovered:
-            # Sort with preferred flash models first
-            preferences = [
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-exp",
-                "gemini-1.5-flash-002",
-                "gemini-1.5-flash-latest",
-                "gemini-1.5-flash",
-                "gemini-2.5-pro",
-                "gemini-1.5-pro",
-            ]
-            for pref in preferences:
+            # 1. Preferred Flash models first
+            for pref in PREFERRED_FLASH_MODELS:
                 if pref in discovered and pref not in candidates:
                     candidates.append(pref)
+
+            # 2. Other non-gemma models
             for m in discovered:
-                if m not in candidates:
+                if not m.startswith("gemma") and m not in candidates:
                     candidates.append(m)
 
-        # Fallback list if discovery returned nothing
-        fallback_list = [
-            "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash",
-            "gemini-pro",
-        ]
-        for fb in fallback_list:
-            if fb not in candidates:
-                candidates.append(fb)
+            # 3. Gemma models as last resort
+            for m in discovered:
+                if m.startswith("gemma") and m not in candidates:
+                    candidates.append(m)
+        else:
+            for fb in PREFERRED_FLASH_MODELS:
+                if fb not in candidates:
+                    candidates.append(fb)
 
         last_error = None
         for model in candidates:
@@ -172,7 +221,7 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
                         logger.info(f"Gemini API success using model: {model}")
                         return polished
                     elif resp.status == 404:
-                        logger.info(f"Model {model} returned 404, trying next candidate...")
+                        logger.debug(f"Model {model} returned 404, trying next...")
                         continue
                     else:
                         err_text = await resp.text()

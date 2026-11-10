@@ -644,6 +644,15 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------
 
+POLISH_STATUS: dict[str, dict] = {}
+
+
+@app.get("/api/polish/status/{job_id}")
+async def get_polish_status(job_id: str):
+    """Returns current real-time progress of AI Polish for a given job."""
+    return POLISH_STATUS.get(job_id, {"current": 0, "total": 1, "percent": 0, "status": "idle"})
+
+
 @app.post("/api/polish")
 async def polish_translation(req: PolishRequest):
     """Polish and proofread translated text using Gemini API."""
@@ -658,13 +667,48 @@ async def polish_translation(req: PolishRequest):
         text_to_polish = txt_files[0].read_text(encoding="utf-8")
 
     from backend.ai_polisher import polish_text_with_gemini
+
+    def on_progress(current: int, total: int):
+        pct = int((current / max(1, total)) * 100)
+        POLISH_STATUS[req.job_id] = {
+            "current": current,
+            "total": total,
+            "percent": pct,
+            "status": "running",
+            "step": f"Polishing page {current} of {total}...",
+        }
+
+    POLISH_STATUS[req.job_id] = {
+        "current": 0,
+        "total": 1,
+        "percent": 0,
+        "status": "running",
+        "step": "Connecting to Gemini Flash AI...",
+    }
+
     try:
         polished = await polish_text_with_gemini(
             text=text_to_polish,
             api_key=req.api_key,
             style=req.style,
+            progress_callback=on_progress,
         )
+        total_p = POLISH_STATUS.get(req.job_id, {}).get("total", 1)
+        POLISH_STATUS[req.job_id] = {
+            "current": total_p,
+            "total": total_p,
+            "percent": 100,
+            "status": "done",
+            "step": "AI Polishing complete!",
+        }
     except Exception as e:
+        POLISH_STATUS[req.job_id] = {
+            "current": 0,
+            "total": 1,
+            "percent": 0,
+            "status": "error",
+            "step": str(e),
+        }
         logger.error(f"AI Polishing failed: {e}", exc_info=True)
         raise HTTPException(500, f"AI Polishing failed: {str(e)}")
 

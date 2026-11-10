@@ -720,16 +720,28 @@ async function saveEditorText() {
 }
 
 // ── AI Polish via Gemini ───────────────────────────────────
+let _polishPollTimer = null;
+
 function openAiPolishModal() {
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
   const savedKey = localStorage.getItem('gemini_api_key') || '';
   document.getElementById('gemini-api-key').value = savedKey;
+
+  const prog = document.getElementById('ai-polish-progress-container');
+  if (prog) prog.style.display = 'none';
+  const btn = document.getElementById('btn-run-polish');
+  if (btn) btn.disabled = false;
 }
 
 function closeAiPolishModal() {
+  if (_polishPollTimer) {
+    clearInterval(_polishPollTimer);
+    _polishPollTimer = null;
+  }
   document.getElementById('ai-polish-modal').style.display = 'none';
-  document.getElementById('ai-polish-status').style.display = 'none';
+  const prog = document.getElementById('ai-polish-progress-container');
+  if (prog) prog.style.display = 'none';
   const btn = document.getElementById('btn-run-polish');
   if (btn) btn.disabled = false;
 }
@@ -749,10 +761,36 @@ async function runAiPolish() {
   localStorage.setItem('gemini_api_key', apiKey);
 
   const style = document.getElementById('ai-polish-style').value;
-  const statusEl = document.getElementById('ai-polish-status');
+  const progEl = document.getElementById('ai-polish-progress-container');
+  const barEl = document.getElementById('ai-polish-bar');
+  const pctEl = document.getElementById('ai-polish-pct');
+  const stepEl = document.getElementById('ai-polish-step');
+  const pagesEl = document.getElementById('ai-polish-pages');
   const btn = document.getElementById('btn-run-polish');
-  statusEl.style.display = 'block';
+
+  progEl.style.display = 'block';
+  barEl.style.width = '5%';
+  pctEl.textContent = '5%';
+  stepEl.innerHTML = '<span class="status-dot"></span> Initializing Flash AI engine...';
+  if (pagesEl) pagesEl.textContent = 'Starting...';
   btn.disabled = true;
+
+  // Poll progress every 500ms
+  _polishPollTimer = setInterval(async () => {
+    try {
+      const pRes = await fetch(`${API}/polish/status/${jobId}`);
+      if (pRes.ok) {
+        const data = await pRes.json();
+        if (data.status === 'running' && data.total > 0) {
+          const pct = Math.max(5, Math.min(98, data.percent));
+          barEl.style.width = `${pct}%`;
+          pctEl.textContent = `${pct}%`;
+          stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining Greek translation...'}`;
+          if (pagesEl) pagesEl.textContent = `Page ${data.current} of ${data.total}`;
+        }
+      }
+    } catch (_) {}
+  }, 500);
 
   // If editor is open and modified, pass current editor text
   let currentText = null;
@@ -779,6 +817,11 @@ async function runAiPolish() {
     }
 
     const data = await res.json();
+    barEl.style.width = '100%';
+    pctEl.textContent = '100%';
+    stepEl.innerHTML = '<span class="status-dot"></span> Completed!';
+    if (pagesEl) pagesEl.textContent = 'Complete';
+
     toast('✨ AI Polish complete! Text has been refined.', 'success');
 
     // If editor is open, put the polished text into it
@@ -787,11 +830,18 @@ async function runAiPolish() {
     if (editorCard.style.display === 'none') {
       openEditor();
     }
-    closeAiPolishModal();
+    setTimeout(() => {
+      closeAiPolishModal();
+    }, 600);
   } catch (err) {
     toast(`AI Error: ${err.message}`, 'error');
-    statusEl.style.display = 'none';
+    progEl.style.display = 'none';
     btn.disabled = false;
+  } finally {
+    if (_polishPollTimer) {
+      clearInterval(_polishPollTimer);
+      _polishPollTimer = null;
+    }
   }
 }
 
