@@ -245,6 +245,7 @@ async function startTranslation() {
   if (labelEl) labelEl.textContent = outputFormat.toUpperCase();
 
   // Show progress UI
+  closeEditor();
   document.getElementById('tr-progress-card').style.display = 'block';
   document.getElementById('tr-result-card').classList.remove('visible');
   document.getElementById('tr-error-card').classList.remove('visible');
@@ -404,6 +405,10 @@ function resetProgress(prefix) {
   document.getElementById(`${prefix}-progress-bar`).classList.add('shimmer');
   document.getElementById(`${prefix}-progress-pct`).textContent = '0%';
   document.getElementById(`${prefix}-start-btn`).disabled = true;
+
+  if (prefix === 'tr') {
+    closeEditor();
+  }
 }
 
 function showResult(prefix, data) {
@@ -626,7 +631,14 @@ async function openEditor() {
 }
 
 function closeEditor() {
-  document.getElementById('tr-editor-card').style.display = 'none';
+  const card = document.getElementById('tr-editor-card');
+  if (card) card.style.display = 'none';
+  const src = document.getElementById('editor-source-text');
+  if (src) src.value = '';
+  const tr = document.getElementById('editor-translated-text');
+  if (tr) tr.value = '';
+  const findBox = document.getElementById('editor-find-replace-box');
+  if (findBox) findBox.style.display = 'none';
 }
 
 function setEditorView(mode) {
