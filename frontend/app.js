@@ -722,11 +722,24 @@ async function saveEditorText() {
 // ── AI Polish via Gemini ───────────────────────────────────
 let _polishPollTimer = null;
 
+function toggleApiKeyVisibility() {
+  const input = document.getElementById('gemini-api-key');
+  const btn = document.getElementById('btn-toggle-key');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = '🔒';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁️';
+  }
+}
+
 function openAiPolishModal() {
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
   const savedKey = localStorage.getItem('gemini_api_key') || '';
-  document.getElementById('gemini-api-key').value = savedKey;
+  const input = document.getElementById('gemini-api-key');
+  input.value = savedKey;
 
   const prog = document.getElementById('ai-polish-progress-container');
   if (prog) prog.style.display = 'none';
@@ -756,6 +769,10 @@ async function runAiPolish() {
   const apiKey = document.getElementById('gemini-api-key').value.trim();
   if (!apiKey) {
     toast('Please enter your Gemini API Key.', 'error');
+    return;
+  }
+  if (!apiKey.startsWith('AIza') || apiKey.length < 35) {
+    toast('Invalid API Key format. Google Gemini keys start with "AIzaSy..." (39 characters). Please check that your password manager did not autofill an account password!', 'error');
     return;
   }
   localStorage.setItem('gemini_api_key', apiKey);
