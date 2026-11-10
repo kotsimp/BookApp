@@ -75,8 +75,9 @@ async def _get_available_models(api_key: str, session: aiohttp.ClientSession) ->
         return _CACHED_AVAILABLE_MODELS
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    headers = {"x-goog-api-key": api_key}
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 models = data.get("models", [])
@@ -207,10 +208,14 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
                     candidates.append(fb)
 
         last_error = None
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             try:
-                async with session.post(url, json=payload, headers={"Content-Type": "application/json"}) as resp:
+                async with session.post(url, json=payload, headers=headers) as resp:
                     if resp.status == 200:
                         result = await resp.json()
                         cand_list = result.get("candidates", [])

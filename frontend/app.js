@@ -771,8 +771,11 @@ async function runAiPolish() {
     toast('Please enter your Gemini API Key.', 'error');
     return;
   }
-  if (!apiKey.startsWith('AIza') || apiKey.length < 35) {
-    toast('Invalid API Key format. Google Gemini keys start with "AIzaSy..." (39 characters). Please check that your password manager did not autofill an account password!', 'error');
+  const isValidFormat = (apiKey.startsWith('AQ.') && apiKey.length >= 25) ||
+                        (apiKey.startsWith('AIza') && apiKey.length >= 35) ||
+                        (apiKey.length >= 25);
+  if (!isValidFormat) {
+    toast('Invalid API Key format. Google Gemini keys start with "AQ." or "AIzaSy...". Please paste a valid key.', 'error');
     return;
   }
   localStorage.setItem('gemini_api_key', apiKey);
