@@ -646,11 +646,22 @@ async function openEditor() {
 
     document.getElementById('editor-original-text').value = data.original_text || '';
     document.getElementById('editor-translated-text').value = data.translated_text || '';
+    clearEditorDirty();
     updateEditorStats();
     editorCard.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
     toast(`Failed to load text for editor: ${err.message}`, 'error');
   }
+}
+
+function markEditorDirty() {
+  const badge = document.getElementById('editor-dirty-badge');
+  if (badge) badge.classList.add('visible');
+}
+
+function clearEditorDirty() {
+  const badge = document.getElementById('editor-dirty-badge');
+  if (badge) badge.classList.remove('visible');
 }
 
 function closeEditor() {
@@ -662,6 +673,7 @@ function closeEditor() {
   if (tr) tr.value = '';
   const findBox = document.getElementById('find-replace-bar');
   if (findBox) findBox.style.display = 'none';
+  clearEditorDirty();
 }
 
 function setEditorView(mode) {
@@ -740,6 +752,7 @@ async function saveEditorText() {
     });
 
     if (!res.ok) throw new Error('Failed to save corrections');
+    clearEditorDirty();
     toast('✅ Corrections saved and export files updated!', 'success');
 
     // Also update download button URL
@@ -795,6 +808,10 @@ async function openAiPolishModal() {
   if (badge) {
     badge.style.display = savedKey ? 'inline' : 'none';
   }
+  const clearBtn = document.getElementById('btn-clear-key');
+  if (clearBtn) {
+    clearBtn.style.display = savedKey ? 'inline' : 'none';
+  }
 
   const prog = document.getElementById('ai-polish-progress-container');
   if (prog) prog.style.display = 'none';
@@ -812,6 +829,20 @@ function closeAiPolishModal() {
   if (prog) prog.style.display = 'none';
   const btn = document.getElementById('btn-run-polish');
   if (btn) btn.disabled = false;
+}
+
+async function clearGeminiKey() {
+  localStorage.removeItem('gemini_api_key');
+  const input = document.getElementById('gemini-api-key');
+  if (input) input.value = '';
+  const badge = document.getElementById('gemini-key-saved-badge');
+  if (badge) badge.style.display = 'none';
+  const clearBtn = document.getElementById('btn-clear-key');
+  if (clearBtn) clearBtn.style.display = 'none';
+  try {
+    await fetch(`${API}/settings/gemini_api_key`, { method: 'DELETE' });
+  } catch (_) {}
+  toast('Saved Gemini API key cleared.', 'info');
 }
 
 function openDirectPolishModal() {
@@ -1059,6 +1090,35 @@ async function init() {
         zone.click();
       }
     });
+  });
+
+  // Global keyboard shortcuts (Ctrl+S, Ctrl+F in editor; Esc to close modals)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const polishModal = document.getElementById('ai-polish-modal');
+      if (polishModal && polishModal.style.display !== 'none') {
+        closeAiPolishModal();
+      }
+      const glossaryModal = document.getElementById('glossary-modal');
+      if (glossaryModal && glossaryModal.style.display !== 'none') {
+        closeGlossaryModal();
+      }
+      return;
+    }
+
+    const editorCard = document.getElementById('tr-editor-card');
+    if (!editorCard || editorCard.style.display === 'none') return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      saveEditorText();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      const bar = document.getElementById('find-replace-bar');
+      if (bar && bar.style.display !== 'flex') toggleFindReplace();
+      const findInput = document.getElementById('find-input');
+      if (findInput) findInput.focus();
+    }
   });
 }
 
