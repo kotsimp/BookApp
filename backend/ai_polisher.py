@@ -131,45 +131,70 @@ async def polish_text_with_gemini(
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 
     system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
+    sem = asyncio.Semaphore(4)
+    client_timeout = aiohttp.ClientTimeout(total=45)
 
-    # If document has multiple pages marked by dividers, polish section by section
-    page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
-    if len(page_sections) > 1:
-        # Filter content pages to polish
-        content_items = [
-            (idx, part) for idx, part in enumerate(page_sections)
-            if not re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", part.strip()) and part.strip()
-        ]
-        total_pages = max(1, len(content_items))
-        polished_parts = list(page_sections)
-
-        for current_idx, (orig_idx, part_text) in enumerate(content_items, start=1):
-            if progress_callback:
-                try:
-                    res = progress_callback(current_idx, total_pages)
-                    if asyncio.iscoroutine(res):
-                        await res
-                except Exception as ex:
-                    logger.warning(f"Progress callback error: {ex}")
-
-            logger.info(f"Polishing page {current_idx} of {total_pages}...")
-            polished = await _call_gemini_api(part_text.strip(), key, system_instruction)
-            polished_parts[orig_idx] = polished
-
-        return "\n\n".join(polished_parts)
-
-    if progress_callback:
+    async def _run_progress(done_count: int, total_count: int) -> None:
+        if not progress_callback:
+            return
         try:
-            res = progress_callback(1, 1)
+            res = progress_callback(done_count, total_count)
             if asyncio.iscoroutine(res):
                 await res
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.warning(f"Progress callback error: {ex}")
 
-    return await _call_gemini_api(text, key, system_instruction)
+    # If document has multiple pages marked by dividers, polish sections concurrently
+    page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
+    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        if len(page_sections) > 1:
+            content_items = [
+                (idx, part) for idx, part in enumerate(page_sections)
+                if not re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", part.strip()) and part.strip()
+            ]
+            total_pages = max(1, len(content_items))
+            polished_parts = list(page_sections)
+            completed = 0
+
+            async def _polish_page(orig_idx: int, part_text: str) -> None:
+                nonlocal completed
+                async with sem:
+                    polished = await _call_gemini_api(part_text.strip(), key, system_instruction, session=session)
+                polished_parts[orig_idx] = polished
+                completed += 1
+                await _run_progress(completed, total_pages)
+
+            await asyncio.gather(*(_polish_page(oi, pt) for oi, pt in content_items))
+            return "\n\n".join(polished_parts)
+
+        # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs and polish concurrently
+        if len(text) > 3500:
+            from backend.parsers import split_into_chunks
+            chunks = split_into_chunks(text, 3500)
+            total_chunks = max(1, len(chunks))
+            polished_chunks = [""] * len(chunks)
+            completed = 0
+
+            async def _polish_chunk(c_idx: int, c_text: str) -> None:
+                nonlocal completed
+                async with sem:
+                    polished_chunks[c_idx] = await _call_gemini_api(c_text, key, system_instruction, session=session)
+                completed += 1
+                await _run_progress(completed, total_chunks)
+
+            await asyncio.gather(*(_polish_chunk(i, c) for i, c in enumerate(chunks)))
+            return "\n\n".join(p for p in polished_chunks if p)
+
+        await _run_progress(1, 1)
+        return await _call_gemini_api(text, key, system_instruction, session=session)
 
 
-async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) -> str:
+async def _call_gemini_api(
+    content_text: str,
+    api_key: str,
+    system_prompt: str,
+    session: Optional[aiohttp.ClientSession] = None,
+) -> str:
     """Invokes Gemini generateContent with auto-discovery prioritizing ultra-fast Flash models."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
@@ -192,9 +217,11 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
         }
     }
 
-    # Set 30s timeout so we never hang indefinitely on slow models
-    client_timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+    # Reuse caller's session if provided, otherwise open a temporary one
+    owns_session = session is None
+    if owns_session:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
+    try:
         candidates = []
 
         # If a fast working model was already cached (and is not slow gemma), try it first
@@ -252,3 +279,6 @@ async def _call_gemini_api(content_text: str, api_key: str, system_prompt: str) 
                 logger.warning(f"Call to {model} failed: {e}")
 
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
+    finally:
+        if owns_session:
+            await session.close()
