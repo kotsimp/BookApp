@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.job_manager import create_job, get_job, update_job, list_jobs, cleanup_old_jobs
-from backend.parsers import count_pages
+from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
 from backend.tts_engine import generate_audiobook, get_available_voices
 from backend.exporter import export_text

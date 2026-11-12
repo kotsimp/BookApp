@@ -239,6 +239,7 @@ except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")
     traceback.print_exc()
+    sys.exit(1)
 
 # Test 6g: DELETE /api/settings/gemini_api_key (restore original key if present)
 _, prev_settings = api_get("/settings")
