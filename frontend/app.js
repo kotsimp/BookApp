@@ -392,6 +392,15 @@ function pollProgress(prefix, jobId) {
 function updateProgress(prefix, data) {
   const pct = data.progress || 0;
   const step = data.current_step || '';
+  state[prefix].status = data.status || 'running';
+
+  // Keep tab button label updated with live percentage while running
+  const tabBtnId = prefix === 'tr' ? 'btn-translate' : 'btn-audiobook';
+  const defaultTabText = prefix === 'tr' ? 'Translate Document' : 'Generate Audiobook';
+  const tabLabelEl = document.querySelector(`#${tabBtnId} .tab-label`);
+  if (tabLabelEl) {
+    tabLabelEl.textContent = data.status === 'running' ? `${defaultTabText} · ${pct}%` : defaultTabText;
+  }
 
   document.getElementById(`${prefix}-progress-pct`).textContent = `${pct}%`;
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
@@ -440,6 +449,11 @@ function resetProgress(prefix) {
   if (prefix === 'tr') {
     closeEditor();
   }
+  state[prefix].status = 'idle';
+  const tabBtnId = prefix === 'tr' ? 'btn-translate' : 'btn-audiobook';
+  const defaultTabText = prefix === 'tr' ? 'Translate Document' : 'Generate Audiobook';
+  const tabLabelEl = document.querySelector(`#${tabBtnId} .tab-label`);
+  if (tabLabelEl) tabLabelEl.textContent = defaultTabText;
 }
 
 function showResult(prefix, data) {
@@ -637,7 +651,13 @@ async function loadHistoryJob(jobId, mode) {
   try {
     const res = await fetch(`${API}/status/${jobId}`);
     const data = await res.json();
-    if (data.has_output && data.status === 'done') {
+    if (data.status === 'running') {
+      document.getElementById(`${prefix}-progress-card`).style.display = 'block';
+      document.getElementById(`${prefix}-start-btn`).disabled = true;
+      setStatusBadge(prefix, 'running');
+      updateProgress(prefix, data);
+      connectSSE(prefix, jobId);
+    } else if (data.has_output && data.status === 'done') {
       // Re-enable download button
       document.getElementById(`${prefix}-start-btn`).disabled = false;
       showResult(prefix, data);
