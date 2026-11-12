@@ -53,7 +53,8 @@ _CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
 
 EXCLUDE_PATTERNS = [
     "-tts", "-image", "-audio", "-transcribe", "clip", "banana",
-    "robotics", "customtools", "computer-use", "argon"
+    "robotics", "customtools", "computer-use", "argon",
+    "lyria", "deep-research", "antigravity", "veo", "imagen", "embedding",
 ]
 
 PREFERRED_FLASH_MODELS = [
@@ -155,16 +156,28 @@ async def polish_text_with_gemini(
             total_pages = max(1, len(content_items))
             polished_parts = list(page_sections)
             completed = 0
+            succeeded = 0
+            first_error: Optional[Exception] = None
 
             async def _polish_page(orig_idx: int, part_text: str) -> None:
-                nonlocal completed
+                nonlocal completed, succeeded, first_error
                 async with sem:
-                    polished = await _call_gemini_api(part_text.strip(), key, system_instruction, session=session)
-                polished_parts[orig_idx] = polished
+                    try:
+                        polished = await _call_gemini_api(part_text.strip(), key, system_instruction, session=session)
+                        polished_parts[orig_idx] = polished
+                        succeeded += 1
+                    except PermissionError:
+                        raise
+                    except Exception as ex:
+                        if first_error is None:
+                            first_error = ex
+                        logger.warning(f"Page polish failed (keeping original chunk): {ex}")
                 completed += 1
                 await _run_progress(completed, total_pages)
 
             await asyncio.gather(*(_polish_page(oi, pt) for oi, pt in content_items))
+            if succeeded == 0 and first_error is not None:
+                raise first_error
             return "\n\n".join(polished_parts)
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs and polish concurrently
@@ -172,17 +185,29 @@ async def polish_text_with_gemini(
             from backend.parsers import split_into_chunks
             chunks = split_into_chunks(text, 3500)
             total_chunks = max(1, len(chunks))
-            polished_chunks = [""] * len(chunks)
+            polished_chunks = list(chunks)
             completed = 0
+            succeeded = 0
+            first_error: Optional[Exception] = None
 
             async def _polish_chunk(c_idx: int, c_text: str) -> None:
-                nonlocal completed
+                nonlocal completed, succeeded, first_error
                 async with sem:
-                    polished_chunks[c_idx] = await _call_gemini_api(c_text, key, system_instruction, session=session)
+                    try:
+                        polished_chunks[c_idx] = await _call_gemini_api(c_text, key, system_instruction, session=session)
+                        succeeded += 1
+                    except PermissionError:
+                        raise
+                    except Exception as ex:
+                        if first_error is None:
+                            first_error = ex
+                        logger.warning(f"Chunk {c_idx + 1}/{total_chunks} polish failed (keeping original chunk): {ex}")
                 completed += 1
                 await _run_progress(completed, total_chunks)
 
             await asyncio.gather(*(_polish_chunk(i, c) for i, c in enumerate(chunks)))
+            if succeeded == 0 and first_error is not None:
+                raise first_error
             return "\n\n".join(p for p in polished_chunks if p)
 
         await _run_progress(1, 1)
@@ -256,27 +281,46 @@ async def _call_gemini_api(
         }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            try:
-                async with session.post(url, json=payload, headers=headers) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        cand_list = result.get("candidates", [])
-                        if not cand_list:
-                            continue
-                        polished = cand_list[0]["content"]["parts"][0]["text"].strip()
-                        _CACHED_WORKING_MODEL = model
-                        logger.info(f"Gemini API success using model: {model}")
-                        return polished
-                    elif resp.status == 404:
-                        logger.debug(f"Model {model} returned 404, trying next...")
-                        continue
-                    else:
-                        err_text = await resp.text()
-                        last_error = f"Gemini API error ({resp.status}): {err_text}"
-                        logger.warning(f"Model {model} failed: {last_error}")
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"Call to {model} failed: {e}")
+            for attempt in range(3):
+                try:
+                    async with session.post(url, json=payload, headers=headers) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            cand_list = result.get("candidates", [])
+                            if not cand_list:
+                                break
+                            polished = cand_list[0]["content"]["parts"][0]["text"].strip()
+                            _CACHED_WORKING_MODEL = model
+                            logger.info(f"Gemini API success using model: {model}")
+                            return polished
+                        elif resp.status in (401, 403):
+                            err_text = await resp.text()
+                            raise PermissionError(f"Gemini API authentication error ({resp.status}): {err_text}")
+                        elif resp.status == 404:
+                            logger.debug(f"Model {model} returned 404, trying next...")
+                            break
+                        elif resp.status in (429, 500, 502, 503, 504):
+                            err_text = await resp.text()
+                            last_error = f"Gemini API error ({resp.status}): {err_text}"
+                            logger.warning(f"Model {model} transient error (attempt {attempt + 1}/3): {last_error}")
+                            if attempt < 2:
+                                await asyncio.sleep(1.5 * (attempt + 1))
+                                continue
+                            break
+                        else:
+                            err_text = await resp.text()
+                            last_error = f"Gemini API error ({resp.status}): {err_text}"
+                            if resp.status == 400 and "API_KEY_INVALID" in err_text:
+                                raise PermissionError(last_error)
+                            logger.warning(f"Model {model} failed: {last_error}")
+                            break
+                except PermissionError:
+                    raise
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/3): {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(1.0 * (attempt + 1))
 
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:

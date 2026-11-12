@@ -652,17 +652,26 @@ async def get_job_text(job_id: str):
         else:
             raise HTTPException(404, "Job output not found.")
 
-    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+    txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+        f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
+    ]
     translated_text = ""
     if txt_files:
         translated_text = txt_files[0].read_text(encoding="utf-8")
 
-    # Read original text if available
+    # Read original text if available (prefer pre-extracted *_original.txt, else parse source file)
     original_text = ""
-    if job and job.file_path and Path(job.file_path).exists():
+    orig_files = list(out_dir.glob("*_original.txt"))
+    if orig_files:
+        try:
+            original_text = orig_files[0].read_text(encoding="utf-8")
+        except Exception:
+            pass
+    if not original_text and job and job.file_path and Path(job.file_path).exists():
         try:
             from backend.parsers import parse_document
-            pages = list(parse_document(job.file_path, job.file_type))
+            src_type = Path(job.file_path).suffix.lstrip(".").lower() or job.file_type
+            pages = list(parse_document(job.file_path, src_type))
             original_text = "\n\n".join(f"=== PAGE {p['page']} ===\n{p['text']}" for p in pages)
         except Exception:
             pass

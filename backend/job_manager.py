@@ -82,7 +82,7 @@ def get_job(job_id: str) -> Optional[Job]:
                         up_file = ufiles[0]
 
                 file_name = up_file.name if up_file else out_file.name
-                file_type = out_file.suffix.lstrip(".").lower()
+                file_type = (up_file.suffix if up_file else out_file.suffix).lstrip(".").lower()
                 mode = "audiobook" if out_file.suffix.lower() == ".mp3" else "translate"
                 mtime = out_file.stat().st_mtime
                 job = Job(

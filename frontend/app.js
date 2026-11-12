@@ -552,8 +552,10 @@ function sendToAudiobook() {
   state.ab.jobId = state.tr.jobId;
   state.ab.file = state.tr.file;
 
-  const trName = document.getElementById('tr-file-name')?.textContent || 'Document';
-  const trMeta = document.getElementById('tr-file-meta')?.textContent || 'Ready';
+  const rawTrName = document.getElementById('tr-file-name')?.textContent;
+  const rawTrMeta = document.getElementById('tr-file-meta')?.textContent;
+  const trName = (rawTrName && rawTrName !== 'filename.pdf') ? rawTrName : 'Document';
+  const trMeta = (rawTrMeta && rawTrMeta !== 'Loading...') ? rawTrMeta : 'Ready';
 
   const abName = document.getElementById('ab-file-name');
   const abMeta = document.getElementById('ab-file-meta');
@@ -685,25 +687,50 @@ async function clearAllHistory() {
 }
 
 async function loadHistoryJob(jobId, mode) {
-  const prefix = mode === 'audiobook' ? 'ab' : 'tr';
+  const onAudiobookTab = document.getElementById('tab-audiobook')?.classList.contains('active');
+  const targetTab = (mode === 'audiobook' || onAudiobookTab) ? 'audiobook' : 'translate';
+  const prefix = targetTab === 'audiobook' ? 'ab' : 'tr';
   state[prefix].jobId = jobId;
-  switchTab(mode === 'audiobook' ? 'audiobook' : 'translate');
+  switchTab(targetTab);
 
   try {
     const res = await fetch(`${API}/status/${jobId}`);
     const data = await res.json();
 
+    if (data.file_name) {
+      const nameEl = document.getElementById(`${prefix}-file-name`);
+      const metaEl = document.getElementById(`${prefix}-file-meta`);
+      const uploadZone = document.getElementById(`${prefix}-upload-zone`);
+      const selectedFile = document.getElementById(`${prefix}-selected-file`);
+      if (nameEl) nameEl.textContent = data.file_name;
+      if (metaEl) metaEl.textContent = data.status === 'done' ? 'Loaded from Session History · Ready' : 'Loaded from Session History';
+      if (uploadZone) uploadZone.style.display = 'none';
+      if (selectedFile) selectedFile.style.display = 'flex';
+    }
+
     if (prefix === 'ab') {
+      document.getElementById('ab-start-btn').disabled = false;
       try {
         const textRes = await fetch(`${API}/jobs/${jobId}/text`);
         if (textRes.ok) {
           const textData = await textRes.json();
           const hasTrans = Boolean(textData.translated_text && textData.translated_text.trim());
+          const transOpt = document.getElementById('ab-translate-option');
+          const useTranslated = document.getElementById('ab-use-translated');
           if (!hasTrans) {
             const detLang = detectTextLanguage(textData.original_text || '');
             restrictAudiobookLanguage(detLang);
+            if (transOpt) transOpt.style.display = 'none';
           } else {
             restrictAudiobookLanguage(null);
+            if (transOpt) transOpt.style.display = 'block';
+            if (useTranslated) useTranslated.checked = true;
+            const transLang = detectTextLanguage(textData.translated_text || '');
+            const langSelect = document.getElementById('ab-lang-select');
+            if (langSelect && transLang) {
+              langSelect.value = transLang;
+              updateVoices();
+            }
           }
         }
       } catch (_) {}
@@ -714,7 +741,7 @@ async function loadHistoryJob(jobId, mode) {
       setStatusBadge(prefix, 'running');
       updateProgress(prefix, data);
       connectSSE(prefix, jobId);
-    } else if (data.has_output && data.status === 'done') {
+    } else if (data.has_output && data.status === 'done' && (prefix === 'tr' || mode === 'audiobook')) {
       // Re-enable download button
       document.getElementById(`${prefix}-start-btn`).disabled = false;
       showResult(prefix, data);

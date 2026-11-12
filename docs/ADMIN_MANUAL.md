@@ -58,8 +58,8 @@
 * **edge-tts:** Παραγωγή ήχου μέσω των δωρεάν νευρωνικών φωνών της Microsoft.
 * **On-Demand Dynamic Exporter:** Δυναμική εξαγωγή σε οποιαδήποτε υποστηριζόμενη μορφή (`format=pdf|docx|epub|txt`) κατά τη λήψη, χωρίς επανυπολογισμό μετάφρασης.
 * **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
-* **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting.
-* **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) τόσο μετά τη μετάφραση όσο και αυτόνομα (σε ανεβασμένο έγγραφο ή επικολλημένο κείμενο).
+* **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting, άμεση ανάγνωση pre-extracted `*_original.txt` και διατήρηση του αρχικού `file_type` κατά το disk recovery.
+* **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) τόσο μετά τη μετάφραση όσο και αυτόνομα (σε ανεβασμένο έγγραφο ή επικολλημένο κείμενο), με αυτόματες επαναπροσπάθειες (backoff) σε παροδικά σφάλματα (`429`/`500`/`502`/`503`/`504`) και per-chunk fallback για μεγάλα βιβλία.
 * **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
 * **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC.
 * **Custom Glossary Engine:** Αποθήκευση και αντικατάσταση ορολογίας με regex word boundaries (`GET`/`POST`/`DELETE /api/glossary`).
