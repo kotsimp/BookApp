@@ -210,6 +210,15 @@ async function loadVoices() {
   }
 }
 
+function detectTextLanguage(text) {
+  if (!text || !text.trim()) return null;
+  const sample = text.slice(0, 3000);
+  const greekMatches = sample.match(/[\u0370-\u03FF\u1F00-\u1FFF]/g) || [];
+  const latinMatches = sample.match(/[A-Za-z]/g) || [];
+  if (greekMatches.length === 0 && latinMatches.length === 0) return null;
+  return greekMatches.length >= latinMatches.length ? 'greek' : 'english';
+}
+
 function restrictAudiobookLanguage(allowedLang) {
   const langSelect = document.getElementById('ab-lang-select');
   if (!langSelect) return;
@@ -683,6 +692,22 @@ async function loadHistoryJob(jobId, mode) {
   try {
     const res = await fetch(`${API}/status/${jobId}`);
     const data = await res.json();
+
+    if (prefix === 'ab') {
+      try {
+        const textRes = await fetch(`${API}/jobs/${jobId}/text`);
+        if (textRes.ok) {
+          const textData = await textRes.json();
+          const hasTrans = Boolean(textData.translated_text && textData.translated_text.trim());
+          if (!hasTrans) {
+            const detLang = detectTextLanguage(textData.original_text || '');
+            restrictAudiobookLanguage(detLang);
+          } else {
+            restrictAudiobookLanguage(null);
+          }
+        }
+      } catch (_) {}
+    }
     if (data.status === 'running') {
       document.getElementById(`${prefix}-progress-card`).style.display = 'block';
       document.getElementById(`${prefix}-start-btn`).disabled = true;
