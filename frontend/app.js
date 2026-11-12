@@ -93,6 +93,13 @@ function removeFile(prefix) {
   const directBtn = document.getElementById('tr-direct-polish-btn');
   if (directBtn) directBtn.disabled = true;
   resetProgress(prefix);
+  if (prefix === 'ab') {
+    restrictAudiobookLanguage(null);
+    const transOpt = document.getElementById('ab-translate-option');
+    if (transOpt) transOpt.style.display = 'none';
+    const useTranslated = document.getElementById('ab-use-translated');
+    if (useTranslated) useTranslated.checked = false;
+  }
   // Reset file input
   const inp = document.getElementById(`${prefix}-file-input`);
   if (inp) inp.value = '';
@@ -120,9 +127,13 @@ async function uploadFile(prefix, file) {
     if (directBtn) directBtn.disabled = false;
     toast(`✅ "${file.name}" uploaded successfully.`, 'success');
 
-    // Show translate option in audiobook tab
+    // Direct upload in Audiobook tab: lock Audio Language to detected document language
     if (prefix === 'ab') {
-      document.getElementById('ab-translate-option').style.display = 'block';
+      const transOpt = document.getElementById('ab-translate-option');
+      if (transOpt) transOpt.style.display = 'none';
+      const useTranslated = document.getElementById('ab-use-translated');
+      if (useTranslated) useTranslated.checked = false;
+      restrictAudiobookLanguage(data.detected_language || null);
     }
 
     refreshHistory();
@@ -197,6 +208,20 @@ async function loadVoices() {
   } catch (e) {
     console.error('Could not load voices:', e);
   }
+}
+
+function restrictAudiobookLanguage(allowedLang) {
+  const langSelect = document.getElementById('ab-lang-select');
+  if (!langSelect) return;
+  Array.from(langSelect.options).forEach(opt => {
+    const blocked = Boolean(allowedLang && opt.value !== allowedLang);
+    opt.disabled = blocked;
+    opt.hidden = blocked;
+  });
+  if (allowedLang) {
+    langSelect.value = allowedLang;
+  }
+  updateVoices();
 }
 
 function updateVoices() {
@@ -530,6 +555,9 @@ function sendToAudiobook() {
   const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
   const chosenLang = document.getElementById('tr-audio-lang')?.value || targetLang;
   const shouldUseTranslated = (chosenLang === targetLang);
+
+  // Both original and translated languages are available when coming from Translate
+  restrictAudiobookLanguage(null);
 
   // Set language dropdown to match the chosen audiobook language and refresh voice cards
   const langSelect = document.getElementById('ab-lang-select');

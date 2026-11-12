@@ -118,7 +118,8 @@ try:
     assert status == 200
     job_id = data["job_id"]
     assert data["file_type"] == "docx"
-    print(f"  POST /upload: OK (job_id={job_id[:8]}..., type={data['file_type']})")
+    assert data.get("detected_language") == "english"
+    print(f"  POST /upload: OK (job_id={job_id[:8]}..., type={data['file_type']}, lang={data['detected_language']})")
 
     # Start translation with output_format=docx
     status, data = api_post_json("/translate", {
@@ -193,6 +194,7 @@ try:
 
     status, data = api_post_file("/upload", gr_docx_path, "test_upload_greek.docx")
     assert status == 200
+    assert data.get("detected_language") == "greek"
     gr_job_id = data["job_id"]
     status, data = api_post_json("/translate", {
         "job_id": gr_job_id,

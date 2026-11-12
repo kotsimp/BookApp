@@ -127,6 +127,30 @@ async def health():
     return {"status": "ok", "message": "DocTranslate is running"}
 
 
+def _detect_document_language(file_path: str, file_type: str) -> Optional[str]:
+    """Quickly detect whether a document is primarily 'greek' or 'english'."""
+    try:
+        sample_parts = []
+        total_len = 0
+        for page in parse_document(file_path, file_type):
+            txt = page.get("text", "")
+            if txt:
+                sample_parts.append(txt)
+                total_len += len(txt)
+            if total_len >= 3000:
+                break
+        sample = " ".join(sample_parts)[:3000]
+        if not sample.strip():
+            return None
+        greek_count = sum(1 for ch in sample if ("\u0370" <= ch <= "\u03ff") or ("\u1f00" <= ch <= "\u1fff"))
+        latin_count = sum(1 for ch in sample if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+        if greek_count == 0 and latin_count == 0:
+            return None
+        return "greek" if greek_count >= latin_count else "english"
+    except Exception:
+        return None
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload a document and create a job. Returns job_id."""
@@ -166,19 +190,24 @@ async def upload_file(file: UploadFile = File(...)):
     shutil.move(str(tmp_path), str(final_path))
     update_job(job.job_id, file_path=str(final_path))
 
-    # Count pages for metadata
+    # Count pages and detect primary language for metadata
     try:
         page_count = count_pages(str(final_path), file_type)
     except Exception:
         page_count = 0
 
-    logger.info(f"Uploaded: {file.filename} → job_id={job.job_id}, pages≈{page_count}")
+    detected_language = _detect_document_language(str(final_path), file_type)
+
+    logger.info(
+        f"Uploaded: {file.filename} → job_id={job.job_id}, pages≈{page_count}, lang={detected_language}"
+    )
 
     return {
         "job_id": job.job_id,
         "file_name": file.filename,
         "file_type": file_type,
         "estimated_pages": page_count,
+        "detected_language": detected_language,
     }
 
 
