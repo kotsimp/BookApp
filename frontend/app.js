@@ -201,6 +201,12 @@ async function loadVoices() {
 
 function updateVoices() {
   const lang = document.getElementById('ab-lang-select').value;
+  const transOpt = document.getElementById('ab-translate-option');
+  const useTranslated = document.getElementById('ab-use-translated');
+  if (transOpt && transOpt.style.display !== 'none' && useTranslated) {
+    const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
+    useTranslated.checked = (lang === targetLang);
+  }
   const voices = state.voices[lang] || {};
   const grid = document.getElementById('ab-voice-grid');
   const voiceIcons = {
