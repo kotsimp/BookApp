@@ -5,7 +5,6 @@ Returns text in manageable chunks suitable for translation and TTS.
 
 import re
 import logging
-from pathlib import Path
 from typing import Generator
 
 logger = logging.getLogger(__name__)

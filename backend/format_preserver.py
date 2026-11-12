@@ -4,7 +4,6 @@ format_preserver.py - Translates documents in-place while preserving rich format
 - EPUB: Preserves HTML structure, headings (h1-h6), CSS stylesheets, styling tags (strong, em, span), images, and chapter hierarchy.
 """
 
-import os
 import re
 import asyncio
 import logging

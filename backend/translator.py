@@ -5,7 +5,6 @@ with deep_translator as an automatic fallback.
 """
 
 import asyncio
-import time
 import logging
 import urllib.request
 import urllib.parse

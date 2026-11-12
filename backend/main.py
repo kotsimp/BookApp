@@ -5,7 +5,6 @@ Main FastAPI application for the Document Translator & Audiobook Generator.
 import asyncio
 import json
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -13,7 +12,7 @@ from typing import Optional
 import aiofiles
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 

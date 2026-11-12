@@ -120,7 +120,6 @@ def update_job(job_id: str, **kwargs):
 
 
 def _notify_subscribers(job: Job):
-    import asyncio
     dead = []
     for q in job.subscribers:
         try:

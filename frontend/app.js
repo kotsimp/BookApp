@@ -656,11 +656,11 @@ async function openEditor() {
 function closeEditor() {
   const card = document.getElementById('tr-editor-card');
   if (card) card.style.display = 'none';
-  const src = document.getElementById('editor-source-text');
+  const src = document.getElementById('editor-original-text');
   if (src) src.value = '';
   const tr = document.getElementById('editor-translated-text');
   if (tr) tr.value = '';
-  const findBox = document.getElementById('editor-find-replace-box');
+  const findBox = document.getElementById('find-replace-bar');
   if (findBox) findBox.style.display = 'none';
 }
 
