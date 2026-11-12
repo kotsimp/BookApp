@@ -99,18 +99,30 @@ async def generate_audiobook(
         raise ValueError("No text found to convert to audio.")
 
     # Determine prosody (rate, pitch, pause style)
-    is_literature = (narration_style != "standard")
-    effective_rate = rate if rate else ("-10%" if is_literature else "+0%")
-    effective_pitch = "-2Hz" if is_literature else "+0Hz"
+    style = (narration_style or "literature").lower()
+    default_rates = {
+        "literature": "-10%",
+        "slow_pauses": "-25%",
+        "poetry": "-20%",
+        "standard": "+0%",
+    }
+    default_pitches = {
+        "literature": "-2Hz",
+        "slow_pauses": "-3Hz",
+        "poetry": "-3Hz",
+        "standard": "+0Hz",
+    }
+    effective_rate = rate if rate else default_rates.get(style, "-10%")
+    effective_pitch = default_pitches.get(style, "-2Hz")
 
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
-               current_step=f"Generating audio in {total_chunks} parts using {voice_name} ({narration_style})...")
+               current_step=f"Generating audio in {total_chunks} parts using {voice_name} ({style})...")
 
     logger.info(
         f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, "
-        f"style={narration_style}, rate={effective_rate}, pitch={effective_pitch}, source={text_source}"
+        f"style={style}, rate={effective_rate}, pitch={effective_pitch}, source={text_source}"
     )
 
     # Generate audio for each chunk concurrently (preserving order)
@@ -132,7 +144,7 @@ async def generate_audiobook(
                 str(chunk_path),
                 rate=effective_rate,
                 pitch=effective_pitch,
-                literature_pauses=is_literature,
+                narration_style=style,
             )
         completed += 1
         update_job(
@@ -175,27 +187,47 @@ async def generate_audiobook(
     return output_path
 
 
-def _clean_tts_text(text: str, literature_pauses: bool = True) -> str:
-    """Prepares text for TTS, preserving natural breath pauses for literature."""
+def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
+    """Prepares text for TTS, preserving natural breath pauses for literature, slow_pauses, or poetry."""
     # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)
+    style = (narration_style or "literature").lower()
 
-    if literature_pauses:
+    if style == "poetry":
+        # Preserve stanza breaks (longer pause) AND individual verse line breaks (gentle pause)
+        stanzas = re.split(r"\n\s*\n+", text.strip())
+        formatted_stanzas = []
+        for stanza in stanzas:
+            lines = [ln.strip() for ln in stanza.splitlines() if ln.strip()]
+            if not lines:
+                continue
+            verse_parts = []
+            for ln in lines:
+                if ln[-1] not in ".!?;:…,":
+                    ln += ","
+                verse_parts.append(ln)
+            stanza_str = " ".join(verse_parts)
+            if stanza_str[-1] == ",":
+                stanza_str = stanza_str[:-1] + "."
+            formatted_stanzas.append(stanza_str)
+        text = " ... ... ".join(formatted_stanzas)
+        text = re.sub(r"\s*[—–]\s*", ", ", text)
+    elif style in ("literature", "slow_pauses"):
         # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush
         paragraphs = re.split(r"\n\s*\n+", text.strip())
         formatted = []
         for para in paragraphs:
-            # Collapse single line-wraps inside a paragraph into spaces
             p = re.sub(r"[\r\n]+", " ", para).strip()
             if not p:
                 continue
-            # Ensure paragraph/heading ends with pause punctuation
             if p[-1] not in ".!?;:…":
                 p += "."
+            if style == "slow_pauses":
+                p = re.sub(r"([.!?])\s+", r"\1 ... ", p)
             formatted.append(p)
-        text = " ... ".join(formatted)
-        # Soften em-dashes/dialogue dashes into brief rhythmic pauses
+        sep = " ... ... " if style == "slow_pauses" else " ... "
+        text = sep.join(formatted)
         text = re.sub(r"\s*[—–]\s*", ", ", text)
     else:
         text = re.sub(r"[\r\n]+", " ", text)
@@ -212,10 +244,10 @@ async def _tts_chunk_with_retry(
     retries: int = 3,
     rate: str = "-10%",
     pitch: str = "-2Hz",
-    literature_pauses: bool = True,
+    narration_style: str = "literature",
 ):
     """Generates TTS for a text chunk with retry logic, maintaining consistent voice throughout."""
-    clean_text = _clean_tts_text(text, literature_pauses=literature_pauses)
+    clean_text = _clean_tts_text(text, narration_style=narration_style)
     if not clean_text:
         Path(output_path).write_bytes(b"")
         return
