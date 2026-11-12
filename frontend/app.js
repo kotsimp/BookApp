@@ -1203,6 +1203,20 @@ async function init() {
     });
   });
 
+  // Click outside modal box (on dark backdrop) to close / minimize
+  const polishModal = document.getElementById('ai-polish-modal');
+  if (polishModal) {
+    polishModal.addEventListener('click', (e) => {
+      if (e.target === polishModal) closeAiPolishModal();
+    });
+  }
+  const glossaryModal = document.getElementById('glossary-modal');
+  if (glossaryModal) {
+    glossaryModal.addEventListener('click', (e) => {
+      if (e.target === glossaryModal) closeGlossaryModal();
+    });
+  }
+
   // Global keyboard shortcuts (Ctrl+S, Ctrl+F in editor; Esc to close modals)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
