@@ -126,6 +126,23 @@
         <input type="hidden" id="tr-output-format" value="txt" />
       </div>
 
+      <div class="form-group">
+        <label class="form-label">Document Layout Style</label>
+        <div class="format-selector" id="tr-layout-selector" style="grid-template-columns: repeat(2, 1fr)">
+          <button class="format-btn active" data-layout="standard" onclick="selectLayout('standard', this)" id="layout-standard">
+            <span class="format-icon">📄</span>
+            <span class="format-label">Standard / Office</span>
+            <span class="format-desc">A4 · Preserves page breaks</span>
+          </button>
+          <button class="format-btn" data-layout="literature" onclick="selectLayout('literature', this)" id="layout-literature">
+            <span class="format-icon">📖</span>
+            <span class="format-label">Literature / E-Reader</span>
+            <span class="format-desc">iPad &amp; Kindle · Chapters, TOC, Serif</span>
+          </button>
+        </div>
+        <input type="hidden" id="tr-layout-mode" value="standard" />
+      </div>
+
       <div class="info-box">
         <span class="info-box-icon">ℹ️</span>
         <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
@@ -476,6 +493,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.6.0"></script>
+<script src="app.js?v=2.7.0"></script>
 </body>
 </html>

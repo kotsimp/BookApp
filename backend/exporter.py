@@ -1,8 +1,129 @@
-# exporter.py - Export translated text to various formats
+# exporter.py - Export translated text to various formats (Standard & Literature/E-Reader)
 
+import html
 import os
 import re
 from pathlib import Path
+
+
+_PUA_MAP = {
+    "\uf0b7": "• ",  # Wingdings round bullet
+    "\uf0a7": "• ",  # Wingdings square bullet
+    "\uf076": "✓ ",  # Checkmark
+    "\uf0d8": "➢ ",  # Arrow
+    "\uf0fc": "✔ ",  # Heavy check
+    "\uf0e0": "✉ ",  # Envelope
+    "\uf0a8": "❖ ",
+    "\uf02d": "-",
+}
+
+_CHAPTER_RE = re.compile(
+    r"^(?:"
+    r"(?:chapter|chap\.|part|book|prologue|epilogue|preface|introduction|afterword)"
+    r"|(?:κεφάλαιο|κεφ\.|μέρος|βιβλίο|πρόλογος|επίλογος|εισαγωγή)"
+    r")(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?$"
+    r"|^(?:[IVXLCDM]{1,7})$",
+    re.IGNORECASE,
+)
+
+_SCENE_BREAK_RE = re.compile(r"^(?:\*\s*\*\s*\*+|---\s*|~~~\s*|•\s*•\s*•+)$")
+
+
+def _sanitize_pua(text: str) -> str:
+    """Map Wingdings / Symbol Private Use Area (PUA) characters to standard Unicode."""
+    for pua, repl in _PUA_MAP.items():
+        text = text.replace(pua, repl)
+    return re.sub(r"[\ue000-\uf8ff]", "• ", text)
+
+
+def _is_chapter_heading(line: str) -> bool:
+    s = line.strip()
+    if not s or len(s) > 90:
+        return False
+    return bool(_CHAPTER_RE.match(s))
+
+
+def _is_scene_break(line: str) -> bool:
+    return bool(_SCENE_BREAK_RE.match(line.strip()))
+
+
+def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list[dict]:
+    """
+    Cleans PDF page-break artifacts, merges sentences split across pages,
+    and groups paragraphs into semantic chapters for e-readers & iPad.
+    Returns list of {"title": str, "paragraphs": list[str]}.
+    """
+    text = _sanitize_pua(text)
+
+    # Split by === PAGE X === markers and seamlessly merge sentences broken across pages
+    raw_pages = re.split(r"={3,}\s*PAGE\s+\d+\s*={3,}", text)
+    merged_blocks: list[str] = []
+
+    for page_chunk in raw_pages:
+        chunk = page_chunk.strip()
+        if not chunk:
+            continue
+
+        # Remove standalone page number lines at very top/bottom of a PDF page
+        lines = chunk.splitlines()
+        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?)\s*$", lines[0]):
+            lines.pop(0)
+        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?)\s*$", lines[-1]):
+            lines.pop()
+
+        cleaned_chunk = "\n".join(lines).strip()
+        if not cleaned_chunk:
+            continue
+
+        blocks = [b.strip() for b in re.split(r"\n\s*\n", cleaned_chunk) if b.strip()]
+        if not blocks:
+            continue
+
+        # Check if first block of this page continues the last block of the previous page
+        if merged_blocks and blocks:
+            prev = merged_blocks[-1].rstrip()
+            nxt = blocks[0].lstrip()
+            prev_ends_sentence = prev[-1] in '.!?»"”…)]:;'
+            nxt_starts_lower = bool(nxt) and nxt[0].islower()
+            if not prev_ends_sentence and nxt_starts_lower and not _is_chapter_heading(nxt):
+                merged_blocks[-1] = prev + " " + nxt
+                blocks = blocks[1:]
+
+        merged_blocks.extend(blocks)
+
+    # Collapse single soft line-breaks inside literature paragraphs into spaces
+    normalized_paras: list[str] = []
+    for blk in merged_blocks:
+        lines = [ln.strip() for ln in blk.splitlines() if ln.strip()]
+        if len(lines) == 1:
+            normalized_paras.append(lines[0])
+        elif _is_chapter_heading(lines[0]):
+            normalized_paras.append(lines[0])
+            rest = " ".join(lines[1:])
+            if rest:
+                normalized_paras.append(rest)
+        else:
+            normalized_paras.append(" ".join(lines))
+
+    # Group into chapters
+    chapters: list[dict] = []
+    current_chapter = {"title": default_title, "paragraphs": []}
+
+    for para in normalized_paras:
+        if _is_chapter_heading(para):
+            if current_chapter["paragraphs"] or chapters:
+                if current_chapter["paragraphs"]:
+                    chapters.append(current_chapter)
+                current_chapter = {"title": para, "paragraphs": []}
+            else:
+                current_chapter["title"] = para
+        else:
+            current_chapter["paragraphs"].append(para)
+
+    if current_chapter["paragraphs"] or not chapters:
+        chapters.append(current_chapter)
+
+    return chapters
 
 
 # TXT
@@ -12,28 +133,67 @@ def export_txt(text: str, out_path: Path) -> Path:
 
 
 # DOCX (requires python-docx)
-def export_docx(text: str, out_path: Path) -> Path:
+def export_docx(text: str, out_path: Path, layout: str = "standard") -> Path:
     from docx import Document
-    from docx.shared import Pt
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-    # Map Wingdings / Symbol Private Use Area (PUA) bullet characters to standard Unicode
-    pua_map = {
-        "\uf0b7": "• ",  # Wingdings round bullet
-        "\uf0a7": "• ",  # Wingdings square bullet
-        "\uf076": "✓ ",  # Checkmark
-        "\uf0d8": "➢ ",  # Arrow
-        "\uf0fc": "✔ ",  # Heavy check
-        "\uf0e0": "✉ ",  # Envelope
-        "\uf0a8": "❖ ",
-        "\uf02d": "-",
-    }
-    for pua, repl in pua_map.items():
-        text = text.replace(pua, repl)
-    text = re.sub(r"[\ue000-\uf8ff]", "• ", text)
-
+    text = _sanitize_pua(text)
     doc = Document()
 
-    # Split by PAGE markers to replace ASCII dividers with real Word page breaks
+    if layout == "literature":
+        # 6" x 9" trade-paperback / e-reader friendly page geometry
+        for section in doc.sections:
+            section.page_width = Inches(6.0)
+            section.page_height = Inches(9.0)
+            section.top_margin = Inches(0.75)
+            section.bottom_margin = Inches(0.75)
+            section.left_margin = Inches(0.75)
+            section.right_margin = Inches(0.75)
+
+        normal_style = doc.styles["Normal"]
+        normal_style.font.name = "Georgia"
+        normal_style.font.size = Pt(11.5)
+
+        chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
+        for ch_idx, ch in enumerate(chapters):
+            if ch_idx > 0:
+                doc.add_page_break()
+
+            if ch["title"] and (len(chapters) > 1 or ch["title"] != out_path.stem):
+                h = doc.add_paragraph()
+                h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                h.paragraph_format.space_before = Pt(24)
+                h.paragraph_format.space_after = Pt(18)
+                run = h.add_run(ch["title"])
+                run.bold = True
+                run.font.name = "Georgia"
+                run.font.size = Pt(16)
+
+            is_first = True
+            for para in ch["paragraphs"]:
+                if _is_scene_break(para):
+                    sb = doc.add_paragraph("* * *")
+                    sb.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    sb.paragraph_format.space_before = Pt(12)
+                    sb.paragraph_format.space_after = Pt(12)
+                    is_first = True
+                    continue
+
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                p.paragraph_format.line_spacing = 1.4
+                p.paragraph_format.space_after = Pt(4)
+                p.paragraph_format.first_line_indent = Inches(0) if is_first else Inches(0.28)
+                run = p.add_run(para)
+                run.font.name = "Georgia"
+                run.font.size = Pt(11.5)
+                is_first = False
+
+        doc.save(str(out_path))
+        return out_path
+
+    # Standard / Administrative layout
     sections = re.split(r"={3,}\s*PAGE\s+\d+\s*={3,}", text)
     pages = [s.strip() for s in sections if s.strip()]
     if not pages:
@@ -50,23 +210,19 @@ def export_docx(text: str, out_path: Path) -> Path:
             if not b:
                 continue
 
-            lines = b.split("\n")
-            for line in lines:
+            for line in b.split("\n"):
                 l = line.strip()
                 if not l:
                     continue
 
-                # Native bullet points
                 if l.startswith("• ") or l.startswith("- ") or l.startswith("* "):
                     bullet_text = re.sub(r"^[•\-\*]\s*", "", l)
                     doc.add_paragraph(bullet_text, style="List Bullet")
-                # Main titles (short, uppercase)
                 elif l.isupper() and len(l) < 60:
                     p = doc.add_paragraph()
                     run = p.add_run(l)
                     run.bold = True
                     run.font.size = Pt(13)
-                # Form headers like ΠΡΟΣ: / ΘΕΜΑ:
                 elif any(l.startswith(k) for k in header_prefixes):
                     p = doc.add_paragraph()
                     parts = l.split(":", 1)
@@ -81,13 +237,117 @@ def export_docx(text: str, out_path: Path) -> Path:
     return out_path
 
 
-# PDF (uses pymupdf which supports full Unicode / Greek with styled headings)
-def export_pdf(text: str, out_path: Path) -> Path:
+# PDF (uses pymupdf which supports full Unicode / Greek)
+def _export_literature_pdf(text: str, out_path: Path) -> Path:
+    import pymupdf
+
+    doc = pymupdf.open()
+    serif_candidates = [
+        "C:/Windows/Fonts/georgia.ttf",
+        "C:/Windows/Fonts/times.ttf",
+        "C:/Windows/Fonts/pala.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ]
+    font_path = next((f for f in serif_candidates if os.path.exists(f)), None)
+
+    # 6" x 9" trade paperback size (ideal for iPad & e-readers)
+    width = 432.0
+    height = 648.0
+    margin_x = 46.0
+    margin_top = 52.0
+    content_bottom = height - 52.0
+    max_line_w = width - 2 * margin_x
+
+    fname = "book_serif" if font_path else "helv"
+    font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
+
+    def new_book_page():
+        pg = doc.new_page(width=width, height=height)
+        if font_path:
+            pg.insert_font(fontname=fname, fontfile=font_path)
+        return pg, margin_top
+
+    chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
+
+    for ch_idx, ch in enumerate(chapters):
+        page, y = new_book_page()
+
+        # Chapter title
+        if ch["title"] and (len(chapters) > 1 or ch["title"] != out_path.stem):
+            y += 28.0
+            title_size = 15.5
+            title_w = font_obj.text_length(ch["title"], fontsize=title_size)
+            tx = max(margin_x, (width - title_w) / 2.0)
+            page.insert_text(pymupdf.Point(tx, y), ch["title"], fontsize=title_size, fontname=fname, color=(0.1, 0.1, 0.1))
+            y += 32.0
+
+        body_size = 11.0
+        line_height = 16.5
+        indent = 16.0
+        is_first = True
+
+        for para in ch["paragraphs"]:
+            if _is_scene_break(para):
+                if y + 28.0 > content_bottom:
+                    page, y = new_book_page()
+                y += 8.0
+                sb_text = "* * *"
+                sb_w = font_obj.text_length(sb_text, fontsize=body_size)
+                page.insert_text(pymupdf.Point((width - sb_w) / 2.0, y), sb_text, fontsize=body_size, fontname=fname, color=(0.3, 0.3, 0.3))
+                y += 20.0
+                is_first = True
+                continue
+
+            words = para.split()
+            line_words: list[str] = []
+            first_line = True
+
+            for w in words:
+                curr_indent = (0.0 if is_first else indent) if first_line else 0.0
+                avail_w = max_line_w - curr_indent
+                test_str = " ".join(line_words + [w])
+                if font_obj.text_length(test_str, fontsize=body_size) <= avail_w:
+                    line_words.append(w)
+                else:
+                    if y + line_height > content_bottom:
+                        page, y = new_book_page()
+                    line_str = " ".join(line_words)
+                    page.insert_text(pymupdf.Point(margin_x + curr_indent, y), line_str, fontsize=body_size, fontname=fname, color=(0.12, 0.12, 0.12))
+                    y += line_height
+                    line_words = [w]
+                    first_line = False
+
+            if line_words:
+                curr_indent = (0.0 if is_first else indent) if first_line else 0.0
+                if y + line_height > content_bottom:
+                    page, y = new_book_page()
+                line_str = " ".join(line_words)
+                page.insert_text(pymupdf.Point(margin_x + curr_indent, y), line_str, fontsize=body_size, fontname=fname, color=(0.12, 0.12, 0.12))
+                y += line_height
+
+            y += 4.5
+            is_first = False
+
+    # Centered book-style page numbers
+    for p_no, pg in enumerate(doc, 1):
+        footer = f"- {p_no} -"
+        fw = font_obj.text_length(footer, fontsize=9.0)
+        pg.insert_text(pymupdf.Point((width - fw) / 2.0, height - 28.0), footer, fontsize=9.0, fontname=fname, color=(0.45, 0.45, 0.45))
+
+    doc.save(str(out_path))
+    doc.close()
+    return out_path
+
+
+def export_pdf(text: str, out_path: Path, layout: str = "standard") -> Path:
+    if layout == "literature":
+        return _export_literature_pdf(text, out_path)
+
     import pymupdf
 
     doc = pymupdf.open()
 
-    # Locate Unicode TrueType font for Greek support
     candidate_fonts = [
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/calibri.ttf",
@@ -97,7 +357,6 @@ def export_pdf(text: str, out_path: Path) -> Path:
     ]
     font_path = next((f for f in candidate_fonts if os.path.exists(f)), None)
 
-    # Split text into sections by PAGE markers if present
     sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text)
     pages_data = []
 
@@ -105,7 +364,7 @@ def export_pdf(text: str, out_path: Path) -> Path:
         i = 1
         while i < len(sections):
             pnum = sections[i]
-            pcontent = sections[i+1] if i + 1 < len(sections) else ""
+            pcontent = sections[i + 1] if i + 1 < len(sections) else ""
             pages_data.append((f"Page {pnum}", pcontent.strip()))
             i += 2
     else:
@@ -118,58 +377,51 @@ def export_pdf(text: str, out_path: Path) -> Path:
 
     def is_heading(line: str) -> bool:
         s = line.strip()
-        if not s or len(s) > 75:
+        if not s or len(s) > 85:
             return False
-        # Starts with common heading markers
-        keywords = ("ΚΕΦΑΛΑΙΟ", "CHAPTER", "ΘΕΜΑ:", "ΠΡΟΣ:", "ΑΠΟ:", "ΥΠΗΡΕΣΙΑΚΟ", "ΕΝΟΤΗΤΑ", "SECTION", "TITLE")
-        if any(s.upper().startswith(k) for k in keywords):
+        if s.isupper() and len(s) > 3:
             return True
-        # Or short uppercase line
-        if s.isupper() and len(s) < 50:
+        if s.startswith(("ΘΕΜΑ:", "ΠΡΟΣ:", "ΑΠΟ:", "SUBJECT:", "TO:", "FROM:", "Συνημμένο:", "Ημερομηνία:")):
             return True
         return False
 
-    for header_title, content in pages_data:
+    fname = "unicode_font" if font_path else "helv"
+    font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
+
+    for section_title, section_body in pages_data:
+        if not section_body:
+            continue
+
         page = doc.new_page(width=width, height=height)
-        fname = "unicode_font" if font_path else "helv"
         if font_path:
             page.insert_font(fontname="unicode_font", fontfile=font_path)
-
         y = margin
 
-        # If page header exists, render subtle header
-        if header_title:
-            page.insert_text(pymupdf.Point(margin, y), header_title, fontsize=10.0, fontname=fname, color=(0.4, 0.4, 0.4))
+        if section_title:
+            page.insert_text(pymupdf.Point(margin, y), section_title, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
             y += 18.0
 
-        paras = content.split("\n")
-        for para in paras:
-            p_strip = para.strip()
-            if not p_strip:
-                y += 8.0
+        for raw_line in section_body.split("\n"):
+            line = _sanitize_pua(raw_line).strip()
+            if not line:
+                y += 7.0
                 continue
 
-            heading = is_heading(p_strip)
-            font_size = 13.5 if heading else 10.5
-            line_height = 18.0 if heading else 14.5
-            color = (0.05, 0.05, 0.15) if heading else (0.1, 0.1, 0.1)
+            heading = is_heading(line)
+            font_size = 12.5 if heading else 10.5
+            line_height = 17.5 if heading else 14.5
+            color = (0.05, 0.05, 0.2) if heading else (0.1, 0.1, 0.1)
 
-            # Extra space before headings
-            if heading and y > margin + 20:
-                y += 6.0
-
-            # Wrap paragraph words to fit printable width (~500pt)
-            words = p_strip.split(" ")
+            words = line.split()
             line_words = []
+            max_w = width - 2 * margin
+
             for w in words:
-                test_line = " ".join(line_words + [w])
-                # Approx 75 chars for 10.5pt, 55 chars for 13.5pt
-                max_chars = 55 if heading else 75
-                if len(test_line) <= max_chars:
+                test_str = " ".join(line_words + [w])
+                if font_obj.text_length(test_str, fontsize=font_size) <= max_w:
                     line_words.append(w)
                 else:
                     if y + line_height > content_bottom:
-                        # Page break
                         page = doc.new_page(width=width, height=height)
                         if font_path:
                             page.insert_font(fontname="unicode_font", fontfile=font_path)
@@ -190,10 +442,8 @@ def export_pdf(text: str, out_path: Path) -> Path:
                 page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
                 y += line_height
 
-            # Paragraph gap
             y += 4.0
 
-    # Add page numbers to all pages
     total_pages = len(doc)
     for p_no, pg in enumerate(doc, 1):
         footer = f"{p_no} / {total_pages}"
@@ -205,52 +455,134 @@ def export_pdf(text: str, out_path: Path) -> Path:
 
 
 # EPUB (requires EbookLib)
-def export_epub(text: str, out_path: Path, title: str = "Translated Book") -> Path:
+def export_epub(text: str, out_path: Path, title: str = "Translated Book", layout: str = "standard") -> Path:
     from ebooklib import epub
+
     book = epub.EpubBook()
     book.set_identifier(str(out_path.stem))
     book.set_title(title)
     book.set_language("el")
 
-    # Create chapters per PAGE marker if present
-    sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text)
-    spine = []
-
-    if len(sections) > 1:
-        # Alternating: [pre, page_num, content, page_num, content, ...]
-        i = 1
-        while i < len(sections):
-            pnum = sections[i]
-            pcontent = sections[i+1] if i + 1 < len(sections) else ""
-            c = epub.EpubHtml(title=f"Page {pnum}", file_name=f"page_{pnum}.xhtml", lang="el")
-            body_html = f"<h2>Page {pnum}</h2>"
-            for p in pcontent.strip().split("\n\n"):
-                if p.strip():
-                    body_html += f"<p>{p.strip()}</p>"
-            c.content = body_html
-            book.add_item(c)
-            spine.append(c)
-            i += 2
+    if layout == "literature":
+        book_css = """
+body {
+    font-family: Georgia, "Times New Roman", Palatino, serif;
+    line-height: 1.55;
+    margin: 5% 6%;
+}
+h1.chapter-title {
+    text-align: center;
+    font-weight: normal;
+    font-size: 1.45em;
+    letter-spacing: 0.04em;
+    margin-top: 2.2em;
+    margin-bottom: 1.5em;
+    page-break-before: always;
+}
+p {
+    text-align: justify;
+    text-indent: 1.4em;
+    margin: 0 0 0.35em 0;
+}
+p.first-para {
+    text-indent: 0;
+}
+p.scene-break {
+    text-align: center;
+    text-indent: 0;
+    margin: 1.4em 0;
+    letter-spacing: 0.3em;
+}
+"""
     else:
-        c1 = epub.EpubHtml(title="Content", file_name="chap_01.xhtml", lang="el")
-        body_html = f"<h1>{title}</h1>"
-        for para in text.split("\n\n"):
-            if para.strip():
-                body_html += f"<p>{para.strip()}</p>"
-        c1.content = body_html
-        book.add_item(c1)
-        spine.append(c1)
+        book_css = """
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    margin: 4% 5%;
+}
+h2 {
+    margin-top: 1.5em;
+    margin-bottom: 0.8em;
+}
+p {
+    margin: 0 0 0.8em 0;
+}
+"""
 
+    css_item = epub.EpubItem(
+        uid="style_book",
+        file_name="style/book.css",
+        media_type="text/css",
+        content=book_css.encode("utf-8"),
+    )
+    book.add_item(css_item)
+
+    chapters_items = []
+
+    if layout == "literature":
+        chapters = _prepare_literature_chapters(text, default_title=title)
+        for idx, ch in enumerate(chapters, 1):
+            ch_title = ch["title"] or f"Chapter {idx}"
+            c = epub.EpubHtml(title=ch_title, file_name=f"chap_{idx:03d}.xhtml", lang="el")
+            c.add_item(css_item)
+
+            parts = []
+            if len(chapters) > 1 or ch_title != title:
+                parts.append(f'<h1 class="chapter-title">{html.escape(ch_title)}</h1>')
+
+            is_first = True
+            for para in ch["paragraphs"]:
+                if _is_scene_break(para):
+                    parts.append('<p class="scene-break">* * *</p>')
+                    is_first = True
+                else:
+                    cls = ' class="first-para"' if is_first else ""
+                    parts.append(f"<p{cls}>{html.escape(para)}</p>")
+                    is_first = False
+
+            c.content = "\n".join(parts)
+            book.add_item(c)
+            chapters_items.append(c)
+    else:
+        sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", _sanitize_pua(text))
+        if len(sections) > 1:
+            i = 1
+            while i < len(sections):
+                pnum = sections[i]
+                pcontent = sections[i + 1] if i + 1 < len(sections) else ""
+                c = epub.EpubHtml(title=f"Page {pnum}", file_name=f"page_{pnum}.xhtml", lang="el")
+                c.add_item(css_item)
+                body_html = f"<h2>Page {html.escape(pnum)}</h2>"
+                for p in pcontent.strip().split("\n\n"):
+                    if p.strip():
+                        body_html += f"<p>{html.escape(p.strip())}</p>"
+                c.content = body_html
+                book.add_item(c)
+                chapters_items.append(c)
+                i += 2
+        else:
+            c1 = epub.EpubHtml(title=title, file_name="chap_01.xhtml", lang="el")
+            c1.add_item(css_item)
+            body_html = f"<h1>{html.escape(title)}</h1>"
+            for para in _sanitize_pua(text).split("\n\n"):
+                if para.strip():
+                    body_html += f"<p>{html.escape(para.strip())}</p>"
+            c1.content = body_html
+            book.add_item(c1)
+            chapters_items.append(c1)
+
+    book.toc = tuple(chapters_items)
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
-    book.spine = spine
+    book.spine = ["nav"] + chapters_items
     epub.write_epub(str(out_path), book, {})
     return out_path
 
 
 # Helper dispatch
-def export_text(text: str, out_dir: Path, fmt: str, base_name: str) -> Path:
-    """Export `text` to `fmt` inside `out_dir`.
+def export_text(text: str, out_dir: Path, fmt: str, base_name: str, layout: str = "standard") -> Path:
+    """Export `text` to `fmt` inside `out_dir` using `layout` ('standard' or 'literature').
     Returns the absolute path to the generated file.
     """
     fmt = fmt.lower()
@@ -258,9 +590,9 @@ def export_text(text: str, out_dir: Path, fmt: str, base_name: str) -> Path:
     if fmt == "txt":
         return export_txt(text, out_path)
     if fmt in ("doc", "docx"):
-        return export_docx(text, out_path)
+        return export_docx(text, out_path, layout=layout)
     if fmt == "pdf":
-        return export_pdf(text, out_path)
+        return export_pdf(text, out_path, layout=layout)
     if fmt == "epub":
-        return export_epub(text, out_path, title=base_name)
+        return export_epub(text, out_path, title=base_name, layout=layout)
     raise ValueError(f"Unsupported format: {fmt}")

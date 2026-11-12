@@ -25,6 +25,7 @@ class Job:
     # Optional / nullable fields (must have defaults)
     output_path: Optional[str] = None
     output_format: Optional[str] = None  # txt, docx, pdf, epub
+    layout_mode: str = "standard"        # 'standard' or 'literature'
     error: Optional[str] = None
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)

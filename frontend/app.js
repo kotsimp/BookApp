@@ -151,10 +151,10 @@ function setLangs(src, tgt) {
   document.getElementById('tr-target-display').textContent = langConfig[tgt].label;
 }
 
-// ── Output Format Selection ─────────────────────────────────
+// ── Output Format & Layout Selection ─────────────────────────
 function selectFormat(fmt, btn) {
-  // Deselect all format buttons
-  document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+  // Deselect only format buttons (not layout buttons)
+  document.querySelectorAll('#tr-format-selector .format-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tr-output-format').value = fmt;
   // Update download button label immediately
@@ -169,9 +169,22 @@ function selectFormat(fmt, btn) {
   }
 
   // Update download button href directly
+  const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
   const dlBtn = document.getElementById('tr-download-btn');
   if (dlBtn && state.tr.jobId) {
-    dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}`;
+    dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
+  }
+}
+
+function selectLayout(layout, btn) {
+  document.querySelectorAll('#tr-layout-selector .format-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tr-layout-mode').value = layout;
+
+  const fmt = document.getElementById('tr-output-format')?.value || 'txt';
+  const dlBtn = document.getElementById('tr-download-btn');
+  if (dlBtn && state.tr.jobId) {
+    dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
   }
 }
 
@@ -243,6 +256,7 @@ async function startTranslation() {
   const sourceLang = document.getElementById('tr-source-lang').value;
   const targetLang = document.getElementById('tr-target-lang').value;
   const outputFormat = document.getElementById('tr-output-format').value || 'txt';
+  const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
 
   // Update download button label to show chosen format
   const labelEl = document.getElementById('tr-format-label');
@@ -266,6 +280,7 @@ async function startTranslation() {
         source_lang: sourceLang,
         target_lang: targetLang,
         output_format: outputFormat,
+        layout_mode: layoutMode,
       }),
     });
     if (!res.ok) {
@@ -428,8 +443,9 @@ function showResult(prefix, data) {
     const labelEl = document.getElementById('tr-format-label');
     if (labelEl) labelEl.textContent = label;
     const dlBtn = document.getElementById('tr-download-btn');
+    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     if (dlBtn && state.tr.jobId) {
-      dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}`;
+      dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
     }
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download the MP3 file.';
@@ -454,7 +470,8 @@ async function downloadOutput(prefix) {
   if (!jobId) return;
   if (prefix === 'tr') {
     const fmt = document.getElementById('tr-output-format')?.value || 'txt';
-    const targetUrl = `${API}/download/${jobId}?format=${fmt}`;
+    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+    const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
     console.log('Initiating download:', targetUrl);
     window.location.href = targetUrl;
   } else {
@@ -905,6 +922,7 @@ async function runAiPolish() {
         text: currentText,
         style: style,
         api_key: apiKey,
+        layout_mode: document.getElementById('tr-layout-mode')?.value || 'standard',
       }),
     });
 

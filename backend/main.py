@@ -72,6 +72,7 @@ class TranslateRequest(BaseModel):
     source_lang: str   # 'english' or 'greek'
     target_lang: str   # 'english' or 'greek'
     output_format: str = "txt"  # txt, docx, pdf, epub
+    layout_mode: str = "standard"  # 'standard' or 'literature'
 
 
 class AudiobookRequest(BaseModel):
@@ -90,6 +91,7 @@ class PolishRequest(BaseModel):
     text: Optional[str] = None
     style: str = "formal"
     api_key: Optional[str] = None
+    layout_mode: Optional[str] = None
 
 
 class GlossaryTermRequest(BaseModel):
@@ -197,7 +199,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     output_path = str(output_dir / f"{stem}_translated_{req.target_lang}.txt")
 
     output_format = getattr(req, "output_format", "txt") or "txt"
-    update_job(req.job_id, mode="translate", status="running", output_format=output_format)
+    layout_mode = getattr(req, "layout_mode", "standard") or "standard"
+    update_job(req.job_id, mode="translate", status="running", output_format=output_format, layout_mode=layout_mode)
 
     background_tasks.add_task(
         _run_translation,
@@ -220,6 +223,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         job = get_job(job_id)
         fmt = getattr(job, "output_format", "txt") or "txt"
         fmt = fmt.lower()
+        layout = getattr(job, "layout_mode", "standard") or "standard"
         out_dir = Path(output_path).parent
         stem = Path(file_path).stem
         base_name = f"{stem}_translated_{target_lang}"
@@ -265,7 +269,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             )
             txt_content = Path(output_path).read_text(encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
-            final_path = export_text(txt_content, out_dir, fmt, base_name)
+            final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
 
         # Mark job complete
         update_job(job_id,
@@ -419,36 +423,40 @@ MIME_MAP = {
 
 
 @app.get("/api/download/{job_id}")
-async def download_output(job_id: str, format: Optional[str] = None):
+async def download_output(job_id: str, format: Optional[str] = None, layout: Optional[str] = None):
     """
     Download the output file for a completed job.
     If 'format' is requested (e.g. ?format=pdf), dynamically converts the translated
-    content to the requested format on-demand if it hasn't been exported yet.
+    content to the requested format on-demand if it hasn't been exported yet or if
+    a different 'layout' ('standard' vs 'literature') is requested.
     """
     job = get_job(job_id)
     out_dir = OUTPUT_DIR / job_id
     out_path = None
+    active_layout = (layout or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
+    layout_changed = bool(layout and job and layout.lower() != (getattr(job, "layout_mode", "standard") or "standard").lower())
 
     if format:
         fmt = format.lower().lstrip(".")
-        # 1. Check if a file in the requested format already exists
-        if out_dir.exists():
+        # 1. Check if a file in the requested format already exists (unless layout changed)
+        if out_dir.exists() and not layout_changed:
             matching = [f for f in out_dir.iterdir() if f.is_file() and f.suffix.lower() == f".{fmt}"]
             if matching:
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
 
-        # 2. If not, generate it on-demand from the translated text
+        # 2. If not (or if layout changed), generate it on-demand from the translated text
         if not out_path and out_dir.exists():
             txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
             if txt_files:
                 txt_file = txt_files[0]
                 txt_content = txt_file.read_text(encoding="utf-8")
                 base_name = txt_file.stem
-                out_path = export_text(txt_content, out_dir, fmt, base_name)
+                out_path = export_text(txt_content, out_dir, fmt, base_name, layout=active_layout)
                 if job:
                     job.output_path = str(out_path)
                     job.output_format = fmt
+                    job.layout_mode = active_layout
 
     # Fallback to existing output_path or newest file
     if not out_path:
@@ -632,7 +640,8 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
 
     # Re-export active format if job has one
     fmt = (job.output_format if job else "docx") or "docx"
-    export_path = export_text(req.translated_text, out_dir, fmt, base_name)
+    layout = (getattr(job, "layout_mode", "standard") if job else "standard") or "standard"
+    export_path = export_text(req.translated_text, out_dir, fmt, base_name, layout=layout)
     if job:
         job.output_path = str(export_path)
 
@@ -640,7 +649,7 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     for f in list(out_dir.iterdir()):
         if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"] and f.name != export_path.name:
             try:
-                export_text(req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name)
+                export_text(req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name, layout=layout)
             except Exception:
                 pass
 
@@ -776,12 +785,13 @@ async def polish_translation(req: PolishRequest):
     txt_file.write_text(polished, encoding="utf-8")
     base_name = txt_file.stem
     fmt = (job.output_format if job else "docx") or "docx"
-    export_path = export_text(polished, out_dir, fmt, base_name)
+    layout = (req.layout_mode or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
+    export_path = export_text(polished, out_dir, fmt, base_name, layout=layout)
 
     # Refresh other standard formats on-demand
     for ext in [".pdf", ".epub", ".docx"]:
         try:
-            export_text(polished, out_dir, ext.lstrip("."), base_name)
+            export_text(polished, out_dir, ext.lstrip("."), base_name, layout=layout)
         except Exception:
             pass
 
@@ -790,6 +800,7 @@ async def polish_translation(req: PolishRequest):
         job.progress = 100
         job.output_path = str(export_path)
         job.output_format = fmt
+        job.layout_mode = layout
         job.current_step = "AI Polishing complete!"
 
     return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
