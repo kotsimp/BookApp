@@ -310,6 +310,8 @@ async function startAudiobook() {
   const language = document.getElementById('ab-lang-select').value;
   const voiceName = document.getElementById('ab-voice-selected').value || state.selectedVoice;
   const useTranslated = document.getElementById('ab-use-translated')?.checked || false;
+  const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-10%';
+  const [narrationStyle, narrationRate] = styleRaw.split(':');
 
   if (!voiceName) { toast('Please select a voice first.', 'error'); return; }
 
@@ -329,6 +331,8 @@ async function startAudiobook() {
         language,
         voice_name: voiceName,
         use_translated: useTranslated,
+        narration_style: narrationStyle,
+        rate: narrationRate,
       }),
     });
     if (!res.ok) {

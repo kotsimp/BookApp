@@ -79,6 +79,8 @@ class AudiobookRequest(BaseModel):
     language: str      # 'english' or 'greek' — language of the audio output
     voice_name: str    # e.g. 'Athina (Female)'
     use_translated: bool = False  # if True, use the translated text from a prior translation job
+    narration_style: str = "literature"  # 'literature' (natural book flow) or 'standard'
+    rate: Optional[str] = None           # optional explicit speed e.g. '-18%', '-10%', '+0%'
 
 
 class UpdateTextRequest(BaseModel):
@@ -318,12 +320,17 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         req.voice_name,
         output_path,
         translated_path,
+        req.narration_style,
+        req.rate,
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
-async def _run_audiobook(job_id, file_path, file_type, language, voice_name, output_path, translated_path):
+async def _run_audiobook(
+    job_id, file_path, file_type, language, voice_name, output_path, translated_path,
+    narration_style="literature", rate=None
+):
     try:
         await generate_audiobook(
             job_id=job_id,
@@ -333,6 +340,8 @@ async def _run_audiobook(job_id, file_path, file_type, language, voice_name, out
             voice_name=voice_name,
             output_path=output_path,
             translated_text_path=translated_path,
+            narration_style=narration_style,
+            rate=rate,
         )
     except Exception as e:
         logger.error(f"Audiobook error [{job_id}]: {e}", exc_info=True)

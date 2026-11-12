@@ -32,8 +32,10 @@ VOICES = {
     },
 }
 
-# Max chars per TTS request (1200 chars ensures edge-tts WebSocket stays within safe buffer limits)
-TTS_CHUNK_SIZE = 1200
+# Max chars per TTS request (2000 chars reduces WebSocket round-trips while staying well within edge-tts limits)
+TTS_CHUNK_SIZE = 2000
+# Number of concurrent edge-tts requests
+TTS_CONCURRENCY = 4
 
 
 async def generate_audiobook(
@@ -44,6 +46,8 @@ async def generate_audiobook(
     voice_name: str,
     output_path: str,
     translated_text_path: Optional[str] = None,
+    narration_style: str = "literature",
+    rate: Optional[str] = None,
 ) -> str:
     """
     Generates an MP3 audiobook from a document or pre-translated text file.
@@ -94,30 +98,53 @@ async def generate_audiobook(
         update_job(job_id, status="error", error="No text found to convert to audio.")
         raise ValueError("No text found to convert to audio.")
 
+    # Determine prosody (rate, pitch, pause style)
+    is_literature = (narration_style != "standard")
+    effective_rate = rate if rate else ("-10%" if is_literature else "+0%")
+    effective_pitch = "-2Hz" if is_literature else "+0Hz"
+
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
-               current_step=f"Generating audio in {total_chunks} parts using {voice_name}...")
+               current_step=f"Generating audio in {total_chunks} parts using {voice_name} ({narration_style})...")
 
-    logger.info(f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, source={text_source}")
+    logger.info(
+        f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, "
+        f"style={narration_style}, rate={effective_rate}, pitch={effective_pitch}, source={text_source}"
+    )
 
-    # Generate audio for each chunk in temp dir
+    # Generate audio for each chunk concurrently (preserving order)
     temp_dir = Path(output_path).parent / f"tts_tmp_{job_id}"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    chunk_files = []
+    sem = asyncio.Semaphore(TTS_CONCURRENCY)
+    completed = 0
 
-    for idx, chunk in enumerate(text_chunks):
+    async def _process_chunk(idx: int, chunk: str) -> Optional[str]:
+        nonlocal completed
         if not chunk.strip():
-            continue
-
+            completed += 1
+            return None
         chunk_path = temp_dir / f"chunk_{idx:06d}.mp3"
-        update_job(job_id,
-                   current_step=f"Generating audio part {idx+1} of {total_chunks}...",
-                   done_chunks=idx,
-                   progress=int((idx / total_chunks) * 85))
+        async with sem:
+            await _tts_chunk_with_retry(
+                chunk,
+                voice_code,
+                str(chunk_path),
+                rate=effective_rate,
+                pitch=effective_pitch,
+                literature_pauses=is_literature,
+            )
+        completed += 1
+        update_job(
+            job_id,
+            current_step=f"Generated audio part {completed} of {total_chunks}...",
+            done_chunks=completed,
+            progress=int((completed / total_chunks) * 85),
+        )
+        return str(chunk_path)
 
-        await _tts_chunk_with_retry(chunk, voice_code, str(chunk_path))
-        chunk_files.append(str(chunk_path))
+    results = await asyncio.gather(*(_process_chunk(i, c) for i, c in enumerate(text_chunks)))
+    chunk_files = [p for p in results if p]
 
     # Concatenate all chunks into final MP3
     update_job(job_id,
@@ -148,28 +175,54 @@ async def generate_audiobook(
     return output_path
 
 
-def _clean_tts_text(text: str) -> str:
-    """Prepares text for TTS by removing redundant whitespace, symbols, and bullets."""
+def _clean_tts_text(text: str, literature_pauses: bool = True) -> str:
+    """Prepares text for TTS, preserving natural breath pauses for literature."""
     # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)
-    # Replace newlines with spaces so edge-tts SSML parsing doesn't break
-    text = re.sub(r"[\r\n]+", " ", text)
+
+    if literature_pauses:
+        # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush
+        paragraphs = re.split(r"\n\s*\n+", text.strip())
+        formatted = []
+        for para in paragraphs:
+            # Collapse single line-wraps inside a paragraph into spaces
+            p = re.sub(r"[\r\n]+", " ", para).strip()
+            if not p:
+                continue
+            # Ensure paragraph/heading ends with pause punctuation
+            if p[-1] not in ".!?;:…":
+                p += "."
+            formatted.append(p)
+        text = " ... ".join(formatted)
+        # Soften em-dashes/dialogue dashes into brief rhythmic pauses
+        text = re.sub(r"\s*[—–]\s*", ", ", text)
+    else:
+        text = re.sub(r"[\r\n]+", " ", text)
+
     # Collapse multiple spaces
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
 
 
-async def _tts_chunk_with_retry(text: str, voice: str, output_path: str, retries: int = 3):
+async def _tts_chunk_with_retry(
+    text: str,
+    voice: str,
+    output_path: str,
+    retries: int = 3,
+    rate: str = "-10%",
+    pitch: str = "-2Hz",
+    literature_pauses: bool = True,
+):
     """Generates TTS for a text chunk with retry logic, maintaining consistent voice throughout."""
-    clean_text = _clean_tts_text(text)
+    clean_text = _clean_tts_text(text, literature_pauses=literature_pauses)
     if not clean_text:
         Path(output_path).write_bytes(b"")
         return
 
     for attempt in range(retries):
         try:
-            communicate = edge_tts.Communicate(clean_text, voice)
+            communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch)
             await communicate.save(output_path)
             if Path(output_path).stat().st_size > 0:
                 return
