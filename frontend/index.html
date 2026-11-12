@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.8.6" />
+  <link rel="stylesheet" href="style.css?v=2.8.7" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -336,6 +336,13 @@
         </select>
       </div>
 
+      <div class="form-group">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
+          <input type="checkbox" id="ab-ai-polish" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span style="font-size:0.9rem">✨ AI Polish for Spoken Audio (Gemini — expands abbreviations &amp; improves narration flow)</span>
+        </label>
+      </div>
+
       <div class="form-group" id="ab-translate-option" style="display:none">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
           <input type="checkbox" id="ab-use-translated" onchange="syncAudiobookLangWithSource()" style="width:18px;height:18px;accent-color:var(--violet)" />
@@ -423,6 +430,7 @@
           <option value="formal">🏛️ Επίσημο &amp; Υπηρεσιακό (Official Administrative / Public Sector)</option>
           <option value="technical">💻 Τεχνικό &amp; Ακριβές (Technical Documentation / IT)</option>
           <option value="natural">📖 Φυσική Ροή &amp; Λογοτεχνικό (Natural &amp; Fluent Greek)</option>
+          <option value="audiobook">🎧 Audiobook Narration Script (Spoken Flow &amp; Expanded Abbreviations)</option>
         </select>
       </div>
 
@@ -516,6 +524,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.8.6"></script>
+<script src="app.js?v=2.8.7"></script>
 </body>
 </html>

@@ -37,6 +37,14 @@ STYLE_PROMPTS = {
         "2. Διατήρησε απόλυτα όλες τις παραγράφους, επικεφαλίδες και δομή του πρωτοτύπου. "
         "3. Επίστρεψε ΜΟΝΟ το διορθωμένο κείμενο."
     ),
+    "audiobook": (
+        "You are an expert audiobook script editor. Prepare the following text (keep its original language — Greek stays Greek, English stays English; do NOT translate) "
+        "so that a neural text-to-speech voice reads it with natural human storytelling flow: "
+        "1. Expand abbreviations into full spoken words (e.g., π.χ. -> για παράδειγμα, κ.λπ. -> και λοιπά, αρ. πρωτ. -> αριθμός πρωτοκόλλου, e.g. -> for example, etc. -> et cetera). "
+        "2. Remove non-spoken artifacts such as footnote numbers [1], page markers (=== PAGE X ===), raw URLs, and broken line-wrap hyphens. "
+        "3. Smooth awkward parentheses, slashes, and dense clauses using natural commas and periods so the narrator breathes and pauses naturally. "
+        "4. Preserve all paragraph and verse breaks and keep the exact meaning. Return ONLY the polished spoken script with no commentary."
+    ),
 }
 
 # Cached discoveries to avoid querying Google ModelService on every single page

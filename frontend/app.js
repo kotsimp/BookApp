@@ -335,6 +335,8 @@ async function startAudiobook() {
   const language = document.getElementById('ab-lang-select').value;
   const voiceName = document.getElementById('ab-voice-selected').value || state.selectedVoice;
   const useTranslated = document.getElementById('ab-use-translated')?.checked || false;
+  const aiPolish = document.getElementById('ab-ai-polish')?.checked || false;
+  const apiKey = localStorage.getItem('gemini_api_key') || null;
   const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-10%';
   const [narrationStyle, narrationRate] = styleRaw.split(':');
 
@@ -358,6 +360,8 @@ async function startAudiobook() {
         use_translated: useTranslated,
         narration_style: narrationStyle,
         rate: narrationRate,
+        ai_polish: aiPolish,
+        api_key: aiPolish ? apiKey : null,
       }),
     });
     if (!res.ok) {

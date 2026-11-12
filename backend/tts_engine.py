@@ -48,6 +48,8 @@ async def generate_audiobook(
     translated_text_path: Optional[str] = None,
     narration_style: str = "literature",
     rate: Optional[str] = None,
+    ai_polish: bool = False,
+    api_key: Optional[str] = None,
 ) -> str:
     """
     Generates an MP3 audiobook from a document or pre-translated text file.
@@ -82,21 +84,43 @@ async def generate_audiobook(
             raw = f.read()
         raw = re.sub(r"={3,}.*?={3,}", "", raw, flags=re.DOTALL)
         raw = re.sub(r"\bPAGE \d+\b", "", raw)
-        text_chunks = split_into_chunks(raw.strip(), TTS_CHUNK_SIZE)
-        total_chunks = len(text_chunks)
+        raw_text = raw.strip()
         text_source = "translated_file"
     else:
         # Parse directly from document
         pages = list(parse_document(file_path, file_type))
-        # Flatten all page text
-        all_text = "\n\n".join(p["text"] for p in pages)
-        text_chunks = split_into_chunks(all_text, TTS_CHUNK_SIZE)
-        total_chunks = len(text_chunks)
+        raw_text = "\n\n".join(p["text"] for p in pages).strip()
         text_source = "document"
 
-    if not text_chunks:
+    if not raw_text:
         update_job(job_id, status="error", error="No text found to convert to audio.")
         raise ValueError("No text found to convert to audio.")
+
+    if ai_polish:
+        from backend.ai_polisher import polish_text_with_gemini
+        from backend.settings_manager import get_setting
+
+        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+        if not resolved_key:
+            err_msg = "Gemini API key is required for AI Audiobook Polish."
+            update_job(job_id, status="error", error=err_msg)
+            raise ValueError(err_msg)
+
+        update_job(job_id, current_step="✨ AI polishing script for spoken narration...", progress=5)
+
+        def _polish_prog(cur: int, tot: int):
+            pct = 5 + int((cur / max(tot, 1)) * 15)
+            update_job(job_id, current_step=f"✨ AI polishing audio script ({cur}/{tot})...", progress=pct)
+
+        raw_text = await polish_text_with_gemini(
+            raw_text,
+            api_key=resolved_key,
+            style="audiobook",
+            progress_callback=_polish_prog,
+        )
+
+    text_chunks = split_into_chunks(raw_text, TTS_CHUNK_SIZE)
+    total_chunks = len(text_chunks)
 
     # Determine prosody (rate, pitch, pause style)
     style = (narration_style or "literature").lower()

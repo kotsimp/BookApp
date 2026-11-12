@@ -81,6 +81,8 @@ class AudiobookRequest(BaseModel):
     use_translated: bool = False  # if True, use the translated text from a prior translation job
     narration_style: str = "literature"  # 'literature' (natural book flow) or 'standard'
     rate: Optional[str] = None           # optional explicit speed e.g. '-18%', '-10%', '+0%'
+    ai_polish: bool = False              # if True, polish script with Gemini before TTS
+    api_key: Optional[str] = None        # optional Gemini API key override
 
 
 class UpdateTextRequest(BaseModel):
@@ -338,6 +340,12 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         if txt_files:
             translated_path = str(txt_files[0])
 
+    if req.ai_polish:
+        from backend.settings_manager import get_setting
+        resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+        if not resolved_key:
+            raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Please save your key in AI Polish first.")
+
     update_job(req.job_id, mode="audiobook", status="running")
 
     background_tasks.add_task(
@@ -351,6 +359,8 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         translated_path,
         req.narration_style,
         req.rate,
+        req.ai_polish,
+        req.api_key,
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
@@ -358,7 +368,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
 
 async def _run_audiobook(
     job_id, file_path, file_type, language, voice_name, output_path, translated_path,
-    narration_style="literature", rate=None
+    narration_style="literature", rate=None, ai_polish=False, api_key=None
 ):
     try:
         await generate_audiobook(
@@ -371,6 +381,8 @@ async def _run_audiobook(
             translated_text_path=translated_path,
             narration_style=narration_style,
             rate=rate,
+            ai_polish=ai_polish,
+            api_key=api_key,
         )
     except Exception as e:
         logger.error(f"Audiobook error [{job_id}]: {e}", exc_info=True)
