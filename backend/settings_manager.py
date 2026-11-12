@@ -53,4 +53,16 @@ def save_setting(key: str, value: Any) -> None:
     settings[key] = value
     save_settings(settings)
     if isinstance(value, str):
-        os.environ[key.upper()] = value
+        if value:
+            os.environ[key.upper()] = value
+        else:
+            os.environ.pop(key.upper(), None)
+
+
+def delete_setting(key: str) -> None:
+    """Removes a setting from settings.json and os.environ."""
+    settings = load_settings()
+    if key in settings:
+        del settings[key]
+        save_settings(settings)
+    os.environ.pop(key.upper(), None)

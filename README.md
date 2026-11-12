@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-7%2F7%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-9%2F9%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), and **generate professional AI audiobooks** using Microsoft Edge neural voices.
 
@@ -25,7 +25,8 @@ A modern, high-performance local web application to **translate documents** betw
 | **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API (milliseconds per chunk, zero bot-blocking). |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
-| **AI Polish & Proofreading** | Google Gemini AI integration to refine, correct grammar, and adapt stylistic tone (Formal Administrative, Technical, Natural). |
+| **AI Polish & Proofreading** | Google Gemini AI integration to refine translated text or run standalone AI Polish on uploaded documents / pasted text without translating, with persistent API key storage (`config/settings.json`). |
+| **Literature / E-Reader Layout** | Optional `layout=literature` mode for novels and books: reflowed Kindle/iPad EPUB with TOC & serif CSS, and 6×9 trade-paperback PDF/DOCX with Georgia serif & cross-page sentence merging. |
 | **Custom Glossary & Terminology** | Custom terminology mapping engine with regex word boundaries to enforce exact translations for domain terms. |
 | **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
 | **Bullet & Glyph Normalization** | Replaces proprietary Wingdings/PUA symbols with standard Unicode bullets (`•`) and native Word `List Bullet` paragraphs. |
@@ -34,8 +35,8 @@ A modern, high-performance local web application to **translate documents** betw
 | **Greek Audio Support** | Native Greek neural voices: **Nestoras (Male)** with 100% dictionary coverage & **Athina (Female)** with automatic fallback. |
 | **One-Click Direct Audio** | Convert any completed translation directly into a Greek Audiobook with a single click. |
 | **Live Progress Streaming** | Real-time progress updates via Server-Sent Events (SSE) distinguishing between document pages and audio parts. |
-| **Disk Recovery Architecture** | Completed jobs and download links survive server restarts by automatically recovering from disk. |
-| **Automated Test Suite** | Comprehensive 6-part test suite verifying parsers, translator, exporters, format preservation, dynamic download, and end-to-end APIs. |
+| **Disk Recovery & Auto-Cleanup** | Completed jobs survive server restarts via disk recovery, while startup housekeeping (`cleanup_old_jobs`) prunes stale temp directories older than 24 hours. |
+| **Automated Test Suite** | Comprehensive 9-part test suite verifying parsers, translator, exporters, format preservation, literature/e-reader formatting, dynamic download, editor/glossary/AI polish, and end-to-end APIs. |
 
 ---
 
@@ -80,12 +81,18 @@ Open **[http://localhost:8000](http://localhost:8000)** in your browser.
 BookApp/
 ├── backend/
 │   ├── main.py              # FastAPI application (REST endpoints & SSE streaming)
+│   ├── ai_polisher.py       # Gemini AI proofreading & style polishing engine
 │   ├── format_preserver.py  # In-place DOCX/EPUB formatting & styling preservation
-│   ├── exporter.py          # Multi-format exporter (DOCX, PDF, EPUB, TXT)
+│   ├── exporter.py          # Multi-format & literature/e-reader exporter (DOCX, PDF, EPUB, TXT)
+│   ├── glossary.py          # Custom terminology mapping & regex replacement
+│   ├── settings_manager.py  # Persistent application settings (config/settings.json)
 │   ├── translator.py        # High-speed chunked Google GTX translation engine
 │   ├── tts_engine.py        # Edge-TTS neural audio generator with voice fallback
-│   ├── job_manager.py       # Job state tracking & disk recovery fallback
+│   ├── job_manager.py       # Job state tracking, disk recovery & startup cleanup
 │   └── parsers.py           # Multi-mode extractors for PDF, DOCX, and EPUB
+├── config/
+│   ├── glossary.json        # Saved custom glossary terms
+│   └── settings.json        # Local persistent settings (gitignored)
 ├── frontend/
 │   ├── index.html           # Modern dark-mode single-page interface
 │   ├── style.css            # Responsive CSS theme
@@ -98,9 +105,11 @@ BookApp/
 │   ├── test_exporter.py
 │   ├── test_translator.py
 │   ├── test_format_preservation.py
-│   ├── test_dynamic_download.py # On-demand format conversion tests
-│   ├── test_editor_glossary_ai.py # Editor, Glossary & AI Polish tests
-│   └── test_api.py          # End-to-end integration tests
+│   ├── test_literature_formatting.py # Literature & e-reader formatting tests
+│   ├── test_dynamic_download.py      # On-demand format conversion tests
+│   ├── test_editor_glossary_ai.py    # Editor, Glossary & AI Polish tests
+│   ├── test_standalone_ai_polish.py  # Standalone AI Polish & Settings API tests
+│   └── test_api.py                   # End-to-end integration tests
 ├── temp/                    # Uploads and outputs directory (auto-created)
 │   ├── uploads/
 │   └── outputs/
@@ -136,7 +145,7 @@ BookApp/
 To run the automated verification test suite:
 
 ```bash
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api"
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_api"
 ```
 
 ---

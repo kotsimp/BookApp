@@ -19,8 +19,12 @@ def api_post_json(path, data):
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
 def api_post_file(path, filepath, filename):
-    import io
     boundary = "----TestBoundary12345"
     file_data = open(filepath, "rb").read()
     body = (
@@ -57,18 +61,27 @@ try:
 except Exception as e:
     print(f"  GET /jobs: FAIL - {e}")
 
-# Test 6c: Download old job from disk (recovered)
+# Test 6c: Download old job from disk (recovered) and delete it
+recovered_id = "test-recovered-job"
+recovered_dir = os.path.join("temp", "outputs", recovered_id)
+os.makedirs(recovered_dir, exist_ok=True)
+recovered_file = os.path.join(recovered_dir, "recovered.txt")
+with open(recovered_file, "w", encoding="utf-8") as f:
+    f.write("Recovered job output")
 try:
-    req = urllib.request.Request(f"{API}/download/8c8b7f85-1f6c-436f-9bca-7d53013a394d")
+    req = urllib.request.Request(f"{API}/download/{recovered_id}")
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         content = resp.read()
-        assert len(content) > 0
+        assert content == b"Recovered job output"
         print(f"  GET /download (recovered job): OK ({len(content)} bytes)")
-except urllib.error.HTTPError as e:
-    print(f"  GET /download (recovered job): FAIL - HTTP {e.code}")
-except Exception as e:
-    print(f"  GET /download (recovered job): FAIL - {e}")
+    del_status, del_data = api_delete(f"/jobs/{recovered_id}")
+    assert del_status == 200 and del_data["deleted"] == recovered_id
+    print("  DELETE /jobs/{job_id}: OK")
+finally:
+    if os.path.exists(recovered_dir):
+        import shutil
+        shutil.rmtree(recovered_dir, ignore_errors=True)
 
 # Test 6d: Download nonexistent job
 try:
@@ -173,5 +186,19 @@ except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")
     traceback.print_exc()
+
+# Test 6g: DELETE /api/settings/gemini_api_key (restore original key if present)
+_, prev_settings = api_get("/settings")
+prev_key = prev_settings.get("gemini_api_key", "")
+try:
+    api_post_json("/settings", {"gemini_api_key": "temp-test-key-123"})
+    del_status, del_data = api_delete("/settings/gemini_api_key")
+    assert del_status == 200 and del_data["status"] == "deleted"
+    _, after_settings = api_get("/settings")
+    assert after_settings.get("gemini_api_key", "") == ""
+    print("  DELETE /settings/gemini_api_key: OK")
+finally:
+    if prev_key:
+        api_post_json("/settings", {"gemini_api_key": prev_key})
 
 print("  ALL API TESTS PASSED")

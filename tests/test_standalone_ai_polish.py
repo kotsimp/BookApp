@@ -12,9 +12,7 @@ sys.path.insert(0, ".")
 import urllib.request
 import urllib.error
 import json
-import time
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
 from docx import Document
 
 API = "http://127.0.0.1:8000/api"

@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import asyncio
 import docx
-from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
+from backend.format_preserver import translate_docx_in_place
 from backend.exporter import export_pdf
 
 # 1. Test DOCX format preservation

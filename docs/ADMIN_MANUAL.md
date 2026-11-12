@@ -59,7 +59,9 @@
 * **On-Demand Dynamic Exporter:** Δυναμική εξαγωγή σε οποιαδήποτε υποστηριζόμενη μορφή (`format=pdf|docx|epub|txt`) κατά τη λήψη, χωρίς επανυπολογισμό μετάφρασης.
 * **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
 * **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting.
-* **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`).
+* **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) τόσο μετά τη μετάφραση όσο και αυτόνομα (σε ανεβασμένο έγγραφο ή επικολλημένο κείμενο).
+* **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
+* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC.
 * **Custom Glossary Engine:** Αποθήκευση και αντικατάσταση ορολογίας με regex word boundaries (`GET`/`POST`/`DELETE /api/glossary`).
 
 ---
@@ -210,13 +212,19 @@ server {
 ```
 BookApp/
 ├── backend/
-│   ├── main.py              # Endpoints API (Upload, Translate, Audiobook, Download)
+│   ├── main.py              # Endpoints API (Upload, Translate, Audiobook, Polish, Settings, Download)
+│   ├── ai_polisher.py       # Επιμέλεια κειμένου μέσω Google Gemini API
 │   ├── format_preserver.py  # In-place DOCX/EPUB styling preservation
-│   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF
+│   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF & Literature/E-Reader layout
+│   ├── glossary.py          # Διαχείριση προσαρμοσμένου γλωσσαρίου όρων
+│   ├── settings_manager.py  # Αποθήκευση/ανάγνωση ρυθμίσεων (config/settings.json)
 │   ├── translator.py        # Μηχανή μετάφρασης (Google GTX client API)
 │   ├── tts_engine.py        # Παραγωγή ήχου edge-tts (Nestoras / Athina)
-│   ├── job_manager.py       # Διαχείριση εργασιών & ανάκτηση από δίσκο
+│   ├── job_manager.py       # Διαχείριση εργασιών, ανάκτηση από δίσκο & αυτόματος καθαρισμός
 │   └── parsers.py           # Αναλυτές εγγράφων PDF, DOCX, EPUB
+├── config/
+│   ├── glossary.json        # Αποθηκευμένο γλωσσάρι όρων
+│   └── settings.json        # Τοπικές ρυθμίσεις & API keys (gitignored)
 ├── frontend/                # Static files (HTML, CSS, JS)
 ├── temp/
 │   ├── uploads/{job_id}/    # Αποθηκευμένα αρχεία εισόδου
@@ -225,13 +233,14 @@ BookApp/
 └── requirements.txt
 ```
 
-### Διαγραφή μέσω API (REST Endpoints)
-Η εφαρμογή παρέχει άμεση διαγραφή εργασιών και αποδέσμευση πόρων μέσω HTTP:
+### Διαγραφή & Διαχείριση Ρυθμίσεων μέσω API (REST Endpoints)
+Η εφαρμογή παρέχει άμεση διαγραφή εργασιών, αποδέσμευση πόρων και διαχείριση ρυθμίσεων μέσω HTTP:
 * `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία, καθαρίζει τη μνήμη και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό και διαγράφει όλα τα προσωρινά αρχεία στο `temp/uploads/` και `temp/outputs/`.
+* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`).
 
 ### Αυτόματος Καθαρισμός Προσωρινών Αρχείων (Housekeeping)
-Μετά από μακροχρόνια χρήση, τα αρχεία στον κατάλογο `temp/` μπορούν να καταλάβουν αρκετό αποθηκευτικό χώρο. Προτείνεται η εκτέλεση προγραμματισμένης εργασίας για διαγραφή αρχείων παλαιότερων των 7 ημερών:
+Κατά την εκκίνηση της εφαρμογής, η συνάρτηση `cleanup_old_jobs()` καθαρίζει αυτόματα παλαιές εργασίες και φακέλους στο `temp/uploads/` και `temp/outputs/` που είναι παλαιότεροι των 24 ωρών (`86400s`). Για πρόσθετο περιοδικό καθαρισμό σε περιβάλλον παραγωγής χωρίς επανεκκίνηση:
 
 * **Σε Linux (Cron Job):**
   ```bash
@@ -251,7 +260,7 @@ BookApp/
 
 ```bash
 # Βεβαιωθείτε ότι το .venv είναι ενεργό και ο server εκτελείται
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_api, tests.test_dynamic_download, tests.test_editor_glossary_ai"
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_api"
 ```
 
 Όλοι οι έλεγχοι πρέπει να ολοκληρωθούν με **`PASSED`**.

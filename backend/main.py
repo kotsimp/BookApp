@@ -674,6 +674,15 @@ async def update_app_settings(req: SettingsRequest):
     return {"status": "ok"}
 
 
+@app.delete("/api/settings/{key}")
+async def delete_app_setting(key: str):
+    if key not in {"gemini_api_key"}:
+        raise HTTPException(400, f"Unsupported setting key '{key}'.")
+    from backend.settings_manager import delete_setting
+    delete_setting(key)
+    return {"status": "deleted", "key": key}
+
+
 # ---------------------------------------------------------------------------
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------

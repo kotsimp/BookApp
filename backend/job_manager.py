@@ -160,8 +160,25 @@ def list_jobs() -> list[Job]:
 
 
 def cleanup_old_jobs(max_age_seconds: int = 86400):
-    """Remove jobs older than max_age_seconds (default 24h)."""
+    """Remove in-memory jobs and temp upload/output directories older than max_age_seconds (default 24h)."""
+    import shutil
+    from pathlib import Path
+
     now = time.time()
     to_delete = [jid for jid, j in _jobs.items() if now - j.created_at > max_age_seconds]
     for jid in to_delete:
         del _jobs[jid]
+
+    base_temp = Path(__file__).resolve().parent.parent / "temp"
+    for sub in ("uploads", "outputs"):
+        root = base_temp / sub
+        if not root.exists():
+            continue
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                if now - entry.stat().st_mtime > max_age_seconds:
+                    shutil.rmtree(str(entry), ignore_errors=True)
+            except Exception:
+                pass
