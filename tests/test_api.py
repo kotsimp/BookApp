@@ -182,6 +182,53 @@ try:
             content = resp.read()
             assert len(content) > 10000
             print(f"  GET /download (audiobook MP3): OK ({len(content)} bytes)")
+
+    # Test 6f-2: Greek -> English translation + English Audiobook
+    print("  --- Integration: Greek -> English + English Audiobook ---")
+    gr_docx_path = "temp/test_upload_greek.docx"
+    gr_doc = Document()
+    gr_doc.add_paragraph("Κεφάλαιο Πρώτο")
+    gr_doc.add_paragraph("Αυτό είναι ένα δοκιμαστικό έγγραφο για μετάφραση από ελληνικά σε αγγλικά.")
+    gr_doc.save(gr_docx_path)
+
+    status, data = api_post_file("/upload", gr_docx_path, "test_upload_greek.docx")
+    assert status == 200
+    gr_job_id = data["job_id"]
+    status, data = api_post_json("/translate", {
+        "job_id": gr_job_id,
+        "source_lang": "greek",
+        "target_lang": "english",
+        "output_format": "docx",
+    })
+    assert status == 200
+    for i in range(60):
+        time.sleep(0.5)
+        status, sdata = api_get(f"/status/{gr_job_id}")
+        if sdata["status"] in ("done", "error"):
+            break
+    assert sdata["status"] == "done", f"Greek->English translation failed: {sdata}"
+    print(f"  Greek->English translation: OK")
+
+    status, data = api_post_json("/audiobook", {
+        "job_id": gr_job_id,
+        "language": "english",
+        "voice_name": "Aria (Female, US)",
+        "use_translated": True,
+    })
+    assert status == 200
+    for i in range(120):
+        time.sleep(0.5)
+        status, sdata = api_get(f"/status/{gr_job_id}")
+        if sdata["status"] in ("done", "error"):
+            break
+    assert sdata["status"] == "done", f"English audiobook failed: {sdata}"
+    req = urllib.request.Request(f"{API}/download/{gr_job_id}")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        en_mp3 = resp.read()
+        assert len(en_mp3) > 10000
+        print(f"  GET /download (English audiobook MP3): OK ({len(en_mp3)} bytes)")
+    api_delete(f"/jobs/{gr_job_id}")
 except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")

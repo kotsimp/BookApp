@@ -810,6 +810,26 @@ body::after {
 .editor-actions .btn-primary {
   width: auto;
 }
+.form-select-sm {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: var(--transition);
+}
+.form-select-sm:hover,
+.form-select-sm:focus {
+  border-color: var(--violet);
+}
+.form-select-sm option {
+  background: #12141d;
+  color: var(--text-primary);
+}
 .editor-dirty-badge {
   display: none;
   align-items: center;

@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.8.0" />
+  <link rel="stylesheet" href="style.css?v=2.8.1" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -198,9 +198,15 @@
         <button class="btn btn-secondary" onclick="openAiPolishModal()" id="tr-polish-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet)">
           ✨ AI Polish (Gemini)
         </button>
-        <button class="btn btn-secondary" onclick="sendToAudiobook()" id="tr-to-audio-btn" style="display:inline-flex; align-items:center; gap:8px">
-          🎧 Convert to Greek Audiobook
-        </button>
+        <div class="audio-convert-group" style="display:inline-flex; align-items:center; gap:6px">
+          <select id="tr-audio-lang" class="form-select-sm" aria-label="Audiobook language" title="Choose audiobook language">
+            <option value="english">🇬🇧 English</option>
+            <option value="greek">🇬🇷 Greek</option>
+          </select>
+          <button class="btn btn-secondary" onclick="sendToAudiobook()" id="tr-to-audio-btn" style="display:inline-flex; align-items:center; gap:8px">
+            🎧 Convert to Audiobook
+          </button>
+        </div>
       </div>
     </div>
 
@@ -321,8 +327,8 @@
 
       <div class="form-group" id="ab-translate-option" style="display:none">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
-          <input type="checkbox" id="ab-use-translated" style="width:18px;height:18px;accent-color:var(--violet)" />
-          <span style="font-size:0.9rem">Use previously translated text (if available from Translate tab)</span>
+          <input type="checkbox" id="ab-use-translated" onchange="syncAudiobookLangWithSource()" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span id="ab-use-translated-label" style="font-size:0.9rem">Use previously translated text (if available from Translate tab)</span>
         </label>
       </div>
 
@@ -499,6 +505,6 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.8.0"></script>
+<script src="app.js?v=2.8.1"></script>
 </body>
 </html>

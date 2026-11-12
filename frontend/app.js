@@ -447,6 +447,11 @@ function showResult(prefix, data) {
     if (dlBtn && state.tr.jobId) {
       dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
     }
+    const audioLangSelect = document.getElementById('tr-audio-lang');
+    const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
+    if (audioLangSelect) {
+      audioLangSelect.value = targetLang;
+    }
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download the MP3 file.';
   }
@@ -497,22 +502,46 @@ function sendToAudiobook() {
   document.getElementById('ab-selected-file').style.display = 'flex';
   document.getElementById('ab-start-btn').disabled = false;
 
-  // Set language dropdown to Greek and refresh voice cards
+  const sourceLang = document.getElementById('tr-source-lang')?.value || 'english';
+  const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
+  const chosenLang = document.getElementById('tr-audio-lang')?.value || targetLang;
+  const shouldUseTranslated = (chosenLang === targetLang);
+
+  // Set language dropdown to match the chosen audiobook language and refresh voice cards
   const langSelect = document.getElementById('ab-lang-select');
   if (langSelect) {
-    langSelect.value = 'greek';
+    langSelect.value = chosenLang;
     updateVoices();
   }
 
-  // Check the "Use previously translated text" checkbox
+  // Sync the "Use previously translated text" checkbox with chosen language
   const transOpt = document.getElementById('ab-translate-option');
   if (transOpt) transOpt.style.display = 'block';
   const useTranslated = document.getElementById('ab-use-translated');
-  if (useTranslated) useTranslated.checked = true;
+  if (useTranslated) useTranslated.checked = shouldUseTranslated;
+  const useTranslatedLabel = document.getElementById('ab-use-translated-label');
+  if (useTranslatedLabel) {
+    const tgtName = targetLang === 'greek' ? 'Greek' : 'English';
+    const srcName = sourceLang === 'greek' ? 'Greek' : 'English';
+    useTranslatedLabel.textContent = `Use translated text (${tgtName}) — uncheck to narrate original (${srcName})`;
+  }
 
   // Switch to the Audiobook tab
   switchTab('audiobook');
-  toast('Ready to create Greek audiobook from translated text!', 'info');
+  const langLabel = chosenLang === 'greek' ? 'Greek' : 'English';
+  const sourceDesc = shouldUseTranslated ? 'translated text' : 'original document';
+  toast(`Ready to create ${langLabel} audiobook from ${sourceDesc}!`, 'info');
+}
+
+function syncAudiobookLangWithSource() {
+  const useTranslated = document.getElementById('ab-use-translated')?.checked;
+  const sourceLang = document.getElementById('tr-source-lang')?.value || 'english';
+  const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
+  const langSelect = document.getElementById('ab-lang-select');
+  if (langSelect) {
+    langSelect.value = useTranslated ? targetLang : sourceLang;
+    updateVoices();
+  }
 }
 
 // ── History ────────────────────────────────────────────────
