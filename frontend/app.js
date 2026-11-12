@@ -860,6 +860,7 @@ async function saveEditorText() {
 
 // ── AI Polish via Gemini ───────────────────────────────────
 let _polishPollTimer = null;
+let _polishRunning = false;
 
 function toggleApiKeyVisibility() {
   const input = document.getElementById('gemini-api-key');
@@ -905,21 +906,25 @@ async function openAiPolishModal() {
   }
 
   const prog = document.getElementById('ai-polish-progress-container');
-  if (prog) prog.style.display = 'none';
+  if (prog) prog.style.display = _polishRunning ? 'block' : 'none';
   const btn = document.getElementById('btn-run-polish');
-  if (btn) btn.disabled = false;
+  if (btn) btn.disabled = _polishRunning;
+  const cancelBtn = document.getElementById('btn-cancel-polish');
+  if (cancelBtn) cancelBtn.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
 }
 
 function closeAiPolishModal() {
-  if (_polishPollTimer) {
-    clearInterval(_polishPollTimer);
-    _polishPollTimer = null;
-  }
   document.getElementById('ai-polish-modal').style.display = 'none';
-  const prog = document.getElementById('ai-polish-progress-container');
-  if (prog) prog.style.display = 'none';
-  const btn = document.getElementById('btn-run-polish');
-  if (btn) btn.disabled = false;
+  if (!_polishRunning) {
+    if (_polishPollTimer) {
+      clearInterval(_polishPollTimer);
+      _polishPollTimer = null;
+    }
+    const prog = document.getElementById('ai-polish-progress-container');
+    if (prog) prog.style.display = 'none';
+    const btn = document.getElementById('btn-run-polish');
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function clearGeminiKey() {
@@ -1010,6 +1015,11 @@ async function runAiPolish() {
   stepEl.innerHTML = '<span class="status-dot"></span> Initializing Flash AI engine...';
   if (pagesEl) pagesEl.textContent = 'Starting...';
   btn.disabled = true;
+  _polishRunning = true;
+  const cancelBtn = document.getElementById('btn-cancel-polish');
+  if (cancelBtn) cancelBtn.textContent = 'Minimize (Run in Background)';
+  const trTabLabel = document.querySelector('#btn-translate .tab-label');
+  if (trTabLabel) trTabLabel.textContent = 'Translate Document · ✨ AI Polish';
 
   // Poll progress every 500ms if jobId exists
   if (jobId) {
@@ -1022,8 +1032,9 @@ async function runAiPolish() {
             const pct = Math.max(5, Math.min(98, data.percent));
             barEl.style.width = `${pct}%`;
             pctEl.textContent = `${pct}%`;
-            stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining Greek translation...'}`;
-            if (pagesEl) pagesEl.textContent = `Page ${data.current} of ${data.total}`;
+            stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining text...'}`;
+            if (pagesEl) pagesEl.textContent = `Part ${data.current} of ${data.total}`;
+            if (trTabLabel) trTabLabel.textContent = `Translate Document · ✨ ${pct}%`;
           }
         }
       } catch (_) {}
@@ -1071,13 +1082,22 @@ async function runAiPolish() {
       openEditor();
     }
     setTimeout(() => {
-      closeAiPolishModal();
+      if (document.getElementById('ai-polish-modal').style.display !== 'none') {
+        closeAiPolishModal();
+      }
     }, 600);
   } catch (err) {
     toast(`AI Error: ${err.message}`, 'error');
     progEl.style.display = 'none';
     btn.disabled = false;
   } finally {
+    _polishRunning = false;
+    const cBtn = document.getElementById('btn-cancel-polish');
+    if (cBtn) cBtn.textContent = 'Cancel';
+    const trTabLabel = document.querySelector('#btn-translate .tab-label');
+    if (trTabLabel && state.tr.status !== 'running') {
+      trTabLabel.textContent = 'Translate Document';
+    }
     if (_polishPollTimer) {
       clearInterval(_polishPollTimer);
       _polishPollTimer = null;
