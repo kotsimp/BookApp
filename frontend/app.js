@@ -889,28 +889,23 @@ async function runAiPolish() {
   if (pagesEl) pagesEl.textContent = 'Starting...';
   btn.disabled = true;
 
-  // Poll progress every 500ms
-  _polishPollTimer = setInterval(async () => {
-    try {
-      const pRes = await fetch(`${API}/polish/status/${jobId}`);
-      if (pRes.ok) {
-        const data = await pRes.json();
-        if (data.status === 'running' && data.total > 0) {
-          const pct = Math.max(5, Math.min(98, data.percent));
-          barEl.style.width = `${pct}%`;
-          pctEl.textContent = `${pct}%`;
-          stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining Greek translation...'}`;
-          if (pagesEl) pagesEl.textContent = `Page ${data.current} of ${data.total}`;
+  // Poll progress every 500ms if jobId exists
+  if (jobId) {
+    _polishPollTimer = setInterval(async () => {
+      try {
+        const pRes = await fetch(`${API}/polish/status/${jobId}`);
+        if (pRes.ok) {
+          const data = await pRes.json();
+          if (data.status === 'running' && data.total > 0) {
+            const pct = Math.max(5, Math.min(98, data.percent));
+            barEl.style.width = `${pct}%`;
+            pctEl.textContent = `${pct}%`;
+            stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining Greek translation...'}`;
+            if (pagesEl) pagesEl.textContent = `Page ${data.current} of ${data.total}`;
+          }
         }
-      }
-    } catch (_) {}
-  }, 500);
-
-  // If editor is open and modified, pass current editor text
-  let currentText = null;
-  const editorCard = document.getElementById('tr-editor-card');
-  if (editorCard.style.display !== 'none') {
-    currentText = document.getElementById('editor-translated-text').value;
+      } catch (_) {}
+    }, 500);
   }
 
   try {
