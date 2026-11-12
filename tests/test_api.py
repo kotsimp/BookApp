@@ -228,7 +228,11 @@ try:
         en_mp3 = resp.read()
         assert len(en_mp3) > 10000
         print(f"  GET /download (English audiobook MP3): OK ({len(en_mp3)} bytes)")
+    api_delete(f"/jobs/{job_id}")
     api_delete(f"/jobs/{gr_job_id}")
+    for tmp_f in (test_docx_path, gr_docx_path):
+        if os.path.exists(tmp_f):
+            os.remove(tmp_f)
 except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")

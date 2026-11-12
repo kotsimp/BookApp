@@ -552,7 +552,7 @@ async def debug_extract(job_id: str, max_chars: int = 500):
 
 @app.delete("/api/jobs")
 async def clear_all_jobs():
-    """Clean up all jobs and their temporary files."""
+    """Clean up all jobs and all temporary files inside temp/."""
     from backend.job_manager import _jobs
     for parent_dir in [UPLOAD_DIR, OUTPUT_DIR]:
         if parent_dir.exists():
@@ -564,6 +564,17 @@ async def clear_all_jobs():
                         child.unlink(missing_ok=True)
                 except Exception:
                     pass
+    if TEMP_DIR.exists():
+        for child in TEMP_DIR.iterdir():
+            if child in (UPLOAD_DIR, OUTPUT_DIR):
+                continue
+            try:
+                if child.is_dir():
+                    shutil.rmtree(str(child), ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
+            except Exception:
+                pass
     _jobs.clear()
     return {"status": "cleared", "count": 0}
 
