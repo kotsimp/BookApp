@@ -219,11 +219,11 @@ async function checkCoverImage(jobId) {
   if (covGroup) covGroup.style.display = 'block';
 
   try {
-    const res = await fetch(`${API}/cover/${jobId}`, { method: 'HEAD' });
+    const res = await fetch(`${API}/cover/${jobId}`);
     if (res.ok) {
       if (thumb) thumb.src = `${API}/cover/${jobId}?t=${Date.now()}`;
       if (thumbContainer) thumbContainer.style.display = 'block';
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--emerald);font-weight:600">✔ Εξώφυλλο ενεργό</span> (Περιλαμβάνεται στην 1η σελίδα σε PDF, EPUB &amp; DOCX).';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--emerald);font-weight:600">✔ Εξώφυλλο ενεργό</span> (Περιλαμβάνεται αυτόματα στην 1η σελίδα σε PDF, EPUB &amp; DOCX).';
       if (removeBtn) removeBtn.style.display = 'inline-flex';
     } else {
       if (thumbContainer) thumbContainer.style.display = 'none';

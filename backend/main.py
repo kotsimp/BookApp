@@ -556,7 +556,7 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
     )
 
 
-@app.get("/api/cover/{job_id}")
+@app.api_route("/api/cover/{job_id}", methods=["GET", "HEAD"])
 async def get_cover_image(job_id: str):
     """Retrieve the current cover image for a job, if present."""
     out_dir = OUTPUT_DIR / job_id
