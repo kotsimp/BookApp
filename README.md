@@ -22,11 +22,12 @@ A modern, high-performance local web application to **translate documents** betw
 
 | Feature | Details |
 |---|---|
-| **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API (milliseconds per chunk, zero bot-blocking). |
+| **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API via HTTP POST with Greek character validation and exponential backoff on 429 (zero bot-blocking, no URL length limits). |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
+| **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
+| **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
+| **Optimized AI Polish & Proofreading** | Google Gemini AI integration with 5 tailored styles (including dedicated `literature` for fiction & sci-fi), smart multi-page batching (~5 pages / 10k chars per call) cutting API calls by 80% to fit within the 15 RPM free tier, dynamic 12s–48s backoff, and persistent settings (`config/settings.json`). |
 | **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
-| **AI Polish & Proofreading** | Google Gemini AI integration to refine translated text or run standalone AI Polish on uploaded documents / pasted text without translating, with persistent API key storage (`config/settings.json`). |
-| **Literature / E-Reader Layout** | Optional `layout=literature` mode for novels and books: preserves the original artwork cover image (PDF, EPUB, DOCX), reflows Kindle/iPad EPUB with TOC & serif CSS, and produces 6×9 trade-paperback PDF/DOCX with Georgia serif & cross-page sentence merging. |
 | **Custom Glossary & Terminology** | Custom terminology mapping engine with regex word boundaries to enforce exact translations for domain terms. |
 | **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
 | **Bullet & Glyph Normalization** | Replaces proprietary Wingdings/PUA symbols with standard Unicode bullets (`•`) and native Word `List Bullet` paragraphs. |

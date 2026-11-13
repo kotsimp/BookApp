@@ -52,16 +52,18 @@
 ### Βασικές Τεχνολογίες Backend:
 * **FastAPI + Uvicorn:** Υψηλής απόδοσης ασύγχρονος Web server.
 * **Server-Sent Events (SSE):** Μηχανισμός ζωντανής ενημέρωσης προόδου (0–100%) χωρίς polling.
-* **PyMuPDF (fitz):** Εξαγωγή κειμένου και παραγωγή PDF με ελληνικές TrueType γραμματοσειρές (Arial/Calibri).
+* **PyMuPDF (fitz):** Εξαγωγή κειμένου, αναγνώριση διάταξης και παραγωγή PDF με ελληνικές TrueType γραμματοσειρές (Arial/Calibri/Georgia).
 * **python-docx:** In-place ανάγνωση και εγγραφή εγγράφων Word με διατήρηση στυλ, γραμματοσειρών και πινάκων.
 * **EbookLib & BeautifulSoup4:** Ανάγνωση, ανάλυση και ανακατασκευή EPUB κεφαλαίων διατηρώντας το HTML/CSS.
 * **edge-tts:** Παραγωγή ήχου μέσω των δωρεάν νευρωνικών φωνών της Microsoft.
 * **On-Demand Dynamic Exporter:** Δυναμική εξαγωγή σε οποιαδήποτε υποστηριζόμενη μορφή (`format=pdf|docx|epub|txt`) κατά τη λήψη, χωρίς επανυπολογισμό μετάφρασης.
 * **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
 * **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting, άμεση ανάγνωση pre-extracted `*_original.txt` και διατήρηση του αρχικού `file_type` κατά το disk recovery.
-* **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) τόσο μετά τη μετάφραση όσο και αυτόνομα (σε ανεβασμένο έγγραφο ή επικολλημένο κείμενο), με αυτόματες επαναπροσπάθειες (backoff) σε παροδικά σφάλματα (`429`/`500`/`502`/`503`/`504`) και per-chunk fallback για μεγάλα βιβλία.
+* **Robust Translator Engine (HTTP POST & Validation):** Αποστολή αιτημάτων μετάφρασης μέσω HTTP POST στο Google GTX client API (`https://translate.googleapis.com/translate_a/single`), εξαλείφοντας περιορισμούς μήκους URI. Αυτόματος έλεγχος ελληνικών χαρακτήρων (`has_greek_text`) με εκθετικό backoff για αποτροπή σιωπηλών επιστροφών στα Αγγλικά.
+* **Optimized AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) με smart multi-page batching (~5 σελίδες / 10.000 χαρακτήρες ανά κλήση) και concurrency limiter (`MAX_CONCURRENT_REQUESTS = 2`). Μειώνει τις κλήσεις κατά 80% για συμβατότητα με το δωρεάν όριο (15 RPM) του Google AI Studio, διαθέτοντας dynamic exponential backoff (12s–48s) σε HTTP 429 και 5 εξειδικευμένα στυλ (συμπεριλαμβανομένου του `literature` για μυθιστορήματα και sci-fi).
+* **Cover Image Management:** Πλήρης υποστήριξη εξαγωγής και διαχείρισης εξωφύλλων (`GET/HEAD /api/cover/{job_id}`, `POST /api/cover/{job_id}`, `DELETE /api/cover/{job_id}`). Αυτόματη ανίχνευση από πρωτότυπα PDF/EPUB/DOCX, προβολή μικρογραφίας, χειροκίνητη αντικατάσταση και πλήρης απομόνωση από τα candidate files λήψης (ώστε να μην κατεβαίνει εικόνα αντί για βιβλίο).
 * **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
-* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC, καθώς και αυτόματη εξαγωγή και διατήρηση του αυθεντικού εξωφύλλου (`extract_cover_image`) από PDF, EPUB ή DOCX.
+* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC. Αφαιρεί running headers/footers και αριθμούς σελίδων από το κείμενο, απομονώνει τίτλους κεφαλαίων και παραθέματα, ενώνει σπασμένες προτάσεις ανάμεσα σε σελίδες και ενσωματώνει αυθεντικό εξώφυλλο στην 1η σελίδα.
 * **Custom Glossary Engine:** Αποθήκευση και αντικατάσταση ορολογίας με regex word boundaries (`GET`/`POST`/`DELETE /api/glossary`).
 
 ---
@@ -233,11 +235,17 @@ BookApp/
 └── requirements.txt
 ```
 
-### Διαγραφή & Διαχείριση Ρυθμίσεων μέσω API (REST Endpoints)
-Η εφαρμογή παρέχει άμεση διαγραφή εργασιών, αποδέσμευση πόρων και διαχείριση ρυθμίσεων μέσω HTTP:
+### Διαχείριση Εργασιών, Ρυθμίσεων & Εξωφύλλων μέσω REST Endpoints
+Η εφαρμογή παρέχει ολοκληρωμένο REST API για τη διαχείριση εργασιών, ρυθμίσεων και εικόνων εξωφύλλου:
 * `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία, καθαρίζει τη μνήμη και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό και διαγράφει όλα τα προσωρινά αρχεία στο `temp/uploads/` και `temp/outputs/`.
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`).
+* `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
+* `POST /api/cover/{job_id}`: Ανέβασμα νέου προσαρμοσμένου εξωφύλλου (`multipart/form-data`) με αυτόματη ενημέρωση των αρχείων εξόδου.
+* `DELETE /api/cover/{job_id}`: Αφαίρεση του εξωφύλλου για τη συγκεκριμένη εργασία.
+
+### Ακεραιότητα Εξαγωγής & Απομόνωση Εξωφύλλων
+Για να αποφευχθεί η εσφαλμένη λήψη εικόνων εξωφύλλου (`cover_image.jpg`) αντί για το πλήρες έγγραφο του βιβλίου, το υποσύστημα `job_manager.py` και το endpoint `GET /api/download/{job_id}` εξαιρούν ρητά όλα τα αρχεία εικόνων (`.jpg`, `.jpeg`, `.png`, `.webp`) από τις υποψήφιες εξόδους εγγράφων.
 
 ### Αυτόματος Καθαρισμός Προσωρινών Αρχείων (Housekeeping)
 Κατά την εκκίνηση της εφαρμογής, η συνάρτηση `cleanup_old_jobs()` καθαρίζει αυτόματα παλαιές εργασίες και φακέλους στο `temp/uploads/` και `temp/outputs/` που είναι παλαιότεροι των 24 ωρών (`86400s`). Για πρόσθετο περιοδικό καθαρισμό σε περιβάλλον παραγωγής χωρίς επανεκκίνηση:
@@ -278,3 +286,6 @@ python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests
 | **Η μπάρα προόδου δεν κινείται (μένει στο 0%)** | Ο proxy ή το firewall μπλοκάρει τα Server-Sent Events (SSE). | Βεβαιωθείτε ότι στο Nginx έχει τεθεί `proxy_buffering off;` και `proxy_read_timeout 86400s;`. |
 | **Η μετάφραση αποδίδει μόνο «Page 1, Page 2»** | Το PDF είναι σκαναρισμένο (εικόνες) χωρίς ψηφιακό επίπεδο κειμένου. | Ενημερώστε τον χρήστη ότι απαιτείται OCR πριν την εισαγωγή του αρχείου. |
 | **Σφάλμα HTTP 429 στη μετάφραση** | Υπερβολικά γρήγορα αιτήματα στο scraping endpoint. | Έχει επιλυθεί: η εφαρμογή χρησιμοποιεί πλέον το direct client API (`client=gtx`) που αποκρίνεται σε χιλιοστά του δευτερολέπτου χωρίς bot-blocking. |
+| **Σελίδα εμφανίζεται αμετάφραστη (στα Αγγλικά) μετά από μετάφραση** | Προσωρινό rate limit της Google ή αποκοπή μεγάλου URL στο GET request. | Έχει επιλυθεί πλήρως: η μηχανή χρησιμοποιεί HTTP POST (χωρίς όριο μήκους URL) και επικυρώνει υποχρεωτικά την ύπαρξη ελληνικού κειμένου (`has_greek_text`). Σε περίπτωση σφάλματος εφαρμόζει εκθετικό backoff και επαναλαμβάνει αυτόματα. |
+| **Κατέβασμα εικόνας εξωφύλλου αντί για το αρχείο βιβλίου** | Κατά το recovery του job, το `cover_image.jpg` αναγνωριζόταν ως αρχείο εξόδου. | Έχει επιλυθεί: τα αρχεία εικόνων (`.jpg`, `.png`, `.webp`) εξαιρούνται αυστηρά από τα candidate output files του `job_manager.py` και του `/api/download`. |
+| **Σφάλμα Rate Limit / Quota (429) στο Gemini AI Polish** | Υπερβολικός αριθμός αιτημάτων ανά λεπτό (15 RPM) σε πολυσέλιδα βιβλία. | Έχει επιλυθεί: υλοποιήθηκε έξυπνη ομαδοποίηση σε παρτίδες (Smart Batching ~5 σελίδων / 10k chars ανά κλήση) μειώνοντας τις κλήσεις κατά 80%, με όριο ταυτόχρονων αιτημάτων (semaphore=2) και δυναμικό backoff 12s–48s. |
