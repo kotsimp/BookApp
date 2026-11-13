@@ -196,8 +196,8 @@ function selectLayout(layout, btn) {
   document.getElementById('tr-layout-mode').value = layout;
 
   const covGroup = document.getElementById('tr-cover-group');
-  if (covGroup) {
-    covGroup.style.display = (layout === 'literature') ? 'block' : 'none';
+  if (covGroup && state.tr.jobId) {
+    covGroup.style.display = 'block';
   }
 
   const fmt = document.getElementById('tr-output-format')?.value || 'txt';
@@ -210,21 +210,24 @@ function selectLayout(layout, btn) {
 // ── Book Cover Image Handling ──────────────────────────────
 async function checkCoverImage(jobId) {
   if (!jobId) return;
+  const covGroup = document.getElementById('tr-cover-group');
   const thumb = document.getElementById('tr-cover-thumb');
   const thumbContainer = document.getElementById('tr-cover-thumb-container');
   const statusEl = document.getElementById('tr-cover-status');
   const removeBtn = document.getElementById('tr-cover-remove-btn');
+
+  if (covGroup) covGroup.style.display = 'block';
 
   try {
     const res = await fetch(`${API}/cover/${jobId}`, { method: 'HEAD' });
     if (res.ok) {
       if (thumb) thumb.src = `${API}/cover/${jobId}?t=${Date.now()}`;
       if (thumbContainer) thumbContainer.style.display = 'block';
-      if (statusEl) statusEl.textContent = 'Cover image active. Included in Literature PDF, EPUB & DOCX.';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--emerald);font-weight:600">✔ Εξώφυλλο ενεργό</span> (Περιλαμβάνεται στην 1η σελίδα σε PDF, EPUB &amp; DOCX).';
       if (removeBtn) removeBtn.style.display = 'inline-flex';
     } else {
       if (thumbContainer) thumbContainer.style.display = 'none';
-      if (statusEl) statusEl.textContent = 'No cover image found. You can upload a custom cover.';
+      if (statusEl) statusEl.textContent = 'Δεν έχει οριστεί εξώφυλλο. Μπορείτε να ανεβάσετε οποιαδήποτε εικόνα (JPG, PNG, WebP).';
       if (removeBtn) removeBtn.style.display = 'none';
     }
   } catch (_) {
