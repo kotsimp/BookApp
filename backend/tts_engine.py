@@ -125,10 +125,10 @@ async def generate_audiobook(
     # Determine prosody (rate, pitch, pause style)
     style = (narration_style or "literature").lower()
     default_rates = {
-        "literature": "-10%",
-        "slow_pauses": "-25%",
-        "poetry": "-20%",
-        "standard": "+0%",
+        "literature": "-15%",
+        "slow_pauses": "-30%",
+        "poetry": "-25%",
+        "standard": "-5%",
     }
     default_pitches = {
         "literature": "-2Hz",
@@ -136,7 +136,7 @@ async def generate_audiobook(
         "poetry": "-3Hz",
         "standard": "+0Hz",
     }
-    effective_rate = rate if rate else default_rates.get(style, "-10%")
+    effective_rate = rate if rate else default_rates.get(style, "-15%")
     effective_pitch = default_pitches.get(style, "-2Hz")
 
     update_job(job_id,
@@ -266,7 +266,7 @@ async def _tts_chunk_with_retry(
     voice: str,
     output_path: str,
     retries: int = 3,
-    rate: str = "-10%",
+    rate: str = "-15%",
     pitch: str = "-2Hz",
     narration_style: str = "literature",
 ):
