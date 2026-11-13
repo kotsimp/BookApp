@@ -192,6 +192,18 @@ async def upload_file(file: UploadFile = File(...)):
     shutil.move(str(tmp_path), str(final_path))
     update_job(job.job_id, file_path=str(final_path))
 
+    # Extract and cache cover image from original input if present
+    try:
+        from backend.exporter import extract_cover_image
+        cov_bytes = extract_cover_image(str(final_path))
+        if cov_bytes:
+            out_d = _job_output_dir(job.job_id)
+            cov_p = out_d / "cover_image.jpg"
+            cov_p.write_bytes(cov_bytes)
+            logger.info(f"Preserved original cover image for {file.filename} ({len(cov_bytes)} bytes)")
+    except Exception as cov_err:
+        logger.warning(f"Could not extract cover image for {file.filename}: {cov_err}")
+
     # Count pages and detect primary language for metadata
     try:
         page_count = count_pages(str(final_path), file_type)
@@ -487,6 +499,17 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
 
     if format:
         fmt = format.lower().lstrip(".")
+        # If cover image is not yet cached in out_dir, check original uploaded file
+        cov_file = out_dir / "cover_image.jpg"
+        if not cov_file.exists() and job and job.file_path and Path(job.file_path).exists():
+            try:
+                from backend.exporter import extract_cover_image
+                c_bytes = extract_cover_image(job.file_path)
+                if c_bytes:
+                    cov_file.write_bytes(c_bytes)
+            except Exception:
+                pass
+
         # 1. Check if a file in the requested format already exists (unless layout changed)
         if out_dir.exists() and not layout_changed:
             matching = [f for f in out_dir.iterdir() if f.is_file() and f.suffix.lower() == f".{fmt}"]

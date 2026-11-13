@@ -1,9 +1,71 @@
 # exporter.py - Export translated text to various formats (Standard & Literature/E-Reader)
 
 import html
+import io
 import os
 import re
 from pathlib import Path
+from typing import Optional
+
+
+def extract_cover_image(file_path: Optional[str or Path]) -> Optional[bytes]:
+    """
+    Extracts the original cover image from an input book (PDF, DOCX, or EPUB).
+    Returns raw image bytes (JPEG/PNG) or None if no cover is found.
+    """
+    if not file_path:
+        return None
+    p = Path(file_path)
+    if not p.exists():
+        return None
+
+    ext = p.suffix.lower()
+
+    if ext == ".pdf":
+        try:
+            import pymupdf
+            doc = pymupdf.open(str(p))
+            if len(doc) == 0:
+                return None
+            p0 = doc[0]
+            imgs = p0.get_images()
+            text_len = len(p0.get_text().strip())
+            # A cover page typically has images and little/no textual prose (< 150 chars),
+            # or has an image covering most of the page.
+            if imgs or text_len < 150:
+                pix = p0.get_pixmap(dpi=150)
+                return pix.tobytes("jpeg")
+        except Exception:
+            pass
+
+    elif ext == ".docx":
+        try:
+            import docx
+            doc = docx.Document(str(p))
+            for rel in doc.part.rels.values():
+                if "image" in rel.target_ref:
+                    return rel.target_part.blob
+        except Exception:
+            pass
+
+    elif ext == ".epub":
+        try:
+            import ebooklib
+            from ebooklib import epub
+            book = epub.read_epub(str(p))
+            for it in book.get_items():
+                name_l = it.get_name().lower()
+                if "cover" in name_l and getattr(it, "content", None):
+                    if it.get_type() in (ebooklib.ITEM_COVER, ebooklib.ITEM_IMAGE) or name_l.endswith((".jpg", ".jpeg", ".png")):
+                        return it.content
+            # Fallback: check first image item in the epub
+            for it in book.get_items():
+                if it.get_type() == ebooklib.ITEM_IMAGE and getattr(it, "content", None):
+                    return it.content
+        except Exception:
+            pass
+
+    return None
 
 
 _PUA_MAP = {
@@ -133,7 +195,7 @@ def export_txt(text: str, out_path: Path) -> Path:
 
 
 # DOCX (requires python-docx)
-def export_docx(text: str, out_path: Path, layout: str = "standard") -> Path:
+def export_docx(text: str, out_path: Path, layout: str = "standard", cover_image: Optional[bytes] = None) -> Path:
     from docx import Document
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -154,6 +216,19 @@ def export_docx(text: str, out_path: Path, layout: str = "standard") -> Path:
         normal_style = doc.styles["Normal"]
         normal_style.font.name = "Georgia"
         normal_style.font.size = Pt(11.5)
+
+        # Insert original cover image on the first page if present
+        if cover_image:
+            try:
+                cp = doc.add_paragraph()
+                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cp.paragraph_format.space_before = Pt(0)
+                cp.paragraph_format.space_after = Pt(0)
+                c_run = cp.add_run()
+                c_run.add_picture(io.BytesIO(cover_image), width=Inches(4.5))
+                doc.add_page_break()
+            except Exception:
+                pass
 
         chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
         for ch_idx, ch in enumerate(chapters):
@@ -238,7 +313,7 @@ def export_docx(text: str, out_path: Path, layout: str = "standard") -> Path:
 
 
 # PDF (uses pymupdf which supports full Unicode / Greek)
-def _export_literature_pdf(text: str, out_path: Path) -> Path:
+def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[bytes] = None) -> Path:
     import pymupdf
 
     doc = pymupdf.open()
@@ -258,6 +333,16 @@ def _export_literature_pdf(text: str, out_path: Path) -> Path:
     margin_top = 52.0
     content_bottom = height - 52.0
     max_line_w = width - 2 * margin_x
+
+    # Insert cover image as page 0 if present
+    has_cover_page = False
+    if cover_image:
+        try:
+            cov_page = doc.new_page(width=width, height=height)
+            cov_page.insert_image(pymupdf.Rect(0, 0, width, height), stream=cover_image)
+            has_cover_page = True
+        except Exception:
+            pass
 
     fname = "book_serif" if font_path else "helv"
     font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
@@ -329,9 +414,12 @@ def _export_literature_pdf(text: str, out_path: Path) -> Path:
             y += 4.5
             is_first = False
 
-    # Centered book-style page numbers
+    # Centered book-style page numbers (skip cover page if present)
     for p_no, pg in enumerate(doc, 1):
-        footer = f"- {p_no} -"
+        if has_cover_page and p_no == 1:
+            continue
+        display_num = p_no - 1 if has_cover_page else p_no
+        footer = f"- {display_num} -"
         fw = font_obj.text_length(footer, fontsize=9.0)
         pg.insert_text(pymupdf.Point((width - fw) / 2.0, height - 28.0), footer, fontsize=9.0, fontname=fname, color=(0.45, 0.45, 0.45))
 
@@ -340,9 +428,9 @@ def _export_literature_pdf(text: str, out_path: Path) -> Path:
     return out_path
 
 
-def export_pdf(text: str, out_path: Path, layout: str = "standard") -> Path:
+def export_pdf(text: str, out_path: Path, layout: str = "standard", cover_image: Optional[bytes] = None) -> Path:
     if layout == "literature":
-        return _export_literature_pdf(text, out_path)
+        return _export_literature_pdf(text, out_path, cover_image=cover_image)
 
     import pymupdf
 
@@ -455,13 +543,22 @@ def export_pdf(text: str, out_path: Path, layout: str = "standard") -> Path:
 
 
 # EPUB (requires EbookLib)
-def export_epub(text: str, out_path: Path, title: str = "Translated Book", layout: str = "standard") -> Path:
+def export_epub(text: str, out_path: Path, title: str = "Translated Book", layout: str = "standard", cover_image: Optional[bytes] = None) -> Path:
     from ebooklib import epub
 
     book = epub.EpubBook()
     book.set_identifier(str(out_path.stem))
     book.set_title(title)
     book.set_language("el")
+
+    has_cover = False
+    if cover_image:
+        try:
+            # Set cover in EPUB
+            book.set_cover("cover.jpg", cover_image)
+            has_cover = True
+        except Exception:
+            pass
 
     if layout == "literature":
         book_css = """
@@ -575,24 +672,44 @@ p {
     book.toc = tuple(chapters_items)
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
-    book.spine = ["nav"] + chapters_items
+    book.spine = (["cover"] if has_cover else []) + ["nav"] + chapters_items
     epub.write_epub(str(out_path), book, {})
     return out_path
 
 
 # Helper dispatch
-def export_text(text: str, out_dir: Path, fmt: str, base_name: str, layout: str = "standard") -> Path:
+def export_text(
+    text: str,
+    out_dir: Path,
+    fmt: str,
+    base_name: str,
+    layout: str = "standard",
+    cover_image: Optional[bytes] = None,
+) -> Path:
     """Export `text` to `fmt` inside `out_dir` using `layout` ('standard' or 'literature').
+    If `cover_image` is provided (or if a saved cover image exists in `out_dir`), it is included
+    in literature-formatted outputs (DOCX, PDF, EPUB).
     Returns the absolute path to the generated file.
     """
+    # Look for cached cover in out_dir if not explicitly passed
+    if cover_image is None and out_dir.exists():
+        for cov_candidate in ("cover_image.jpg", "cover_image.png", "cover.jpg", "cover.png"):
+            cov_file = out_dir / cov_candidate
+            if cov_file.exists():
+                try:
+                    cover_image = cov_file.read_bytes()
+                    break
+                except Exception:
+                    pass
+
     fmt = fmt.lower()
     out_path = out_dir / f"{base_name}.{fmt}"
     if fmt == "txt":
         return export_txt(text, out_path)
     if fmt in ("doc", "docx"):
-        return export_docx(text, out_path, layout=layout)
+        return export_docx(text, out_path, layout=layout, cover_image=cover_image)
     if fmt == "pdf":
-        return export_pdf(text, out_path, layout=layout)
+        return export_pdf(text, out_path, layout=layout, cover_image=cover_image)
     if fmt == "epub":
-        return export_epub(text, out_path, title=base_name, layout=layout)
+        return export_epub(text, out_path, title=base_name, layout=layout, cover_image=cover_image)
     raise ValueError(f"Unsupported format: {fmt}")

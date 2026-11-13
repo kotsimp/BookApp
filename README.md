@@ -26,7 +26,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
 | **AI Polish & Proofreading** | Google Gemini AI integration to refine translated text or run standalone AI Polish on uploaded documents / pasted text without translating, with persistent API key storage (`config/settings.json`). |
-| **Literature / E-Reader Layout** | Optional `layout=literature` mode for novels and books: reflowed Kindle/iPad EPUB with TOC & serif CSS, and 6×9 trade-paperback PDF/DOCX with Georgia serif & cross-page sentence merging. |
+| **Literature / E-Reader Layout** | Optional `layout=literature` mode for novels and books: preserves the original artwork cover image (PDF, EPUB, DOCX), reflows Kindle/iPad EPUB with TOC & serif CSS, and produces 6×9 trade-paperback PDF/DOCX with Georgia serif & cross-page sentence merging. |
 | **Custom Glossary & Terminology** | Custom terminology mapping engine with regex word boundaries to enforce exact translations for domain terms. |
 | **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
 | **Bullet & Glyph Normalization** | Replaces proprietary Wingdings/PUA symbols with standard Unicode bullets (`•`) and native Word `List Bullet` paragraphs. |

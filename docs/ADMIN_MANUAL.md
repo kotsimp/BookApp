@@ -61,7 +61,7 @@
 * **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting, άμεση ανάγνωση pre-extracted `*_original.txt` και διατήρηση του αρχικού `file_type` κατά το disk recovery.
 * **AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) τόσο μετά τη μετάφραση όσο και αυτόνομα (σε ανεβασμένο έγγραφο ή επικολλημένο κείμενο), με αυτόματες επαναπροσπάθειες (backoff) σε παροδικά σφάλματα (`429`/`500`/`502`/`503`/`504`) και per-chunk fallback για μεγάλα βιβλία.
 * **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
-* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC.
+* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC, καθώς και αυτόματη εξαγωγή και διατήρηση του αυθεντικού εξωφύλλου (`extract_cover_image`) από PDF, EPUB ή DOCX.
 * **Custom Glossary Engine:** Αποθήκευση και αντικατάσταση ορολογίας με regex word boundaries (`GET`/`POST`/`DELETE /api/glossary`).
 
 ---
