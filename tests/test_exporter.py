@@ -1,6 +1,9 @@
 # Test 5: Exporter module - all 4 formats
 print("=== Test 5: Exporter (TXT, DOCX, PDF, EPUB) ===")
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from backend.exporter import export_text
 
 test_content = """

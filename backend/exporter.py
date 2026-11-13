@@ -5,10 +5,10 @@ import io
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
-def extract_cover_image(file_path: Optional[str or Path]) -> Optional[bytes]:
+def extract_cover_image(file_path: Optional[Union[str, Path]]) -> Optional[bytes]:
     """
     Extracts the original cover image from an input book (PDF, DOCX, or EPUB).
     Returns raw image bytes (JPEG/PNG) or None if no cover is found.

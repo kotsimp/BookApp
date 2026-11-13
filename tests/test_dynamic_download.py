@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import urllib.request
 import json
 import time
@@ -25,7 +29,7 @@ job_id = upload_res['job_id']
 print('Uploaded job:', job_id)
 
 # Translate to docx
-req = urllib.request.Request(f'{API}/translate', data=json.dumps({'job_id': job_id, 'source_lang': 'en', 'target_lang': 'el', 'output_format': 'docx'}).encode(), headers={'Content-Type': 'application/json'})
+req = urllib.request.Request(f'{API}/translate', data=json.dumps({'job_id': job_id, 'source_lang': 'english', 'target_lang': 'greek', 'output_format': 'docx'}).encode(), headers={'Content-Type': 'application/json'})
 urllib.request.urlopen(req)
 
 # Wait for completion

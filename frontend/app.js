@@ -611,7 +611,6 @@ async function downloadOutput(prefix) {
     const fmt = document.getElementById('tr-output-format')?.value || 'txt';
     const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
-    console.log('Initiating download:', targetUrl);
     window.location.href = targetUrl;
   } else {
     window.location.href = `${API}/download/${jobId}`;
@@ -837,13 +836,15 @@ function toast(msg, type = 'info') {
   const el = document.createElement('div');
   const typeClass = { success: 'toast-success', error: 'toast-error', info: 'toast-info' };
   el.className = `toast ${typeClass[type] || ''}`;
-  el.innerHTML = `<span>${msg}</span>`;
+  const span = document.createElement('span');
+  span.textContent = msg;
+  el.appendChild(span);
   container.appendChild(el);
   setTimeout(() => el.remove(), 5000);
 }
 
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g, '&#39;');
 }
 
 // ── Translation Editor ──────────────────────────────────────
@@ -975,8 +976,9 @@ async function saveEditorText() {
 
     // Also update download button URL
     const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
+    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     const dlBtn = document.getElementById('tr-download-btn');
-    if (dlBtn) dlBtn.href = `${API}/download/${jobId}?format=${fmt}`;
+    if (dlBtn) dlBtn.href = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
   } catch (err) {
     toast(`Save error: ${err.message}`, 'error');
   } finally {

@@ -33,6 +33,7 @@
   --radius-xl:      28px;
 
   --shadow-card:    0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px var(--border);
+  --shadow-lg:      0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px var(--border);
   --shadow-glow:    0 0 40px var(--violet-glow);
   --transition:     all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }

@@ -1,5 +1,9 @@
 # Test 6: API endpoints via HTTP
 print("=== Test 6: API Endpoints ===")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import urllib.request
 import urllib.error
 import json

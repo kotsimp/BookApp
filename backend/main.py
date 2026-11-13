@@ -21,6 +21,7 @@ from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
 from backend.tts_engine import generate_audiobook, get_available_voices
 from backend.exporter import export_text
+from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
 # ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
@@ -259,9 +260,6 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
-from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
-
-
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path):
     try:
         job = get_job(job_id)
@@ -409,7 +407,6 @@ async def progress_stream(job_id: str):
         raise HTTPException(404, f"Job '{job_id}' not found.")
 
     async def event_generator():
-        import asyncio
         q: asyncio.Queue = asyncio.Queue(maxsize=100)
         job.subscribers.append(q)
 
@@ -666,7 +663,6 @@ async def debug_extract(job_id: str, max_chars: int = 500):
     if not job:
         raise HTTPException(404, f"Job '{job_id}' not found.")
 
-    from backend.parsers import parse_document
     pages = []
     try:
         for p in parse_document(job.file_path, job.file_type):
@@ -717,6 +713,7 @@ async def clear_all_jobs():
             except Exception:
                 pass
     _jobs.clear()
+    POLISH_STATUS.clear()
     return {"status": "cleared", "count": 0}
 
 
@@ -734,6 +731,7 @@ async def delete_job(job_id: str):
 
     from backend.job_manager import _jobs
     _jobs.pop(job_id, None)
+    POLISH_STATUS.pop(job_id, None)
     return {"deleted": job_id}
 
 
@@ -839,8 +837,10 @@ async def get_app_settings():
 @app.post("/api/settings")
 async def update_app_settings(req: SettingsRequest):
     from backend.settings_manager import save_setting
+    from backend.ai_polisher import reset_model_cache
     if req.gemini_api_key is not None:
         save_setting("gemini_api_key", req.gemini_api_key.strip())
+        reset_model_cache()
     return {"status": "ok"}
 
 
@@ -849,7 +849,9 @@ async def delete_app_setting(key: str):
     if key not in {"gemini_api_key"}:
         raise HTTPException(400, f"Unsupported setting key '{key}'.")
     from backend.settings_manager import delete_setting
+    from backend.ai_polisher import reset_model_cache
     delete_setting(key)
+    reset_model_cache()
     return {"status": "deleted", "key": key}
 
 

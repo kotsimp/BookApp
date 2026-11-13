@@ -82,7 +82,7 @@ async def generate_audiobook(
         # Read from pre-translated file (strip page markers for cleaner audio)
         with open(translated_text_path, "r", encoding="utf-8") as f:
             raw = f.read()
-        raw = re.sub(r"={3,}.*?={3,}", "", raw, flags=re.DOTALL)
+        raw = re.sub(r"={3,}[^\n\r]*?={3,}", "", raw)
         raw = re.sub(r"\bPAGE \d+\b", "", raw)
         raw_text = raw.strip()
         text_source = "translated_file"

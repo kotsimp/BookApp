@@ -1,5 +1,9 @@
 # Test 3: Translation engine (GTX direct + fallback)
 print("=== Test 3: Translator Engine ===")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 from backend.translator import _translate_gtx, _translate_with_retry
 

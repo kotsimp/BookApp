@@ -63,20 +63,33 @@ def main():
 
     # Install requirements - use resilient install for Python 3.15+ compatibility
     print("📦 Installing dependencies (this may take a minute on first run)...")
-    core_pkgs = [
-        "fastapi", "uvicorn", "python-multipart", "aiofiles",
-        "pymupdf", "python-docx", "beautifulsoup4",
-        "deep-translator", "edge-tts", "EbookLib",
-    ]
-    for pkg in core_pkgs:
+    installed_from_req = False
+    if REQUIREMENTS.exists():
         try:
             subprocess.run(
-                [str(get_python()), "-m", "pip", "install", pkg, "-q"],
+                [str(get_python()), "-m", "pip", "install", "-r", str(REQUIREMENTS), "-q"],
                 check=True, capture_output=True
             )
-            print(f"  ✓ {pkg}")
-        except subprocess.CalledProcessError as e:
-            print(f"  ⚠ {pkg} failed — {e.stderr.decode()[:80] if e.stderr else 'unknown error'}")
+            installed_from_req = True
+            print("  ✓ All dependencies installed from requirements.txt")
+        except subprocess.CalledProcessError:
+            pass
+
+    if not installed_from_req:
+        core_pkgs = [
+            "fastapi", "uvicorn", "python-multipart", "aiofiles", "aiohttp",
+            "pymupdf", "python-docx", "beautifulsoup4",
+            "deep-translator", "edge-tts", "EbookLib",
+        ]
+        for pkg in core_pkgs:
+            try:
+                subprocess.run(
+                    [str(get_python()), "-m", "pip", "install", pkg, "-q"],
+                    check=True, capture_output=True
+                )
+                print(f"  ✓ {pkg}")
+            except subprocess.CalledProcessError as e:
+                print(f"  ⚠ {pkg} failed — {e.stderr.decode()[:80] if e.stderr else 'unknown error'}")
     print("✅ Dependencies installed.\n")
 
     # Create temp directories

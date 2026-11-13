@@ -60,6 +60,13 @@ STYLE_PROMPTS = {
 _CACHED_WORKING_MODEL: Optional[str] = None
 _CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
 
+
+def reset_model_cache():
+    """Invalidate cached Gemini model discovery list (e.g. when API key changes)."""
+    global _CACHED_WORKING_MODEL, _CACHED_AVAILABLE_MODELS
+    _CACHED_WORKING_MODEL = None
+    _CACHED_AVAILABLE_MODELS = None
+
 EXCLUDE_PATTERNS = [
     "-tts", "-image", "-audio", "-transcribe", "clip", "banana",
     "robotics", "customtools", "computer-use", "argon",
@@ -140,7 +147,7 @@ async def polish_text_with_gemini(
     if not key:
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 
-    system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS.get("literature" if style == "literature" else "formal"))
+    system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
     # Semaphore of 2 with pacing to respect Gemini Free Tier 15 RPM limits cleanly
     sem = asyncio.Semaphore(2)
     client_timeout = aiohttp.ClientTimeout(total=60)
