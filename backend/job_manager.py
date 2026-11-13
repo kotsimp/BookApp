@@ -67,7 +67,11 @@ def get_job(job_id: str) -> Optional[Job]:
         out_dir = base_temp / "outputs" / job_id
         up_dir = base_temp / "uploads" / job_id
         if out_dir.exists():
-            files = [f for f in out_dir.iterdir() if f.is_file()]
+            # Exclude images (like cover_image.jpg) - only genuine document outputs
+            files = [
+                f for f in out_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".txt"]
+            ]
             if files:
                 # Prefer final export or mp3 over intermediate txt
                 preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
@@ -98,6 +102,28 @@ def get_job(job_id: str) -> Optional[Job]:
                     done_chunks=1,
                     output_path=str(out_file),
                     output_format=out_file.suffix.lstrip(".").lower(),
+                    created_at=mtime,
+                    updated_at=mtime,
+                )
+                _jobs[job_id] = job
+                return job
+
+        if up_dir.exists():
+            ufiles = [f for f in up_dir.iterdir() if f.is_file()]
+            if ufiles:
+                up_file = ufiles[0]
+                mtime = up_file.stat().st_mtime
+                job = Job(
+                    job_id=job_id,
+                    file_path=str(up_file),
+                    file_name=up_file.name,
+                    file_type=up_file.suffix.lstrip(".").lower(),
+                    status="idle",
+                    mode="",
+                    progress=0,
+                    current_step="Uploaded",
+                    total_chunks=0,
+                    done_chunks=0,
                     created_at=mtime,
                     updated_at=mtime,
                 )

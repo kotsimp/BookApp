@@ -483,7 +483,7 @@ MIME_MAP = {
 }
 
 
-@app.get("/api/download/{job_id}")
+@app.api_route("/api/download/{job_id}", methods=["GET", "HEAD"])
 async def download_output(job_id: str, format: Optional[str] = None, layout: Optional[str] = None):
     """
     Download the output file for a completed job.
@@ -538,7 +538,10 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
                 out_path = p
 
         if not out_path and out_dir.exists():
-            files = [f for f in out_dir.iterdir() if f.is_file()]
+            files = [
+                f for f in out_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".txt"]
+            ]
             if files:
                 preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
                 files_to_check = preferred if preferred else files
