@@ -73,10 +73,43 @@ def _extract_page_text(page) -> str:
     return text
 
 
+def _clean_page_blocks(page) -> str:
+    """
+    Extracts body text from a PDF page while excluding running headers and footers
+    (such as author names, book titles, and page numbers at the top/bottom margins).
+    """
+    blocks = page.get_text("blocks")
+    h = page.rect.height
+    body_blocks = []
+
+    for b in blocks:
+        if b[6] != 0:  # Skip image blocks
+            continue
+        t = b[4].strip()
+        if not t:
+            continue
+        y0, y1 = b[1], b[3]
+        is_top = y0 < (h * 0.12)
+        is_bottom = y1 > (h * 0.88)
+        lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+
+        # 1. Pure page numbers or numbers enclosed in dashes/spaces in header/footer
+        if (is_top or is_bottom) and any(re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", l, re.IGNORECASE) for l in lines):
+            continue
+
+        # 2. Short header block (< 55 chars) in top margin without trailing sentence punctuation
+        if is_top and len(t) < 55 and not t.endswith((".", "!", "?", ";", ":", "»", '"', "”")):
+            continue
+
+        body_blocks.append(t)
+
+    return "\n\n".join(body_blocks)
+
+
 def parse_pdf(file_path: str) -> Generator[dict, None, None]:
     """
     Yields dicts: {page: int, text: str} for each page of a PDF.
-    Tries multiple extraction modes for best text coverage.
+    Tries multiple extraction modes for best text coverage, stripping running headers/footers.
     """
     import pymupdf  # fitz
 
@@ -85,7 +118,10 @@ def parse_pdf(file_path: str) -> Generator[dict, None, None]:
         logger.info(f"PDF has {total_pages} pages: {file_path}")
         for page_num in range(total_pages):
             page = doc[page_num]
-            text = _extract_page_text(page)
+            # Try block extraction with header/footer removal first
+            text = _clean_page_blocks(page)
+            if not text.strip():
+                text = _extract_page_text(page)
             text = _clean_text(text)
             char_count = len(text.strip())
             logger.info(f"  Page {page_num + 1}: extracted {char_count} chars")

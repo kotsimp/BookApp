@@ -81,10 +81,13 @@ _PUA_MAP = {
 
 _CHAPTER_RE = re.compile(
     r"^(?:"
-    r"(?:chapter|chap\.|part|book|prologue|epilogue|preface|introduction|afterword)"
-    r"|(?:κεφάλαιο|κεφ\.|μέρος|βιβλίο|πρόλογος|επίλογος|εισαγωγή)"
-    r")(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?$"
-    r"|^(?:[IVXLCDM]{1,7})$",
+    r"(?:chapter|chap\.|part|book|prologue|epilogue|preface|introduction|afterword|acknowledgments|notes\s*and\s*references|license)"
+    r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
+    r"|(?:κεφάλαιο|κεφ\.|μέρος|βιβλίο|πρόλογος|επίλογος|εισαγωγή|ευχαριστίες|σημειώσεις(?:\s*και\s*παραπομπές)?|άδεια)"
+    r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
+    r"|(?:theseus|rorschach|charybdis|θησεύς|θησέας|ρορσαχ|χάρυβδις)"
+    r"|^(?:[IVXLCDM]{1,7})$"
+    r")$",
     re.IGNORECASE,
 )
 
@@ -111,8 +114,9 @@ def _is_scene_break(line: str) -> bool:
 
 def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list[dict]:
     """
-    Cleans PDF page-break artifacts, merges sentences split across pages,
-    and groups paragraphs into semantic chapters for e-readers & iPad.
+    Cleans PDF page-break artifacts, running headers/footers, merges sentences broken
+    across pages, isolates chapter headings & epigraphs/quotes, and groups paragraphs
+    into semantic chapters for e-readers, tablets & printed books.
     Returns list of {"title": str, "paragraphs": list[str]}.
     """
     text = _sanitize_pua(text)
@@ -126,66 +130,121 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
         if not chunk:
             continue
 
-        # Remove standalone page number lines at very top/bottom of a PDF page
-        lines = chunk.splitlines()
-        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?)\s*$", lines[0]):
+        lines = [ln.strip() for ln in chunk.splitlines()]
+        while lines and not lines[0]:
             lines.pop(0)
-        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?)\s*$", lines[-1]):
+        while lines and not lines[-1]:
             lines.pop()
 
-        cleaned_chunk = "\n".join(lines).strip()
-        if not cleaned_chunk:
+        # Strip running headers at top of page (e.g. standalone page number, or Author\nPageNumber\nTitle)
+        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)\s*$", lines[0], re.IGNORECASE):
+            lines.pop(0)
+
+        if len(lines) >= 3 and lines[1].isdigit() and len(lines[0]) < 50 and len(lines[2]) < 50:
+            if not _is_chapter_heading(lines[0]) and not _is_chapter_heading(lines[2]):
+                lines = lines[3:]
+        elif len(lines) >= 2 and lines[1].isdigit() and len(lines[0]) < 50 and not _is_chapter_heading(lines[0]):
+            lines = lines[2:]
+        elif len(lines) >= 2 and lines[0].isdigit() and len(lines[1]) < 50 and not _is_chapter_heading(lines[1]):
+            lines = lines[2:]
+
+        # Strip running footers at bottom of page
+        while lines and re.match(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)\s*$", lines[-1], re.IGNORECASE):
+            lines.pop()
+
+        if not lines:
             continue
 
-        blocks = [b.strip() for b in re.split(r"\n\s*\n", cleaned_chunk) if b.strip()]
-        if not blocks:
-            continue
+        # Split into distinct paragraphs, isolating chapter headings, scene breaks & epigraphs
+        paras = []
+        curr = []
+        for line in lines:
+            if not line:
+                if curr:
+                    paras.append(" ".join(curr))
+                    curr = []
+                continue
+
+            if _is_chapter_heading(line) or _is_scene_break(line):
+                if curr:
+                    paras.append(" ".join(curr))
+                    curr = []
+                paras.append(line)
+                continue
+
+            # Epigraph attributions (e.g. "—Ted Bundy", "—Susanne Vega")
+            if line.startswith(("—", "–", "--")) and len(line) < 80:
+                if curr:
+                    paras.append(" ".join(curr))
+                    curr = []
+                paras.append(line)
+                continue
+
+            if not curr:
+                curr.append(line)
+                continue
+
+            prev_l = curr[-1]
+            prev_closed = prev_l[-1] in '.!?»"”…'
+            starts_dialogue = line.startswith(("«", '"', "“", "—", "- ", "– "))
+            if prev_closed and (starts_dialogue or (len(line) > 2 and line[0].isupper())):
+                paras.append(" ".join(curr))
+                curr = [line]
+            else:
+                curr.append(line)
+
+        if curr:
+            paras.append(" ".join(curr))
 
         # Check if first block of this page continues the last block of the previous page
-        if merged_blocks and blocks:
-            prev = merged_blocks[-1].rstrip()
-            nxt = blocks[0].lstrip()
-            prev_ends_sentence = prev[-1] in '.!?»"”…)]:;'
-            nxt_starts_lower = bool(nxt) and nxt[0].islower()
-            if not prev_ends_sentence and nxt_starts_lower and not _is_chapter_heading(nxt):
-                merged_blocks[-1] = prev + " " + nxt
-                blocks = blocks[1:]
-
-        merged_blocks.extend(blocks)
-
-    # Collapse single soft line-breaks inside literature paragraphs into spaces
-    normalized_paras: list[str] = []
-    for blk in merged_blocks:
-        lines = [ln.strip() for ln in blk.splitlines() if ln.strip()]
-        if len(lines) == 1:
-            normalized_paras.append(lines[0])
-        elif _is_chapter_heading(lines[0]):
-            normalized_paras.append(lines[0])
-            rest = " ".join(lines[1:])
-            if rest:
-                normalized_paras.append(rest)
-        else:
-            normalized_paras.append(" ".join(lines))
+        for para in paras:
+            if (
+                merged_blocks
+                and not _is_chapter_heading(para)
+                and not _is_chapter_heading(merged_blocks[-1])
+                and not _is_scene_break(para)
+                and not _is_scene_break(merged_blocks[-1])
+            ):
+                prev = merged_blocks[-1].rstrip()
+                nxt = para.lstrip()
+                prev_ends_sentence = prev[-1] in '.!?»"”…)]:;'
+                nxt_starts_lower = bool(nxt) and (nxt[0].islower() or (len(nxt) > 1 and nxt[0] in '«"\'“' and nxt[1].islower()))
+                if not prev_ends_sentence and nxt_starts_lower:
+                    merged_blocks[-1] = prev + " " + nxt
+                    continue
+            merged_blocks.append(para)
 
     # Group into chapters
     chapters: list[dict] = []
     current_chapter = {"title": default_title, "paragraphs": []}
 
-    for para in normalized_paras:
-        if _is_chapter_heading(para):
-            if current_chapter["paragraphs"] or chapters:
-                if current_chapter["paragraphs"]:
-                    chapters.append(current_chapter)
-                current_chapter = {"title": para, "paragraphs": []}
-            else:
-                current_chapter["title"] = para
+    for blk in merged_blocks:
+        if _is_chapter_heading(blk):
+            if current_chapter["paragraphs"]:
+                chapters.append(current_chapter)
+            current_chapter = {"title": blk, "paragraphs": []}
         else:
-            current_chapter["paragraphs"].append(para)
+            current_chapter["paragraphs"].append(blk)
 
     if current_chapter["paragraphs"] or not chapters:
         chapters.append(current_chapter)
 
-    return chapters
+    # Filter out fake chapters (like TOC entries or empty title pages)
+    cleaned_chapters = []
+    for idx, ch in enumerate(chapters):
+        body_text = " ".join(ch["paragraphs"]).strip()
+        if not body_text:
+            continue
+        words = body_text.split()
+        # If the chapter body is essentially just page numbers or TOC artifact
+        if len(body_text) < 150 and (body_text.isdigit() or all(w.isdigit() for w in words) or (words and words[0].isdigit())):
+            continue
+        # If front-matter chapter before the first real chapter has no sentence ending
+        if idx == 0 and len(chapters) > 1 and len(body_text) < 150 and not any(body_text.endswith(p) for p in ('.', '!', '?')):
+            continue
+        cleaned_chapters.append(ch)
+
+    return cleaned_chapters if cleaned_chapters else chapters
 
 
 # TXT
