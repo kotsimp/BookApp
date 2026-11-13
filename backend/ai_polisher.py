@@ -14,6 +14,22 @@ from typing import Optional, Callable, Any
 logger = logging.getLogger(__name__)
 
 STYLE_PROMPTS = {
+    "literature": (
+        "Είσαι βραβευμένος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη λογοτεχνία και την επιστημονική φαντασία (sci-fi / fiction). "
+        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα και ατμοσφαιρικό βάθος: "
+        "1. Εξάλειψε τις μηχανικές/κατά λέξη μεταφράσεις, τις αγγλικούρες και τις συντακτικές αδεξιότητες (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις'). "
+        "2. Χρησιμοποίησε πλούσιο, εκφραστικό ελληνικό λεξιλόγιο, διατηρώντας το ύφος, την ένταση και τον λογοτεχνικό ρυθμό του συγγραφέα. "
+        "3. Διόρθωσε γραμματικά, συντακτικά και πτωτικά λάθη, αποδίδοντας τους διαλόγους με ζωντάνια και φυσικότητα. "
+        "4. Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
+        "5. Μην προσθέτεις εισαγωγικά σχόλια, επεξηγήσεις ή σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
+    ),
+    "natural": (
+        "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
+        "ώστε να αποκτήσει απόλυτα φυσική ροή, εκφραστικό πλούτο και ομαλότητα σαν να γράφτηκε εξαρχής στα Ελληνικά: "
+        "1. Εξομάλυνε τη σύνταξη και διόρθωσε κάθε γραμματική ατέλεια. "
+        "2. Διατήρησε απόλυτα όλες τις παραγράφους, επικεφαλίδες και δομή του πρωτοτύπου, καθώς και τους δείκτες (π.χ. === PAGE X ===). "
+        "3. Επίστρεψε ΜΟΝΟ το διορθωμένο κείμενο χωρίς σχόλια."
+    ),
     "formal": (
         "Είσαι κορυφαίος επιμελητής κειμένων και μεταφραστής με εξειδίκευση σε επίσημα και υπηρεσιακά έγγραφα "
         "της ελληνικής δημόσιας διοίκησης. Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση: "
@@ -29,13 +45,6 @@ STYLE_PROMPTS = {
         "2. Διόρθωσε ασάφειες και λάθη σύνταξης. "
         "3. Διατήρησε επακριβώς όλες τις παραγράφους, λίστες, κωδικούς και δομή. "
         "4. Επίστρεψε ΜΟΝΟ το διορθωμένο τεχνικό κείμενο χωρίς κανένα άλλο σχόλιο."
-    ),
-    "natural": (
-        "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
-        "ώστε να αποκτήσει απόλυτα φυσική ροή, εκφραστικό πλούτο και ομαλότητα σαν να γράφτηκε εξαρχής στα Ελληνικά: "
-        "1. Εξομάλυνε τη σύνταξη και διόρθωσε κάθε γραμματική ατέλεια. "
-        "2. Διατήρησε απόλυτα όλες τις παραγράφους, επικεφαλίδες και δομή του πρωτοτύπου. "
-        "3. Επίστρεψε ΜΟΝΟ το διορθωμένο κείμενο."
     ),
     "audiobook": (
         "You are an expert audiobook script editor. Prepare the following text (keep its original language — Greek stays Greek, English stays English; do NOT translate) "
@@ -131,9 +140,10 @@ async def polish_text_with_gemini(
     if not key:
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 
-    system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
-    sem = asyncio.Semaphore(4)
-    client_timeout = aiohttp.ClientTimeout(total=45)
+    system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS.get("literature" if style == "literature" else "formal"))
+    # Semaphore of 2 with pacing to respect Gemini Free Tier 15 RPM limits cleanly
+    sem = asyncio.Semaphore(2)
+    client_timeout = aiohttp.ClientTimeout(total=60)
 
     async def _run_progress(done_count: int, total_count: int) -> None:
         if not progress_callback:
@@ -145,45 +155,78 @@ async def polish_text_with_gemini(
         except Exception as ex:
             logger.warning(f"Progress callback error: {ex}")
 
-    # If document has multiple pages marked by dividers, polish sections concurrently
+    # If document has multiple pages marked by dividers, group into smart multi-page batches
     page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
         if len(page_sections) > 1:
-            content_items = [
-                (idx, part) for idx, part in enumerate(page_sections)
-                if not re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", part.strip()) and part.strip()
-            ]
-            total_pages = max(1, len(content_items))
-            polished_parts = list(page_sections)
+            # Pair page markers with their content
+            pages = []
+            curr_marker = ""
+            for part in page_sections:
+                p_strip = part.strip()
+                if not p_strip:
+                    continue
+                if re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", p_strip):
+                    curr_marker = p_strip
+                else:
+                    pages.append((curr_marker, p_strip))
+
+            # Smart Multi-Page Batching: group ~5 pages (or ~10,000 chars) per Gemini call
+            # This turns 340 requests into ~50, reducing API calls by 80% and giving Gemini broader narrative context
+            batches = []
+            curr_b = []
+            curr_chars = 0
+            MAX_BATCH_CHARS = 10000
+            MAX_BATCH_PAGES = 5
+
+            for m, c in pages:
+                item_len = len(m) + len(c) + 4
+                if curr_b and (curr_chars + item_len > MAX_BATCH_CHARS or len(curr_b) >= MAX_BATCH_PAGES):
+                    batches.append(curr_b)
+                    curr_b = [(m, c)]
+                    curr_chars = item_len
+                else:
+                    curr_b.append((m, c))
+                    curr_chars += item_len
+            if curr_b:
+                batches.append(curr_b)
+
+            total_batches = max(1, len(batches))
+            polished_batches = ["" for _ in batches]
             completed = 0
-            succeeded = 0
             first_error: Optional[Exception] = None
 
-            async def _polish_page(orig_idx: int, part_text: str) -> None:
-                nonlocal completed, succeeded, first_error
+            async def _polish_batch(b_idx: int, batch_items: list[tuple[str, str]]) -> None:
+                nonlocal completed, first_error
+                batch_text = "\n\n".join(
+                    f"{m}\n\n{c}" if m else c for m, c in batch_items
+                )
                 async with sem:
                     try:
-                        polished = await _call_gemini_api(part_text.strip(), key, system_instruction, session=session)
-                        polished_parts[orig_idx] = polished
-                        succeeded += 1
+                        polished = await _call_gemini_api(batch_text.strip(), key, system_instruction, session=session)
+                        polished_batches[b_idx] = polished
                     except PermissionError:
                         raise
                     except Exception as ex:
                         if first_error is None:
                             first_error = ex
-                        logger.warning(f"Page polish failed (keeping original chunk): {ex}")
+                        logger.warning(f"Batch {b_idx + 1}/{total_batches} polish failed (keeping original text): {ex}")
+                        polished_batches[b_idx] = batch_text
+                    # Pacing delay between batches
+                    await asyncio.sleep(1.5)
+
                 completed += 1
-                await _run_progress(completed, total_pages)
+                await _run_progress(completed, total_batches)
 
-            await asyncio.gather(*(_polish_page(oi, pt) for oi, pt in content_items))
-            if succeeded == 0 and first_error is not None:
+            await asyncio.gather(*(_polish_batch(i, b) for i, b in enumerate(batches)))
+            if all(not p for p in polished_batches) and first_error is not None:
                 raise first_error
-            return "\n\n".join(polished_parts)
+            return "\n\n".join(p for p in polished_batches if p)
 
-        # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs and polish concurrently
-        if len(text) > 3500:
+        # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
+        if len(text) > 4000:
             from backend.parsers import split_into_chunks
-            chunks = split_into_chunks(text, 3500)
+            chunks = split_into_chunks(text, 6000)
             total_chunks = max(1, len(chunks))
             polished_chunks = list(chunks)
             completed = 0
@@ -202,6 +245,7 @@ async def polish_text_with_gemini(
                         if first_error is None:
                             first_error = ex
                         logger.warning(f"Chunk {c_idx + 1}/{total_chunks} polish failed (keeping original chunk): {ex}")
+                    await asyncio.sleep(1.5)
                 completed += 1
                 await _run_progress(completed, total_chunks)
 
@@ -281,7 +325,7 @@ async def _call_gemini_api(
         }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     async with session.post(url, json=payload, headers=headers) as resp:
                         if resp.status == 200:
@@ -302,9 +346,11 @@ async def _call_gemini_api(
                         elif resp.status in (429, 500, 502, 503, 504):
                             err_text = await resp.text()
                             last_error = f"Gemini API error ({resp.status}): {err_text}"
-                            logger.warning(f"Model {model} transient error (attempt {attempt + 1}/3): {last_error}")
-                            if attempt < 2:
-                                await asyncio.sleep(1.5 * (attempt + 1))
+                            logger.warning(f"Model {model} transient error (attempt {attempt + 1}/4): {last_error}")
+                            if attempt < 3:
+                                wait_time = 12.0 * (attempt + 1) if resp.status == 429 else 2.0 * (attempt + 1)
+                                logger.info(f"Backing off for {wait_time:.1f}s before retrying {model}...")
+                                await asyncio.sleep(wait_time)
                                 continue
                             break
                         else:
@@ -318,9 +364,9 @@ async def _call_gemini_api(
                     raise
                 except Exception as e:
                     last_error = str(e)
-                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/3): {e}")
-                    if attempt < 2:
-                        await asyncio.sleep(1.0 * (attempt + 1))
+                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/4): {e}")
+                    if attempt < 3:
+                        await asyncio.sleep(2.0 * (attempt + 1))
 
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:

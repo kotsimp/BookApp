@@ -1032,6 +1032,12 @@ async function openAiPolishModal() {
     clearBtn.style.display = savedKey ? 'inline' : 'none';
   }
 
+  const layout = document.getElementById('tr-layout-mode')?.value;
+  const styleSelect = document.getElementById('ai-polish-style');
+  if (styleSelect && layout === 'literature') {
+    styleSelect.value = 'literature';
+  }
+
   const prog = document.getElementById('ai-polish-progress-container');
   if (prog) prog.style.display = _polishRunning ? 'block' : 'none';
   const btn = document.getElementById('btn-run-polish');
