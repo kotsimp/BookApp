@@ -143,6 +143,35 @@
         <input type="hidden" id="tr-layout-mode" value="standard" />
       </div>
 
+      <!-- Book Cover Image Section -->
+      <div class="form-group" id="tr-cover-group" style="display:none; margin-top:14px; padding:12px; background:rgba(255,255,255,0.02); border:1px dashed var(--border); border-radius:10px">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+          <label class="form-label" style="margin:0; display:flex; align-items:center; gap:6px">
+            🎨 <span>Book Cover Image (Εξώφυλλο Βιβλίου)</span>
+          </label>
+          <span style="font-size:0.75rem; color:var(--text-muted)">PDF / EPUB / DOCX</span>
+        </div>
+        <div id="tr-cover-preview-box" style="display:flex; align-items:center; gap:12px">
+          <div id="tr-cover-thumb-container" style="display:none; position:relative">
+            <img id="tr-cover-thumb" src="" alt="Cover thumbnail" style="width:54px; height:76px; object-fit:cover; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,0.5); border:1px solid var(--border)" />
+          </div>
+          <div style="flex:1">
+            <div id="tr-cover-status" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:6px">
+              No cover selected. You can upload an artwork cover image or use the original one.
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button type="button" class="btn-sm btn-outline" onclick="document.getElementById('tr-cover-input').click()" style="display:inline-flex; align-items:center; gap:6px">
+                📷 Upload Custom Cover
+              </button>
+              <button type="button" class="btn-sm btn-outline" id="tr-cover-remove-btn" onclick="removeCoverImage()" style="display:none; color:var(--rose)">
+                ✕ Remove Cover
+              </button>
+            </div>
+          </div>
+        </div>
+        <input type="file" id="tr-cover-input" accept="image/jpeg,image/png,image/webp" hidden onchange="handleCoverUpload(event)" />
+      </div>
+
       <div class="info-box">
         <span class="info-box-icon">ℹ️</span>
         <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>

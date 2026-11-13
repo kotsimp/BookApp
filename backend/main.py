@@ -556,6 +556,80 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
     )
 
 
+@app.get("/api/cover/{job_id}")
+async def get_cover_image(job_id: str):
+    """Retrieve the current cover image for a job, if present."""
+    out_dir = OUTPUT_DIR / job_id
+    cov_p = out_dir / "cover_image.jpg"
+    if not cov_p.exists():
+        job = get_job(job_id)
+        if job and job.file_path and Path(job.file_path).exists():
+            try:
+                from backend.exporter import extract_cover_image
+                c_bytes = extract_cover_image(job.file_path)
+                if c_bytes:
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    cov_p.write_bytes(c_bytes)
+            except Exception:
+                pass
+
+    if cov_p.exists():
+        return FileResponse(path=str(cov_p), media_type="image/jpeg", filename="cover.jpg")
+    raise HTTPException(404, "No cover image found for this book.")
+
+
+@app.post("/api/cover/{job_id}")
+async def upload_cover_image(job_id: str, file: UploadFile = File(...)):
+    """Upload or replace the cover image (JPEG/PNG/WEBP) for a book."""
+    out_dir = OUTPUT_DIR / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty image file.")
+
+    # Convert/validate to JPEG using pymupdf or write directly
+    try:
+        import pymupdf
+        pix = pymupdf.Pixmap(content)
+        # If pixmap has alpha or is CMYK, convert to RGB
+        if pix.alpha or pix.n > 3:
+            pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+        jpg_bytes = pix.tobytes("jpeg")
+    except Exception:
+        jpg_bytes = content
+
+    cov_p = out_dir / "cover_image.jpg"
+    cov_p.write_bytes(jpg_bytes)
+
+    # Invalidate older exported PDF/EPUB/DOCX so re-download reflects new cover
+    job = get_job(job_id)
+    txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+    if txt_files:
+        txt_content = txt_files[0].read_text(encoding="utf-8")
+        base_name = txt_files[0].stem
+        layout = (getattr(job, "layout_mode", "literature") if job else "literature") or "literature"
+        for fmt_ext in (".pdf", ".epub", ".docx"):
+            try:
+                export_text(txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=jpg_bytes)
+            except Exception:
+                pass
+
+    return {"status": "ok", "job_id": job_id, "size": len(jpg_bytes)}
+
+
+@app.delete("/api/cover/{job_id}")
+async def delete_cover_image(job_id: str):
+    """Remove the custom or extracted cover image for a book."""
+    out_dir = OUTPUT_DIR / job_id
+    cov_p = out_dir / "cover_image.jpg"
+    if cov_p.exists():
+        try:
+            cov_p.unlink()
+        except Exception:
+            pass
+    return {"status": "deleted", "job_id": job_id}
+
+
 @app.get("/api/voices")
 async def list_voices():
     """Returns available TTS voices grouped by language."""

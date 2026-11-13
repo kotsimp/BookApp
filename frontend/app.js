@@ -137,6 +137,9 @@ async function uploadFile(prefix, file) {
     }
 
     refreshHistory();
+    if (prefix === 'tr') {
+      checkCoverImage(data.job_id);
+    }
   } catch (err) {
     toast(`❌ Upload error: ${err.message}`, 'error');
     removeFile(prefix);
@@ -192,10 +195,76 @@ function selectLayout(layout, btn) {
   btn.classList.add('active');
   document.getElementById('tr-layout-mode').value = layout;
 
+  const covGroup = document.getElementById('tr-cover-group');
+  if (covGroup) {
+    covGroup.style.display = (layout === 'literature') ? 'block' : 'none';
+  }
+
   const fmt = document.getElementById('tr-output-format')?.value || 'txt';
   const dlBtn = document.getElementById('tr-download-btn');
   if (dlBtn && state.tr.jobId) {
     dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
+  }
+}
+
+// ── Book Cover Image Handling ──────────────────────────────
+async function checkCoverImage(jobId) {
+  if (!jobId) return;
+  const thumb = document.getElementById('tr-cover-thumb');
+  const thumbContainer = document.getElementById('tr-cover-thumb-container');
+  const statusEl = document.getElementById('tr-cover-status');
+  const removeBtn = document.getElementById('tr-cover-remove-btn');
+
+  try {
+    const res = await fetch(`${API}/cover/${jobId}`, { method: 'HEAD' });
+    if (res.ok) {
+      if (thumb) thumb.src = `${API}/cover/${jobId}?t=${Date.now()}`;
+      if (thumbContainer) thumbContainer.style.display = 'block';
+      if (statusEl) statusEl.textContent = 'Cover image active. Included in Literature PDF, EPUB & DOCX.';
+      if (removeBtn) removeBtn.style.display = 'inline-flex';
+    } else {
+      if (thumbContainer) thumbContainer.style.display = 'none';
+      if (statusEl) statusEl.textContent = 'No cover image found. You can upload a custom cover.';
+      if (removeBtn) removeBtn.style.display = 'none';
+    }
+  } catch (_) {
+    if (thumbContainer) thumbContainer.style.display = 'none';
+    if (removeBtn) removeBtn.style.display = 'none';
+  }
+}
+
+async function handleCoverUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const jobId = state.tr.jobId;
+  if (!jobId) {
+    toast('Please upload a document first before adding a cover.', 'error');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    toast('Uploading book cover image...', 'info');
+    const res = await fetch(`${API}/cover/${jobId}`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error('Cover upload failed');
+    toast('✅ Book cover updated successfully! Included in PDF, EPUB & DOCX.', 'success');
+    await checkCoverImage(jobId);
+  } catch (err) {
+    toast(`Failed to upload cover: ${err.message}`, 'error');
+  }
+}
+
+async function removeCoverImage() {
+  const jobId = state.tr.jobId;
+  if (!jobId) return;
+  try {
+    await fetch(`${API}/cover/${jobId}`, { method: 'DELETE' });
+    toast('Book cover removed.', 'info');
+    await checkCoverImage(jobId);
+  } catch (err) {
+    toast(`Failed to remove cover: ${err.message}`, 'error');
   }
 }
 
@@ -750,6 +819,9 @@ async function loadHistoryJob(jobId, mode) {
       document.getElementById(`${prefix}-progress-pct`).textContent = '100%';
       document.getElementById(`${prefix}-progress-bar`).style.width = '100%';
       document.getElementById(`${prefix}-progress-step`).textContent = data.current_step;
+    }
+    if (prefix === 'tr') {
+      checkCoverImage(jobId);
     }
   } catch (e) {
     console.warn('Could not reload job:', e);
