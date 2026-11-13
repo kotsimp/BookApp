@@ -9,6 +9,7 @@ import logging
 import urllib.request
 import urllib.parse
 import json
+import re
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -24,32 +25,38 @@ LANG_CODES = {
     "greek": "el",
 }
 
-# Maximum characters per translation request
-CHUNK_SIZE = 4000
+# Maximum characters per translation request (keep <= 2500 for safety and zero timeouts)
+CHUNK_SIZE = 2500
 
-# Inter-chunk delay in seconds (GTX client handles rapid calls cleanly; 0.2s is fast and safe)
-RATE_LIMIT_DELAY = 0.2
+# Inter-chunk delay in seconds
+RATE_LIMIT_DELAY = 0.25
 
 
 def _translate_gtx(text: str, source_lang: str, target_lang: str) -> str:
-    """Translates text using Google's direct GTX client endpoint."""
+    """Translates text using Google's direct GTX endpoint via POST (no URI length limits)."""
     if not text.strip():
         return text
     src_code = LANG_CODES.get(source_lang, "en")
     tgt_code = LANG_CODES.get(target_lang, "el")
 
-    url = (
-        f"https://translate.googleapis.com/translate_a/single?client=gtx"
-        f"&sl={src_code}&tl={tgt_code}&dt=t&q=" + urllib.parse.quote(text)
-    )
+    data = urllib.parse.urlencode({
+        "client": "gtx",
+        "sl": src_code,
+        "tl": tgt_code,
+        "dt": "t",
+        "q": text,
+    }).encode("utf-8")
+
     req = urllib.request.Request(
-        url,
+        "https://translate.googleapis.com/translate_a/single",
+        data=data,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
             "Accept": "*/*",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         raw = resp.read().decode("utf-8")
         data = json.loads(raw)
         return "".join(part[0] for part in data[0] if part and part[0])
@@ -60,23 +67,28 @@ async def _translate_with_retry(
     source_lang: str,
     target_lang: str,
     deep_trans: Optional[GoogleTranslator] = None,
-    retries: int = 3,
+    retries: int = 4,
 ) -> str:
-    """Translates text with GTX, fast retries, and deep_translator fallback."""
+    """Translates text with GTX POST, exponential backoff, validation, and deep_translator fallback."""
     if not text.strip():
         return text
 
     loop = asyncio.get_event_loop()
 
-    # 1. Direct GTX client API (fast, no bot-blocking)
+    # 1. Direct GTX client API via POST
     for attempt in range(retries):
         try:
             result = await loop.run_in_executor(None, _translate_gtx, text, source_lang, target_lang)
             if result and result.strip():
+                # Validate that text was actually translated if target is Greek
+                if target_lang == "greek" and len(re.findall(r"[\u0370-\u03ff]", result)) == 0 and len(re.findall(r"[a-zA-Z]", text)) > 30:
+                    logger.warning(f"GTX returned untranslated text on attempt {attempt+1}/{retries}, retrying...")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
                 return result
         except Exception as e:
             logger.warning(f"GTX translation attempt {attempt+1}/{retries} error: {e}")
-            await asyncio.sleep(0.4 * (attempt + 1))
+            await asyncio.sleep(1.0 * (attempt + 1))
 
     # 2. Fallback to deep_translator
     if deep_trans:
