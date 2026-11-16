@@ -47,7 +47,7 @@ DEFAULT_RATES = {
 }
 DEFAULT_PITCHES = {
     "literature": "-1Hz",
-    "poetry": "-1Hz",
+    "poetry": "-2Hz",
     "slow_pauses": "-1Hz",
     "standard": "+0Hz",
     "fast": "+0Hz",
@@ -66,6 +66,8 @@ async def generate_audiobook(
     translated_text_path: Optional[str] = None,
     narration_style: str = "literature",
     rate: Optional[str] = None,
+    pitch: Optional[str] = None,
+    volume: Optional[str] = None,
     ai_polish: bool = False,
     api_key: Optional[str] = None,
 ) -> str:
@@ -114,10 +116,11 @@ async def generate_audiobook(
         update_job(job_id, status="error", error="No text found to convert to audio.")
         raise ValueError("No text found to convert to audio.")
 
-    # Determine prosody and style (rate, pitch, pause style)
+    # Determine prosody and style (rate, pitch, volume, pause style)
     style = (narration_style or "literature").lower()
     effective_rate = rate if rate else DEFAULT_RATES.get(style, "-12%")
-    effective_pitch = DEFAULT_PITCHES.get(style, "-1Hz")
+    effective_pitch = pitch if pitch else DEFAULT_PITCHES.get(style, "-1Hz")
+    effective_volume = volume if volume else ("+5%" if style == "poetry" else "+0%")
 
     if ai_polish:
         from backend.ai_polisher import polish_text_with_gemini
@@ -200,6 +203,7 @@ async def generate_audiobook(
                 str(chunk_path),
                 rate=effective_rate,
                 pitch=effective_pitch,
+                volume=effective_volume,
                 narration_style=style,
             )
         completed += 1
@@ -250,13 +254,16 @@ async def generate_audiobook(
 
 
 def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
-    """Prepares text for TTS, preserving natural breath pauses and poetic rhythm without unnatural voids."""
+    """Prepares text for TTS, preserving natural breath pauses, elisions, and poetic rhythm without unnatural voids."""
     # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)
 
     # Normalize Greek ano teleia (·) to comma for smooth natural breathing pause without TTS stutter
     text = text.replace("·", ",")
+
+    # Normalize typographical single quotes and Greek elision marks (’, ʼ, `, ´) to standard apostrophe
+    text = re.sub(r"[’ʼ`´]", "'", text)
 
     style = (narration_style or "literature").lower()
 
@@ -303,6 +310,7 @@ async def _tts_chunk_with_retry(
     retries: int = 3,
     rate: str = "-12%",
     pitch: str = "-1Hz",
+    volume: str = "+0%",
     narration_style: str = "literature",
 ):
     """Generates TTS for a text chunk with retry logic, maintaining consistent voice throughout."""
@@ -313,7 +321,7 @@ async def _tts_chunk_with_retry(
 
     for attempt in range(retries):
         try:
-            communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch)
+            communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch, volume=volume)
             await communicate.save(output_path)
             if Path(output_path).stat().st_size > 0:
                 return

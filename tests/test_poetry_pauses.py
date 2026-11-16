@@ -58,8 +58,16 @@ class TestPoetryPauses(unittest.TestCase):
 
     def test_poetry_rates_and_pitches(self):
         self.assertEqual(default_rates["poetry"], "-20%")
-        self.assertEqual(default_pitches["poetry"], "-1Hz")
+        self.assertEqual(default_pitches["poetry"], "-2Hz")
         self.assertIn("poetry", STYLE_PROMPTS)
+
+    def test_elision_normalization(self):
+        poem = "να ’ναι μακρύς ο δρόμος, σ’ εμπορεία Φοινικικά, τ’ ωραίο ταξίδι"
+        cleaned = _clean_tts_text(poem, narration_style="poetry")
+        self.assertNotIn("’", cleaned)
+        self.assertIn("να 'ναι", cleaned)
+        self.assertIn("σ' εμπορεία", cleaned)
+        self.assertIn("τ' ωραίο", cleaned)
 
     def test_generate_audiobook_style_variable_order(self):
         # Ensure style variable is defined before ai_polish check

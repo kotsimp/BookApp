@@ -408,16 +408,25 @@ async function startTranslation() {
   }
 }
 
-// ── Narration Style & Speed Slider ───────────────────────────
+// ── Narration Style & Prosody Sliders ───────────────────────────
 function onNarrationStyleChange() {
   const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-12%';
-  const parts = styleRaw.split(':');
-  if (parts.length > 1) {
-    const rateVal = parseInt(parts[1].replace('%', '').replace('+', ''), 10);
+  const [narrationStyle, rateStr] = styleRaw.split(':');
+  if (rateStr) {
+    const rateVal = parseInt(rateStr.replace('%', '').replace('+', ''), 10);
     const slider = document.getElementById('ab-speed-slider');
     const label = document.getElementById('ab-speed-label');
     if (slider) slider.value = rateVal;
     if (label) label.textContent = rateVal >= 0 ? `+${rateVal}%` : `${rateVal}%`;
+  }
+  // Auto-adjust default pitch for the selected style
+  const pitchSlider = document.getElementById('ab-pitch-slider');
+  if (pitchSlider) {
+    let defaultPitch = -1;
+    if (narrationStyle === 'poetry') defaultPitch = -2;
+    else if (narrationStyle === 'standard') defaultPitch = 0;
+    pitchSlider.value = defaultPitch;
+    onPitchSliderInput(defaultPitch);
   }
 }
 
@@ -426,6 +435,21 @@ function onSpeedSliderInput(val) {
   const label = document.getElementById('ab-speed-label');
   if (label) {
     label.textContent = num >= 0 ? `+${num}%` : `${num}%`;
+  }
+}
+
+function onPitchSliderInput(val) {
+  const num = parseInt(val, 10);
+  const label = document.getElementById('ab-pitch-label');
+  if (label) {
+    const sign = num >= 0 ? `+${num}Hz` : `${num}Hz`;
+    let desc = 'Natural / Φυσική';
+    if (num <= -3) desc = 'Very Deep / Επιβλητική';
+    else if (num === -2) desc = 'Deep & Theatrical / Θεατρική';
+    else if (num === -1) desc = 'Warm / Ζεστή';
+    else if (num === 1) desc = 'Clear / Καθαρή';
+    else if (num >= 2) desc = 'Bright & Lyrical / Λυρική';
+    label.textContent = `${sign} (${desc})`;
   }
 }
 
@@ -444,6 +468,9 @@ async function startAudiobook() {
   const sliderEl = document.getElementById('ab-speed-slider');
   const sliderVal = sliderEl ? parseInt(sliderEl.value, 10) : -12;
   const narrationRate = sliderVal >= 0 ? `+${sliderVal}%` : `${sliderVal}%`;
+  const pitchEl = document.getElementById('ab-pitch-slider');
+  const pitchVal = pitchEl ? parseInt(pitchEl.value, 10) : -1;
+  const narrationPitch = pitchVal >= 0 ? `+${pitchVal}Hz` : `${pitchVal}Hz`;
 
   if (!voiceName) { toast('Please select a voice first.', 'error'); return; }
 
@@ -465,6 +492,7 @@ async function startAudiobook() {
         use_translated: useTranslated,
         narration_style: narrationStyle,
         rate: narrationRate,
+        pitch: narrationPitch,
         ai_polish: aiPolish,
         api_key: aiPolish ? apiKey : null,
       }),
