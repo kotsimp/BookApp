@@ -233,8 +233,8 @@ def delete_term(source: str) -> Dict[str, str]:
 def _build_term_regex(term: str) -> re.Pattern:
     """Builds regex pattern supporting terms with leading/trailing non-word symbols (e.g. C++, .NET)."""
     escaped = re.escape(term)
-    prefix = r"\b" if re.match(r"^\w", term) else r"(?<!\S)"
-    suffix = r"\b" if re.match(r"\w$", term) else r"(?!\S)"
+    prefix = r"\b" if bool(re.search(r"^\w", term)) else r"(?<!\S)"
+    suffix = r"\b" if bool(re.search(r"\w$", term)) else r"(?!\S)"
     flags = re.IGNORECASE if term.islower() else 0
     return re.compile(rf"{prefix}{escaped}{suffix}", flags)
 

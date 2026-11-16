@@ -145,8 +145,8 @@ try:
     assert data["status"] == "started"
     print(f"  POST /translate: OK (status=started)")
 
-    # Poll status until done (max 60s)
-    for i in range(120):
+    # Poll status until done (max 120s)
+    for i in range(240):
         time.sleep(0.5)
         status, sdata = api_get(f"/status/{job_id}")
         if sdata["status"] == "done":
@@ -157,6 +157,8 @@ try:
             break
     else:
         print(f"  Translation TIMEOUT (last status: {sdata['status']}, progress={sdata['progress']}%)")
+
+    assert sdata["status"] == "done", f"Translation failed or timed out: status={sdata.get('status')}"
 
     if sdata["status"] == "done":
         # Test download

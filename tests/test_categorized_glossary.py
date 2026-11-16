@@ -37,7 +37,7 @@ def test_categorized_glossary_api():
     assert "terms" in cat_data
     assert cat_data["counts"]["technical"] >= 500
     assert cat_data["counts"]["literary"] >= 500
-    assert cat_data["counts"]["general"] >= 10
+    assert cat_data["counts"]["general"] >= 500
     print(f"  GET /glossary?categorized=true: OK (Tech={cat_data['counts']['technical']}, Lit={cat_data['counts']['literary']}, Gen={cat_data['counts']['general']})")
 
     # 3. Filter by category
