@@ -1372,7 +1372,16 @@ async function runAiPolish() {
   }
 }
 
-// ── Glossary Management ────────────────────────────────────
+// ── Categorized Glossary Management ──────────────────────────────
+const glossaryState = {
+  items: [],
+  activeCategory: 'all',
+  searchQuery: '',
+  page: 1,
+  pageSize: 50,
+  counts: { all: 0, technical: 0, literary: 0, general: 0 },
+};
+
 async function openGlossaryModal() {
   document.getElementById('glossary-modal').style.display = 'flex';
   await loadGlossary();
@@ -1384,37 +1393,135 @@ function closeGlossaryModal() {
 
 async function loadGlossary() {
   const tbody = document.getElementById('glossary-tbody');
-  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted)">Loading terms...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px">Φόρτωση όρων γλωσσαρίου...</td></tr>';
 
   try {
-    const res = await fetch(`${API}/glossary`);
-    const terms = await res.json();
-    const entries = Object.entries(terms);
+    const res = await fetch(`${API}/glossary?categorized=true`);
+    const data = await res.json();
 
-    if (entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted)">No glossary terms yet. Add one above!</td></tr>';
-      return;
-    }
+    glossaryState.items = Array.isArray(data.terms) ? data.terms : [];
+    glossaryState.counts = data.counts || { all: 0, technical: 0, literary: 0, general: 0 };
 
-    tbody.innerHTML = entries.map(([src, tgt]) => `
+    // Update count badges
+    const bAll = document.getElementById('glossary-badge-all');
+    const bTech = document.getElementById('glossary-badge-technical');
+    const bLit = document.getElementById('glossary-badge-literary');
+    const bGen = document.getElementById('glossary-badge-general');
+    if (bAll) bAll.textContent = glossaryState.counts.all || glossaryState.items.length;
+    if (bTech) bTech.textContent = glossaryState.counts.technical || 0;
+    if (bLit) bLit.textContent = glossaryState.counts.literary || 0;
+    if (bGen) bGen.textContent = glossaryState.counts.general || 0;
+
+    renderGlossaryTable();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" style="color:#f87171; text-align:center; padding:20px">Σφάλμα φόρτωσης: ${escHtml(err.message)}</td></tr>`;
+  }
+}
+
+function filterGlossaryCategory(cat, btn) {
+  glossaryState.activeCategory = cat;
+  glossaryState.page = 1;
+
+  // Update active tab button style
+  document.querySelectorAll('.glossary-tab-btn').forEach((b) => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  // Auto-sync add form category dropdown
+  const catSelect = document.getElementById('glossary-category-select');
+  if (catSelect && ['technical', 'literary', 'general'].includes(cat)) {
+    catSelect.value = cat;
+  }
+
+  renderGlossaryTable();
+}
+
+function onGlossarySearch(val) {
+  glossaryState.searchQuery = (val || '').trim().toLowerCase();
+  glossaryState.page = 1;
+  renderGlossaryTable();
+}
+
+function changeGlossaryPage(delta) {
+  glossaryState.page = Math.max(1, glossaryState.page + delta);
+  renderGlossaryTable();
+}
+
+function renderGlossaryTable() {
+  const tbody = document.getElementById('glossary-tbody');
+  if (!tbody) return;
+
+  // Filter items by category & search query
+  let filtered = glossaryState.items;
+  if (glossaryState.activeCategory && glossaryState.activeCategory !== 'all') {
+    filtered = filtered.filter((it) => it.category === glossaryState.activeCategory);
+  }
+
+  if (glossaryState.searchQuery) {
+    const q = glossaryState.searchQuery;
+    filtered = filtered.filter((it) => (it.source || '').toLowerCase().includes(q) || (it.target || '').toLowerCase().includes(q));
+  }
+
+  const total = filtered.length;
+  if (total === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:24px">Δεν βρέθηκαν όροι για τα επιλεγμένα κριτήρια.</td></tr>';
+    document.getElementById('glossary-pagination-info').textContent = '0 όροι';
+    document.getElementById('glossary-prev-btn').disabled = true;
+    document.getElementById('glossary-next-btn').disabled = true;
+    document.getElementById('glossary-page-indicator').textContent = '1';
+    return;
+  }
+
+  const totalPages = Math.ceil(total / glossaryState.pageSize) || 1;
+  if (glossaryState.page > totalPages) glossaryState.page = totalPages;
+
+  const startIdx = (glossaryState.page - 1) * glossaryState.pageSize;
+  const endIdx = Math.min(startIdx + glossaryState.pageSize, total);
+  const pageItems = filtered.slice(startIdx, endIdx);
+
+  const catMeta = {
+    technical: { label: '💻 Τεχνικός', cls: 'cat-technical' },
+    literary: { label: '📚 Λογοτεχνικός', cls: 'cat-literary' },
+    general: { label: '⚙️ Γενικός', cls: 'cat-general' },
+  };
+
+  tbody.innerHTML = pageItems.map((item) => {
+    const meta = catMeta[item.category] || catMeta.general;
+    return `
       <tr>
-        <td><strong>${escHtml(src)}</strong></td>
-        <td>${escHtml(tgt)}</td>
+        <td>
+          <span class="glossary-cat-badge ${meta.cls}">${meta.label}</span>
+        </td>
+        <td><strong>${escHtml(item.source)}</strong></td>
+        <td>${escHtml(item.target)}</td>
         <td style="text-align:center">
-          <button class="glossary-del-btn" onclick="deleteGlossaryRule('${escHtml(src)}')" title="Delete term">✕</button>
+          <button class="glossary-del-btn" onclick="deleteGlossaryRule('${escHtml(item.source)}')" title="Διαγραφή όρου">✕</button>
         </td>
       </tr>
-    `).join('');
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="3" style="color:#f87171">Failed to load glossary: ${err.message}</td></tr>`;
+    `;
+  }).join('');
+
+  // Update pagination UI
+  const infoEl = document.getElementById('glossary-pagination-info');
+  if (infoEl) {
+    infoEl.textContent = `Εμφάνιση ${startIdx + 1}–${endIdx} από ${total} όρους (Σύνολο: ${glossaryState.counts.all || glossaryState.items.length})`;
   }
+
+  const pageInd = document.getElementById('glossary-page-indicator');
+  if (pageInd) pageInd.textContent = `${glossaryState.page} / ${totalPages}`;
+
+  const prevBtn = document.getElementById('glossary-prev-btn');
+  const nextBtn = document.getElementById('glossary-next-btn');
+  if (prevBtn) prevBtn.disabled = glossaryState.page <= 1;
+  if (nextBtn) nextBtn.disabled = glossaryState.page >= totalPages;
 }
 
 async function addGlossaryRule() {
   const src = document.getElementById('glossary-source').value.trim();
   const tgt = document.getElementById('glossary-target').value.trim();
+  const cat = document.getElementById('glossary-category-select')?.value || 'general';
+
   if (!src || !tgt) {
-    toast('Please enter both source and target terms.', 'error');
+    toast('Παρακαλώ συμπληρώστε και τον αγγλικό και τον ελληνικό όρο.', 'error');
     return;
   }
 
@@ -1422,26 +1529,27 @@ async function addGlossaryRule() {
     const res = await fetch(`${API}/glossary`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: src, target: tgt }),
+      body: JSON.stringify({ source: src, target: tgt, category: cat }),
     });
-    if (!res.ok) throw new Error('Failed to add term');
+    if (!res.ok) throw new Error('Αποτυχία προσθήκης όρου');
+
     document.getElementById('glossary-source').value = '';
     document.getElementById('glossary-target').value = '';
-    toast(`Added "${src}" ➔ "${tgt}"`, 'success');
+    toast(`Προστέθηκε: "${src}" ➔ "${tgt}"`, 'success');
     await loadGlossary();
   } catch (err) {
-    toast(`Error: ${err.message}`, 'error');
+    toast(`Σφάλμα: ${err.message}`, 'error');
   }
 }
 
 async function deleteGlossaryRule(term) {
   try {
     const res = await fetch(`${API}/glossary/${encodeURIComponent(term)}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('Failed to delete term');
-    toast(`Deleted term "${term}"`, 'info');
+    if (!res.ok) throw new Error('Αποτυχία διαγραφής όρου');
+    toast(`Διαγράφηκε ο όρος "${term}"`, 'info');
     await loadGlossary();
   } catch (err) {
-    toast(`Error: ${err.message}`, 'error');
+    toast(`Σφάλμα: ${err.message}`, 'error');
   }
 }
 

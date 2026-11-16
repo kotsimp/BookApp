@@ -108,6 +108,7 @@ class PolishRequest(BaseModel):
 class GlossaryTermRequest(BaseModel):
     source: str
     target: str
+    category: str = "general"
 
 
 # ---------------------------------------------------------------------------
@@ -1103,17 +1104,19 @@ async def polish_translation(req: PolishRequest):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/glossary")
-async def get_glossary_terms():
-    """Retrieve all custom glossary mappings."""
-    from backend.glossary import load_glossary
-    return load_glossary()
+async def get_glossary_terms(category: Optional[str] = None, categorized: bool = False):
+    """Retrieve custom glossary mappings, optionally categorized or filtered by category."""
+    from backend.glossary import load_glossary, load_categorized_glossary
+    if categorized:
+        return load_categorized_glossary()
+    return load_glossary(category=category)
 
 
 @app.post("/api/glossary")
 async def add_glossary_term(req: GlossaryTermRequest):
-    """Add or update a glossary term."""
+    """Add or update a glossary term with an optional category."""
     from backend.glossary import set_term
-    updated = set_term(req.source, req.target)
+    updated = set_term(req.source, req.target, category=req.category)
     return {"status": "saved", "glossary": updated}
 
 

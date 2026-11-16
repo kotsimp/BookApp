@@ -583,31 +583,72 @@
       <button class="modal-close" onclick="closeGlossaryModal()">✕</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px">
-        Define custom terminology mappings. Technical terms and abbreviations will be translated accurately according to these rules.
+      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:14px">
+        Κατηγοριοποιημένο γλωσσάρι όρων για αυτόματη αντικατάσταση και τροφοδοσία του AI Polish. Επιλέξτε κατηγορία για φιλτράρισμα ή αναζητήστε συγκεκριμένο όρο.
       </p>
 
+      <!-- Category Filter Tabs & Quick Search -->
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap">
+        <div class="glossary-category-tabs" id="glossary-category-tabs" style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="glossary-tab-btn active" data-cat="all" onclick="filterGlossaryCategory('all', this)">
+            <span>🌐 Όλοι οι Όροι</span>
+            <span class="glossary-count-badge" id="glossary-badge-all">0</span>
+          </button>
+          <button class="glossary-tab-btn" data-cat="technical" onclick="filterGlossaryCategory('technical', this)">
+            <span>💻 Τεχνικοί Όροι</span>
+            <span class="glossary-count-badge" id="glossary-badge-technical">0</span>
+          </button>
+          <button class="glossary-tab-btn" data-cat="literary" onclick="filterGlossaryCategory('literary', this)">
+            <span>📚 Λογοτεχνικοί Όροι</span>
+            <span class="glossary-count-badge" id="glossary-badge-literary">0</span>
+          </button>
+          <button class="glossary-tab-btn" data-cat="general" onclick="filterGlossaryCategory('general', this)">
+            <span>⚙️ Γενικοί / Custom</span>
+            <span class="glossary-count-badge" id="glossary-badge-general">0</span>
+          </button>
+        </div>
+        <div style="flex:1; min-width:200px; max-width:280px; position:relative">
+          <input type="text" id="glossary-search" class="form-input" placeholder="🔍 Αναζήτηση όρου..." oninput="onGlossarySearch(this.value)" style="font-size:0.85rem; padding:7px 12px" />
+        </div>
+      </div>
+
       <!-- Add New Term Form -->
-      <div class="glossary-add-form">
-        <input type="text" id="glossary-source" class="form-input" placeholder="English Term (e.g. Server Room)" />
-        <input type="text" id="glossary-target" class="form-input" placeholder="Greek Term (e.g. Αίθουσα Διακομιστών)" />
-        <button class="btn btn-primary" onclick="addGlossaryRule()">➕ Add Term</button>
+      <div class="glossary-add-form" style="display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; align-items:center">
+        <input type="text" id="glossary-source" class="form-input" placeholder="English Term (π.χ. Attention Mechanism)" style="flex:1.2; min-width:160px" />
+        <input type="text" id="glossary-target" class="form-input" placeholder="Greek Term (π.χ. Μηχανισμός Προσοχής)" style="flex:1.2; min-width:160px" />
+        <select id="glossary-category-select" class="form-input" style="flex:0.9; min-width:150px">
+          <option value="technical">💻 Τεχνικός Όρος</option>
+          <option value="literary">📚 Λογοτεχνικός Όρος</option>
+          <option value="general" selected>⚙️ Γενικός / Custom</option>
+        </select>
+        <button class="btn btn-primary" onclick="addGlossaryRule()" style="white-space:nowrap">➕ Προσθήκη</button>
       </div>
 
       <!-- Glossary Terms Table -->
-      <div class="glossary-table-wrapper">
+      <div class="glossary-table-wrapper" style="max-height:360px">
         <table class="glossary-table">
           <thead>
             <tr>
+              <th style="width:130px">Κατηγορία</th>
               <th>Source Term (English)</th>
               <th>Target Translation (Greek)</th>
-              <th style="width:50px">Action</th>
+              <th style="width:50px; text-align:center">Action</th>
             </tr>
           </thead>
           <tbody id="glossary-tbody">
             <!-- Populated via JS -->
           </tbody>
         </table>
+      </div>
+
+      <!-- Pagination and Info -->
+      <div class="glossary-pagination">
+        <span id="glossary-pagination-info">Εμφάνιση όρων...</span>
+        <div class="glossary-page-btns">
+          <button class="btn-sm btn-outline" id="glossary-prev-btn" onclick="changeGlossaryPage(-1)">◀ Προηγούμενη</button>
+          <span id="glossary-page-indicator" style="display:inline-flex; align-items:center; padding:0 8px; font-weight:600">1</span>
+          <button class="btn-sm btn-outline" id="glossary-next-btn" onclick="changeGlossaryPage(1)">Επόμενη ▶</button>
+        </div>
       </div>
     </div>
   </div>
