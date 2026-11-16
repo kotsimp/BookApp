@@ -37,6 +37,24 @@ TTS_CHUNK_SIZE = 1200
 # Number of concurrent edge-tts requests
 TTS_CONCURRENCY = 4
 
+# Narration style prosody defaults (rate, pitch)
+DEFAULT_RATES = {
+    "literature": "-12%",
+    "poetry": "-12%",
+    "slow_pauses": "-18%",
+    "standard": "+0%",
+    "fast": "+15%",
+}
+DEFAULT_PITCHES = {
+    "literature": "-1Hz",
+    "poetry": "-1Hz",
+    "slow_pauses": "-1Hz",
+    "standard": "+0Hz",
+    "fast": "+0Hz",
+}
+default_rates = DEFAULT_RATES
+default_pitches = DEFAULT_PITCHES
+
 
 async def generate_audiobook(
     job_id: str,
@@ -112,10 +130,11 @@ async def generate_audiobook(
             pct = 5 + int((cur / max(tot, 1)) * 15)
             update_job(job_id, current_step=f"✨ AI polishing audio script ({cur}/{tot})...", progress=pct)
 
+        polish_style = "poetry" if style == "poetry" else "audiobook"
         raw_text = await polish_text_with_gemini(
             raw_text,
             api_key=resolved_key,
-            style="audiobook",
+            style=polish_style,
             job_id=job_id,
             progress_callback=_polish_prog,
         )
@@ -125,22 +144,8 @@ async def generate_audiobook(
 
     # Determine prosody (rate, pitch, pause style)
     style = (narration_style or "literature").lower()
-    default_rates = {
-        "literature": "-12%",
-        "poetry": "-18%",
-        "slow_pauses": "-20%",
-        "standard": "+0%",
-        "fast": "+15%",
-    }
-    default_pitches = {
-        "literature": "-1Hz",
-        "poetry": "-2Hz",
-        "slow_pauses": "-2Hz",
-        "standard": "+0Hz",
-        "fast": "+0Hz",
-    }
-    effective_rate = rate if rate else default_rates.get(style, "-12%")
-    effective_pitch = default_pitches.get(style, "-1Hz")
+    effective_rate = rate if rate else DEFAULT_RATES.get(style, "-12%")
+    effective_pitch = DEFAULT_PITCHES.get(style, "-1Hz")
 
     start_progress = 25 if ai_polish else 10
     update_job(job_id,
@@ -245,33 +250,35 @@ async def generate_audiobook(
 
 
 def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
-    """Prepares text for TTS, preserving natural breath pauses for literature, slow_pauses, or poetry."""
+    """Prepares text for TTS, preserving natural breath pauses and poetic rhythm without unnatural voids."""
     # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)
+
+    # Normalize Greek ano teleia (·) to comma for smooth natural breathing pause without TTS stutter
+    text = text.replace("·", ",")
+
     style = (narration_style or "literature").lower()
 
     if style == "poetry":
-        # Preserve stanza breaks (longer pause) AND individual verse line breaks (gentle pause)
+        # In poetry, preserve stanzas with natural breath pauses while keeping verse enjambments intact
         stanzas = re.split(r"\n\s*\n+", text.strip())
         formatted_stanzas = []
         for stanza in stanzas:
             lines = [ln.strip() for ln in stanza.splitlines() if ln.strip()]
             if not lines:
                 continue
-            verse_parts = []
-            for ln in lines:
-                if ln[-1] not in ".!?;:…,":
-                    ln += ","
-                verse_parts.append(ln)
-            stanza_str = " ".join(verse_parts)
-            if stanza_str[-1] == ",":
-                stanza_str = stanza_str[:-1] + "."
+            # Join verse lines within the stanza naturally as written by the poet
+            # (Do NOT blindly inject commas on enjambment lines where the sentence naturally continues)
+            stanza_str = " ".join(lines)
+            if stanza_str and stanza_str[-1] not in ".!?:;,…":
+                stanza_str += "."
             formatted_stanzas.append(stanza_str)
-        text = " ... ... ".join(formatted_stanzas)
+        # Stanzas transition cleanly with natural terminal punctuation pause (~0.7s) instead of dead voids
+        text = " ".join(formatted_stanzas)
         text = re.sub(r"\s*[—–]\s*", ", ", text)
     elif style in ("literature", "slow_pauses"):
-        # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush
+        # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush or drag
         paragraphs = re.split(r"\n\s*\n+", text.strip())
         formatted = []
         for para in paragraphs:
@@ -280,10 +287,9 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
                 continue
             if p[-1] not in ".!?;:…":
                 p += "."
-            if style == "slow_pauses":
-                p = re.sub(r"([.!?])\s+", r"\1 ... ", p)
             formatted.append(p)
-        sep = " ... ... " if style == "slow_pauses" else " ... "
+        # For relaxed pauses, a single gentle ' ... ' gives a dignified break; for literature, standard sentence cadence
+        sep = " ... " if style == "slow_pauses" else " "
         text = sep.join(formatted)
         text = re.sub(r"\s*[—–]\s*", ", ", text)
     else:
