@@ -171,6 +171,9 @@ def get_job(job_id: str) -> Optional[Job]:
 def update_job(job_id: str, **kwargs):
     job = _jobs.get(job_id)
     if job:
+        # Protect cancelled status: once cancelled, background steps cannot reset status to running or done
+        if job.status == "cancelled" and kwargs.get("status") in ("running", "done"):
+            kwargs.pop("status", None)
         for k, v in kwargs.items():
             setattr(job, k, v)
         job.updated_at = time.time()

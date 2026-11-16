@@ -241,9 +241,27 @@ def count_cbz_pages(file_path: str) -> int:
         return 1
 
 
+def parse_txt(file_path: str) -> Generator[dict, None, None]:
+    """Parses a plain text file, respecting PAGE markers or splitting into manageable sections."""
+    content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    clean = _clean_text(content)
+    sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", clean)
+    if len(sections) > 1:
+        total = (len(sections) - 1) // 2
+        for i in range(1, len(sections), 2):
+            pnum = int(sections[i])
+            text = sections[i + 1].strip()
+            yield {"page": pnum, "text": text, "total": total}
+    else:
+        pages = split_into_chunks(clean, max_chars=2000)
+        total = max(len(pages), 1)
+        for i, p_text in enumerate(pages):
+            yield {"page": i + 1, "text": p_text, "total": total}
+
+
 def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None]:
     """
-    Unified parser. file_type: 'pdf', 'docx', 'epub', 'cbz'
+    Unified parser. file_type: 'pdf', 'docx', 'epub', 'cbz', 'txt'
     Yields: {page: int, text: str, total: int}
     """
     if file_type == "pdf":
@@ -256,20 +274,28 @@ def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None
         total = count_cbz_pages(file_path)
         for i in range(total):
             yield {"page": i + 1, "text": f"[Comic Page {i+1}]", "total": total}
+    elif file_type == "txt":
+        yield from parse_txt(file_path)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
 def count_pages(file_path: str, file_type: str) -> int:
     """Returns estimated page/chapter count for progress tracking."""
-    if file_type == "pdf":
-        return count_pdf_pages(file_path)
-    elif file_type == "docx":
-        return count_docx_pages(file_path)
-    elif file_type == "epub":
-        return count_epub_chapters(file_path)
-    elif file_type in ("cbz", "zip"):
-        return count_cbz_pages(file_path)
+    try:
+        if file_type == "txt":
+            content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+            return max(1, len(content) // 2000)
+        if file_type == "pdf":
+            return count_pdf_pages(file_path)
+        elif file_type == "docx":
+            return count_docx_pages(file_path)
+        elif file_type == "epub":
+            return count_epub_chapters(file_path)
+        elif file_type in ("cbz", "zip"):
+            return count_cbz_pages(file_path)
+    except Exception:
+        return 1
     return 1
 
 

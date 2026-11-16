@@ -92,6 +92,10 @@ async def generate_audiobook(
         # Fallback to first available voice for the language
         voice_code = list(VOICES.get(language, {"": "en-US-AriaNeural"}).values())[0]
 
+    from backend.job_manager import is_job_cancelled
+    if is_job_cancelled(job_id):
+        raise asyncio.CancelledError("Audiobook generation was cancelled before starting.")
+
     update_job(job_id,
                status="running",
                current_step="Reading document...",
@@ -194,14 +198,14 @@ async def generate_audiobook(
         nonlocal completed
         from backend.job_manager import is_job_cancelled
         if is_job_cancelled(job_id):
-            return None
+            raise asyncio.CancelledError("Audiobook generation was cancelled.")
         if not chunk.strip():
             completed += 1
             return None
         chunk_path = temp_dir / f"chunk_{idx:06d}.mp3"
         async with sem:
             if is_job_cancelled(job_id):
-                return None
+                raise asyncio.CancelledError("Audiobook generation was cancelled.")
             await _tts_chunk_with_retry(
                 chunk,
                 voice_code,
@@ -234,6 +238,13 @@ async def generate_audiobook(
         ticker_task.cancel()
 
     chunk_files = [p for p in results if p]
+
+    from backend.job_manager import is_job_cancelled
+    if is_job_cancelled(job_id):
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+        raise asyncio.CancelledError("Audiobook generation was cancelled by user.")
 
     # Concatenate all chunks into final MP3
     update_job(job_id,

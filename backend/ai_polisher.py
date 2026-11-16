@@ -108,6 +108,26 @@ STYLE_TEMPERATURES = {
 _CACHED_WORKING_MODEL: Optional[str] = None
 _CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
 
+POLISH_STATUS: dict[str, dict[str, Any]] = {}
+
+
+def get_polish_job_status(job_id: str) -> dict[str, Any]:
+    """Returns the current real-time progress dict of an AI Polish job."""
+    return POLISH_STATUS.get(
+        job_id,
+        {"current": 0, "total": 1, "percent": 0, "status": "idle", "step": ""},
+    )
+
+
+def update_polish_job_status(job_id: str, **kwargs: Any) -> dict[str, Any]:
+    """Updates real-time status of an AI Polish job."""
+    st = POLISH_STATUS.setdefault(
+        job_id,
+        {"current": 0, "total": 1, "percent": 0, "status": "idle", "step": ""},
+    )
+    st.update(kwargs)
+    return st
+
 
 def reset_model_cache():
     """Invalidate cached Gemini model discovery list (e.g. when API key changes)."""
@@ -567,6 +587,10 @@ async def polish_text_with_gemini(
             )
         polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
         return apply_glossary(polished_single, "greek")
+
+
+# Alias for concise invocation
+polish_text = polish_text_with_gemini
 
 
 async def _call_gemini_api(
