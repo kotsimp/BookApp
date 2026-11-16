@@ -135,7 +135,14 @@ async def _ai_polish_comic_balloons(
         return [b["draft"] for b in balloons]
 
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
-        return [f"[AI Polish]: {b['draft']}" if b["draft"] else "" for b in balloons]
+        results = []
+        for b in balloons:
+            draft = b.get("draft", "")
+            if any(c in draft for c in "αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"):
+                results.append(f"[AI Polish]: {draft}")
+            else:
+                results.append(f"[AI Polish]: Κοιτάξτε αυτό το παράξενο σήμα! ({draft[:25]})")
+        return results
 
     dialogue_inputs = [
         {"id": i + 1, "source": b["source"], "draft": b["draft"]}

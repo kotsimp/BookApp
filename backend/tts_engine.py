@@ -266,6 +266,9 @@ async def generate_audiobook(
 
 def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
     """Prepares text for TTS, preserving natural breath pauses, elisions, and poetic rhythm without unnatural voids."""
+    if not text:
+        return ""
+
     # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)

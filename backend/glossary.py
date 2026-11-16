@@ -230,6 +230,15 @@ def delete_term(source: str) -> Dict[str, str]:
     return load_glossary()
 
 
+def _build_term_regex(term: str) -> re.Pattern:
+    """Builds regex pattern supporting terms with leading/trailing non-word symbols (e.g. C++, .NET)."""
+    escaped = re.escape(term)
+    prefix = r"\b" if re.match(r"^\w", term) else r"(?<!\S)"
+    suffix = r"\b" if re.match(r"\w$", term) else r"(?!\S)"
+    flags = re.IGNORECASE if term.islower() else 0
+    return re.compile(rf"{prefix}{escaped}{suffix}", flags)
+
+
 def apply_glossary(text: str, target_lang: str = "greek", category: Optional[str] = None) -> str:
     """
     Applies glossary replacements to text using word-boundary substitutions.
@@ -249,8 +258,7 @@ def apply_glossary(text: str, target_lang: str = "greek", category: Optional[str
         if term.lower() not in text_lower:
             continue
         replacement = glossary[term]
-        flags = re.IGNORECASE if term.islower() else 0
-        pattern = re.compile(rf"\b{re.escape(term)}\b", flags)
+        pattern = _build_term_regex(term)
         text = pattern.sub(replacement, text)
         text_lower = text.lower()
 

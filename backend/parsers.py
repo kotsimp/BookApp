@@ -5,6 +5,7 @@ Returns text in manageable chunks suitable for translation and TTS.
 
 import re
 import logging
+from pathlib import Path
 from typing import Generator
 
 logger = logging.getLogger(__name__)
@@ -333,7 +334,7 @@ def split_into_chunks(text: str, max_chars: int = 4500) -> list[str]:
             # If single paragraph is too long, split by sentences
             if len(para) > max_chars:
                 # Include Greek question mark (; / \u037e), ellipsis (…), and quotes
-                sentences = re.split(r'(?<=[.!?;…\u037e][»"”\'\)\]]?)\s+', para)
+                sentences = re.split(r'(?:(?<=[.!?;…\u037e])|(?<=[.!?;…\u037e][»"”\'\)\]]))\s+', para)
                 for sent in sentences:
                     if len(current) + len(sent) + 1 <= max_chars:
                         current = current + " " + sent if current else sent
@@ -360,7 +361,16 @@ def split_into_chunks(text: str, max_chars: int = 4500) -> list[str]:
                                             else:
                                                 if current:
                                                     chunks.append(current.strip())
-                                                current = word
+                                                    current = ""
+                                                if len(word) > max_chars:
+                                                    for i in range(0, len(word), max_chars):
+                                                        sub_w = word[i : i + max_chars]
+                                                        if len(sub_w) == max_chars:
+                                                            chunks.append(sub_w)
+                                                        else:
+                                                            current = sub_w
+                                                else:
+                                                    current = word
                                     else:
                                         current = clause
                         else:

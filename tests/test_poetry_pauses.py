@@ -2,8 +2,10 @@
 Unit tests for Poetry & Literature pause handling and rhythm refinement in TTS engine.
 """
 
+import sys
+sys.path.insert(0, ".")
 import unittest
-from backend.tts_engine import _clean_tts_text, default_rates, default_pitches
+from backend.tts_engine import _clean_tts_text, DEFAULT_RATES, DEFAULT_PITCHES
 from backend.ai_polisher import STYLE_PROMPTS
 
 
@@ -57,8 +59,8 @@ class TestPoetryPauses(unittest.TestCase):
         self.assertNotIn("... ...", cleaned)
 
     def test_poetry_rates_and_pitches(self):
-        self.assertEqual(default_rates["poetry"], "-20%")
-        self.assertEqual(default_pitches["poetry"], "-2Hz")
+        self.assertEqual(DEFAULT_RATES["poetry"], "-20%")
+        self.assertEqual(DEFAULT_PITCHES["poetry"], "-2Hz")
         self.assertIn("poetry", STYLE_PROMPTS)
 
     def test_elision_normalization(self):

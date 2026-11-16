@@ -91,6 +91,15 @@ async def _translate_with_retry(
             await asyncio.sleep(1.0 * (attempt + 1))
 
     # 2. Fallback to deep_translator
+    if deep_trans is None:
+        try:
+            from deep_translator import GoogleTranslator
+            src_c = LANG_CODES.get(source_lang, "en")
+            tgt_c = LANG_CODES.get(target_lang, "el")
+            deep_trans = GoogleTranslator(source=src_c, target=tgt_c)
+        except Exception:
+            pass
+
     if deep_trans:
         try:
             logger.info("Attempting fallback via deep_translator...")
