@@ -305,8 +305,8 @@ async def _tts_chunk_with_retry(
     voice: str,
     output_path: str,
     retries: int = 3,
-    rate: str = "-15%",
-    pitch: str = "-2Hz",
+    rate: str = "-12%",
+    pitch: str = "-1Hz",
     narration_style: str = "literature",
 ):
     """Generates TTS for a text chunk with retry logic, maintaining consistent voice throughout."""

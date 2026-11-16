@@ -9,7 +9,6 @@ test_ai_polish_advanced.py - Comprehensive Unit & Integration Tests for AI Polis
 
 import sys
 sys.path.insert(0, ".")
-import os
 import json
 import asyncio
 from pathlib import Path
