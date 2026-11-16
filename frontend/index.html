@@ -355,14 +355,27 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="ab-narration-style">Narration Style &amp; Pacing</label>
-        <select class="form-select" id="ab-narration-style">
-          <option value="literature:-15%" selected>📖 Literature / Book Flow (-15% speed, natural pauses)</option>
-          <option value="literature:-23%">🐢 Slow &amp; Expressive (-23% speed, natural pauses)</option>
-          <option value="slow_pauses:-30%">⏸️ Very Slow with Long Pauses (-30% speed, extended pauses)</option>
-          <option value="poetry:-25%">🪶 Poetry / Verse Mode (-25% speed, line &amp; stanza pauses)</option>
-          <option value="standard:-5%">⚡ Standard / Crisp (-5% speed)</option>
+        <label class="form-label" for="ab-narration-style">Narration Style &amp; Pacing / Ύφος &amp; Ταχύτητα Εκφώνησης</label>
+        <select class="form-select" id="ab-narration-style" onchange="onNarrationStyleChange()">
+          <option value="literature:-12%" selected>📖 Literature / Book Flow (-12% speed, natural pauses)</option>
+          <option value="poetry:-18%">🪶 Poetry &amp; Theater Mode (-18% speed, line &amp; stanza pauses)</option>
+          <option value="slow_pauses:-20%">🐢 Calm &amp; Expressive (-20% speed, relaxed pauses)</option>
+          <option value="standard:+0%">🎙️ Natural Conversational (+0% speed, 1.0x standard)</option>
+          <option value="standard:+15%">⚡ Brisk / Non-Fiction (+15% speed, 1.15x study)</option>
         </select>
+      </div>
+
+      <div class="form-group" style="margin-top:-6px; margin-bottom:14px">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px">
+          <span>Fine-Tune Speed / Ακριβής Ρύθμιση Ταχύτητας:</span>
+          <span id="ab-speed-label" style="font-weight:600; color:var(--violet)">-12%</span>
+        </div>
+        <input type="range" id="ab-speed-slider" min="-30" max="30" step="1" value="-12" oninput="onSpeedSliderInput(this.value)" style="width:100%; accent-color:var(--violet); cursor:pointer" />
+        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-muted); margin-top:2px">
+          <span>-30% (Very Slow)</span>
+          <span>0% (1.0x Normal)</span>
+          <span>+30% (Fast)</span>
+        </div>
       </div>
 
       <div class="form-group">

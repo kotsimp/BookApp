@@ -126,19 +126,21 @@ async def generate_audiobook(
     # Determine prosody (rate, pitch, pause style)
     style = (narration_style or "literature").lower()
     default_rates = {
-        "literature": "-15%",
-        "slow_pauses": "-30%",
-        "poetry": "-25%",
-        "standard": "-5%",
+        "literature": "-12%",
+        "poetry": "-18%",
+        "slow_pauses": "-20%",
+        "standard": "+0%",
+        "fast": "+15%",
     }
     default_pitches = {
-        "literature": "-2Hz",
-        "slow_pauses": "-3Hz",
-        "poetry": "-3Hz",
+        "literature": "-1Hz",
+        "poetry": "-2Hz",
+        "slow_pauses": "-2Hz",
         "standard": "+0Hz",
+        "fast": "+0Hz",
     }
-    effective_rate = rate if rate else default_rates.get(style, "-15%")
-    effective_pitch = default_pitches.get(style, "-2Hz")
+    effective_rate = rate if rate else default_rates.get(style, "-12%")
+    effective_pitch = default_pitches.get(style, "-1Hz")
 
     start_progress = 25 if ai_polish else 10
     update_job(job_id,

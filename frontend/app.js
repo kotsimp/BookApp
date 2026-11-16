@@ -408,6 +408,27 @@ async function startTranslation() {
   }
 }
 
+// ── Narration Style & Speed Slider ───────────────────────────
+function onNarrationStyleChange() {
+  const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-12%';
+  const parts = styleRaw.split(':');
+  if (parts.length > 1) {
+    const rateVal = parseInt(parts[1].replace('%', '').replace('+', ''), 10);
+    const slider = document.getElementById('ab-speed-slider');
+    const label = document.getElementById('ab-speed-label');
+    if (slider) slider.value = rateVal;
+    if (label) label.textContent = rateVal >= 0 ? `+${rateVal}%` : `${rateVal}%`;
+  }
+}
+
+function onSpeedSliderInput(val) {
+  const num = parseInt(val, 10);
+  const label = document.getElementById('ab-speed-label');
+  if (label) {
+    label.textContent = num >= 0 ? `+${num}%` : `${num}%`;
+  }
+}
+
 // ── Start Audiobook ────────────────────────────────────────
 async function startAudiobook() {
   const jobId = state.ab.jobId;
@@ -418,8 +439,11 @@ async function startAudiobook() {
   const useTranslated = document.getElementById('ab-use-translated')?.checked || false;
   const aiPolish = document.getElementById('ab-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
-  const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-10%';
-  const [narrationStyle, narrationRate] = styleRaw.split(':');
+  const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-12%';
+  const [narrationStyle] = styleRaw.split(':');
+  const sliderEl = document.getElementById('ab-speed-slider');
+  const sliderVal = sliderEl ? parseInt(sliderEl.value, 10) : -12;
+  const narrationRate = sliderVal >= 0 ? `+${sliderVal}%` : `${sliderVal}%`;
 
   if (!voiceName) { toast('Please select a voice first.', 'error'); return; }
 
