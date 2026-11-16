@@ -22,6 +22,33 @@ from PIL import Image, ImageDraw
 
 API = "http://127.0.0.1:8000/api"
 
+def ensure_server():
+    try:
+        req = urllib.request.Request(f"{API}/voices")
+        with urllib.request.urlopen(req, timeout=0.8):
+            return
+    except Exception:
+        pass
+    import threading
+    import uvicorn
+    from backend.main import app
+    t = threading.Thread(
+        target=uvicorn.run,
+        args=(app,),
+        kwargs={"host": "127.0.0.1", "port": 8000, "log_level": "error"},
+        daemon=True,
+    )
+    t.start()
+    for _ in range(40):
+        try:
+            req = urllib.request.Request(f"{API}/voices")
+            with urllib.request.urlopen(req, timeout=0.5):
+                return
+        except Exception:
+            time.sleep(0.1)
+
+ensure_server()
+
 def api_get(path):
     req = urllib.request.Request(f"{API}{path}")
     with urllib.request.urlopen(req) as resp:

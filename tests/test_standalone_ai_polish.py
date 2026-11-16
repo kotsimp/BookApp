@@ -120,6 +120,10 @@ def run_tests():
         assert len(content) > 1000
         print(f"  Download pasted text output as DOCX: OK ({len(content)} bytes)")
 
+    # Clean up test setting
+    api_delete("/settings/gemini_api_key")
+    print("  Cleaned up test gemini_api_key from settings.")
+
     print("\nALL STANDALONE AI POLISH TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":

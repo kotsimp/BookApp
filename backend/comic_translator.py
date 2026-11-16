@@ -362,9 +362,21 @@ async def _translate_page_image_vision(
             detected_items = json.loads(text_resp)
             if isinstance(detected_items, list) and detected_items:
                 break
+        except urllib.error.HTTPError as http_err:
+            try:
+                err_detail = http_err.read().decode("utf-8")
+            except Exception:
+                err_detail = str(http_err)
+            if http_err.code in (400, 401, 403) and ("API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower()):
+                logger.error(f"Gemini API key is invalid: {err_detail}")
+                raise ValueError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
+            logger.debug(f"Vision model {model} attempt HTTP error {http_err.code}: {err_detail}")
+            await asyncio.sleep(0.5)
         except Exception as ex:
+            if "Gemini API Key είναι άκυρο" in str(ex):
+                raise
             logger.debug(f"Vision model {model} attempt failed: {ex}")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
 
     if not detected_items:
         logger.info("No text detected via Vision on scanned page.")
@@ -482,6 +494,15 @@ async def translate_comic_document(
     # Open document with PyMuPDF
     doc = fitz.open(actual_pdf_path)
     total_pages = len(doc)
+
+    # Check if this comic is primarily scanned/image-only
+    has_vector_text = any(
+        len([b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]]) > 0
+        for i in range(min(5, total_pages))
+    )
+    if not has_vector_text and not resolved_api_key:
+        logger.warning(f"[{job_id}] Graphic novel is image-only/scanned and no Gemini API key is configured.")
+
     update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages...")
 
     all_document_dialogues = []
