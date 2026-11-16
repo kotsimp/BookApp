@@ -308,9 +308,35 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 output_path=output_path,
                 api_key=resolved_key if (ai_polish or resolved_key) else None,
             )
-            final_path = Path(final_comic_pdf)
-            job.output_path = str(final_comic_pdf)
-            job.output_format = "pdf"
+            # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
+            if fmt == "cbz":
+                cbz_path = out_dir / f"{base_name}.cbz"
+                if not cbz_path.exists():
+                    from backend.exporter import export_comic_archive
+                    export_comic_archive(final_comic_pdf, cbz_path, format="cbz")
+                final_path = cbz_path
+                job.output_path = str(cbz_path)
+                job.output_format = "cbz"
+            elif fmt == "cbr":
+                cbr_path = out_dir / f"{base_name}.cbr"
+                if not cbr_path.exists():
+                    from backend.exporter import export_comic_archive
+                    export_comic_archive(final_comic_pdf, cbr_path, format="cbr")
+                final_path = cbr_path
+                job.output_path = str(cbr_path)
+                job.output_format = "cbr"
+            elif fmt == "epub":
+                epub_path = out_dir / f"{base_name}.epub"
+                if not epub_path.exists():
+                    from backend.exporter import export_comic_epub
+                    export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel")
+                final_path = epub_path
+                job.output_path = str(epub_path)
+                job.output_format = "epub"
+            else:
+                final_path = Path(final_comic_pdf)
+                job.output_path = str(final_comic_pdf)
+                job.output_format = "pdf"
             job.layout_mode = "comic"
 
         # 1. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
@@ -550,6 +576,8 @@ MIME_MAP = {
     ".epub": "application/epub+zip",
     ".txt": "text/plain; charset=utf-8",
     ".mp3": "audio/mpeg",
+    ".cbz": "application/vnd.comicbook+zip",
+    ".cbr": "application/vnd.comicbook-rar",
 }
 
 
@@ -559,7 +587,7 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
     Download the output file for a completed job.
     If 'format' is requested (e.g. ?format=pdf), dynamically converts the translated
     content to the requested format on-demand if it hasn't been exported yet or if
-    a different 'layout' ('standard' vs 'literature') is requested.
+    a different 'layout' ('standard' vs 'literature' vs 'comic') is requested.
     """
     job = get_job(job_id)
     out_dir = OUTPUT_DIR / job_id
@@ -567,8 +595,22 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
     active_layout = (layout or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
     layout_changed = bool(layout and job and layout.lower() != (getattr(job, "layout_mode", "standard") or "standard").lower())
 
+    is_comic_job = (
+        active_layout == "comic"
+        or (job and (
+            getattr(job, "layout_mode", "") == "comic"
+            or getattr(job, "file_type", "") in ("cbz", "cbr")
+            or getattr(job, "file_name", "").lower().endswith((".cbz", ".cbr", ".zip"))
+        ))
+        or bool(out_dir.exists() and list(out_dir.glob("*_translated_*.pdf")) and not list(out_dir.glob("*_translated_*.docx")))
+    )
+
     if format:
         fmt = format.lower().lstrip(".")
+
+        if is_comic_job and fmt in ("txt", "docx", "doc"):
+            raise HTTPException(400, "TXT and DOCX formats are disabled for Graphic Novels. Please choose PDF, CBZ, CBR, or EPUB.")
+
         # If cover image is not yet cached in out_dir, check original uploaded file
         cov_file = out_dir / "cover_image.jpg"
         if not cov_file.exists() and job and job.file_path and Path(job.file_path).exists():
@@ -587,7 +629,28 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
 
-        # 2. If not (or if layout changed), generate it on-demand from the translated text
+        # 2. Comic-specific formats: CBZ, CBR, Fixed-Layout EPUB
+        if not out_path and is_comic_job and out_dir.exists():
+            comic_pdfs = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
+            if comic_pdfs:
+                src_pdf = comic_pdfs[0]
+                base_name = src_pdf.stem
+                if fmt in ("cbz", "cbr"):
+                    from backend.exporter import export_comic_archive
+                    out_path = export_comic_archive(src_pdf, out_dir / f"{base_name}.{fmt}", format=fmt)
+                    if job:
+                        job.output_path = str(out_path)
+                        job.output_format = fmt
+                        job.layout_mode = "comic"
+                elif fmt == "epub":
+                    from backend.exporter import export_comic_epub
+                    out_path = export_comic_epub(src_pdf, out_dir / f"{base_name}.epub", title=job.file_name if job else "Graphic Novel")
+                    if job:
+                        job.output_path = str(out_path)
+                        job.output_format = "epub"
+                        job.layout_mode = "comic"
+
+        # 3. Standard text formats
         if not out_path and out_dir.exists():
             txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
             if txt_files:
@@ -610,10 +673,10 @@ async def download_output(job_id: str, format: Optional[str] = None, layout: Opt
         if not out_path and out_dir.exists():
             files = [
                 f for f in out_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".txt"]
+                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".cbz", ".cbr", ".txt"]
             ]
             if files:
-                preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
+                preferred = [f for f in files if f.suffix.lower() in [".cbz", ".cbr", ".pdf", ".epub", ".docx", ".mp3"]]
                 files_to_check = preferred if preferred else files
                 files_to_check.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = files_to_check[0]

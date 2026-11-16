@@ -10,10 +10,12 @@ Verifies:
 import sys
 sys.path.insert(0, ".")
 import os
+import io
 import json
 import time
 import zipfile
 import urllib.request
+import urllib.error
 from pathlib import Path
 import pymupdf as fitz
 from PIL import Image, ImageDraw
@@ -156,7 +158,47 @@ def test_cbz_archive_translation():
 
     assert sdata["status"] == "done", f"CBZ translation failed: {sdata}"
     print("  CBZ translation completed successfully (status=done)")
-    print("  ALL GRAPHIC NOVEL & COMIC TRANSLATION TESTS PASSED!")
+
+    # 3. Test Graphic Novel Output Formats: CBZ, CBR, EPUB and disabled TXT/DOCX
+    print("\n=== 3. Testing Graphic Novel Output Formats (CBZ, CBR, EPUB & Disabled TXT/DOCX) ===")
+    # Download CBZ
+    req_cbz = urllib.request.Request(f"{API}/download/{job_id}?format=cbz&layout=comic")
+    with urllib.request.urlopen(req_cbz) as resp:
+        assert resp.status == 200
+        cbz_data = resp.read()
+        assert len(cbz_data) > 500
+        with zipfile.ZipFile(io.BytesIO(cbz_data)) as zf:
+            names = zf.namelist()
+            assert any(n.endswith(".jpg") for n in names)
+        print(f"  Downloaded CBZ comic archive: {len(cbz_data)} bytes ({len(names)} pages) OK")
+
+    # Download CBR
+    req_cbr = urllib.request.Request(f"{API}/download/{job_id}?format=cbr&layout=comic")
+    with urllib.request.urlopen(req_cbr) as resp:
+        assert resp.status == 200
+        cbr_data = resp.read()
+        assert len(cbr_data) > 500
+        print(f"  Downloaded CBR comic archive: {len(cbr_data)} bytes OK")
+
+    # Download EPUB
+    req_epub = urllib.request.Request(f"{API}/download/{job_id}?format=epub&layout=comic")
+    with urllib.request.urlopen(req_epub) as resp:
+        assert resp.status == 200
+        epub_data = resp.read()
+        assert len(epub_data) > 500
+        print(f"  Downloaded Fixed-Layout Graphic Novel EPUB: {len(epub_data)} bytes OK")
+
+    # Verify TXT and DOCX are disabled (returns HTTP 400)
+    for dis_fmt in ("txt", "docx"):
+        req_dis = urllib.request.Request(f"{API}/download/{job_id}?format={dis_fmt}&layout=comic")
+        try:
+            with urllib.request.urlopen(req_dis) as resp:
+                assert False, f"Expected 400 for disabled format {dis_fmt}, got {resp.status}"
+        except urllib.error.HTTPError as err:
+            assert err.code == 400, f"Expected 400 for {dis_fmt}, got {err.code}"
+            print(f"  Format '{dis_fmt.upper()}' correctly rejected with HTTP 400 (Disabled for Graphic Novels) OK")
+
+    print("\nALL GRAPHIC NOVEL & COMIC TRANSLATION TESTS PASSED!")
 
 
 if __name__ == "__main__":

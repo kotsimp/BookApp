@@ -529,6 +529,14 @@ async def translate_comic_document(
     doc.save(str(final_comic_pdf))
     doc.close()
 
+    # Pre-generate CBZ archive as well for seamless instant download
+    try:
+        from backend.exporter import export_comic_archive
+        final_comic_cbz = out_dir / f"{stem}_translated_{target_lang}.cbz"
+        export_comic_archive(final_comic_pdf, final_comic_cbz, format="cbz")
+    except Exception as cbz_err:
+        logger.warning(f"Could not pre-generate CBZ comic archive: {cbz_err}")
+
     # Save translated dialogue script as text file (for editor review & audiobook generation)
     dialogue_script_lines = []
     for p_num, d_list in all_document_dialogues:

@@ -101,7 +101,10 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Output Format</label>
+        <label class="form-label" style="display:flex; justify-content:space-between; align-items:center">
+          <span>Output Format</span>
+          <span id="tr-format-badge-note" style="font-size:0.75rem; color:var(--text-muted); text-transform:none; font-weight:normal"></span>
+        </label>
         <div class="format-selector" id="tr-format-selector">
           <button class="format-btn active" data-format="txt" onclick="selectFormat('txt', this)" id="fmt-txt">
             <span class="format-icon">📄</span>
@@ -123,6 +126,19 @@
             <span class="format-label">EPUB</span>
             <span class="format-desc">E-book</span>
           </button>
+          <button class="format-btn" data-format="cbz" onclick="selectFormat('cbz', this)" id="fmt-cbz">
+            <span class="format-icon">📦</span>
+            <span class="format-label">CBZ</span>
+            <span class="format-desc">Comic Archive</span>
+          </button>
+          <button class="format-btn" data-format="cbr" onclick="selectFormat('cbr', this)" id="fmt-cbr">
+            <span class="format-icon">🗂️</span>
+            <span class="format-label">CBR</span>
+            <span class="format-desc">Comic Book</span>
+          </button>
+        </div>
+        <div id="comic-format-hint" style="display:none; font-size:0.8rem; color:var(--amber); margin-top:8px; padding:8px 12px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; align-items:center; gap:8px">
+          <span>💡 <strong>Graphic Novel mode:</strong> Τα formats TXT &amp; DOCX είναι απενεργοποιημένα επειδή διατηρούνται ανέπαφες οι εικόνες και τα μπαλόνια. Επιλέξτε <strong>PDF, CBZ, CBR ή EPUB</strong>.</span>
         </div>
         <input type="hidden" id="tr-output-format" value="txt" />
       </div>

@@ -736,6 +736,107 @@ p {
     return out_path
 
 
+def export_comic_archive(
+    pdf_path: Union[str, Path],
+    out_path: Union[str, Path],
+    format: str = "cbz",
+    dpi: int = 150,
+) -> Path:
+    """
+    Renders pages of a translated comic PDF as images and packages them into a CBZ or CBR archive.
+    """
+    import zipfile
+    import pymupdf
+
+    pdf_p = Path(pdf_path)
+    if not pdf_p.exists():
+        raise FileNotFoundError(f"Source comic PDF not found: {pdf_path}")
+
+    out_p = Path(out_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = pymupdf.open(str(pdf_p))
+    with zipfile.ZipFile(str(out_p), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(dpi=dpi)
+            img_bytes = pix.tobytes("jpeg")
+            zf.writestr(f"page_{i+1:04d}.jpg", img_bytes)
+    doc.close()
+    return out_p
+
+
+def export_comic_epub(
+    pdf_path: Union[str, Path],
+    out_path: Union[str, Path],
+    title: str = "Graphic Novel",
+    dpi: int = 150,
+) -> Path:
+    """
+    Creates a pre-paginated fixed-layout EPUB containing rendered full-bleed comic pages.
+    """
+    import pymupdf
+    from ebooklib import epub
+
+    pdf_p = Path(pdf_path)
+    if not pdf_p.exists():
+        raise FileNotFoundError(f"Source comic PDF not found: {pdf_path}")
+
+    out_p = Path(out_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = pymupdf.open(str(pdf_p))
+    book = epub.EpubBook()
+    book.set_identifier(f"comic-{pdf_p.stem}")
+    book.set_title(title)
+    book.set_language("el")
+    book.add_author("BookApp Comic Engine")
+
+    spine = ["nav"]
+    chapters = []
+
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(dpi=dpi)
+        img_bytes = pix.tobytes("jpeg")
+        img_name = f"images/page_{i+1:04d}.jpg"
+        img_item = epub.EpubItem(
+            uid=f"img_{i+1}",
+            file_name=img_name,
+            media_type="image/jpeg",
+            content=img_bytes,
+        )
+        book.add_item(img_item)
+
+        w = int(page.rect.width)
+        h = int(page.rect.height)
+        html_content = f"""<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Page {i+1}</title>
+  <meta name="viewport" content="width={w}, height={h}"/>
+  <style>
+    body, html {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; text-align: center; }}
+    img {{ max-width: 100%; max-height: 100%; width: auto; height: auto; display: block; margin: auto; }}
+  </style>
+</head>
+<body>
+  <img src="{img_name}" alt="Page {i+1}"/>
+</body>
+</html>"""
+        c = epub.EpubHtml(title=f"Page {i+1}", file_name=f"page_{i+1:04d}.xhtml", lang="el")
+        c.content = html_content
+        book.add_item(c)
+        spine.append(c)
+        chapters.append(c)
+
+    doc.close()
+    book.spine = spine
+    book.toc = tuple(chapters)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(out_p), book, {})
+    return out_p
+
+
 # Helper dispatch
 def export_text(
     text: str,
@@ -763,6 +864,13 @@ def export_text(
 
     fmt = fmt.lower()
     out_path = out_dir / f"{base_name}.{fmt}"
+
+    if fmt in ("cbz", "cbr"):
+        candidates = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
+        if candidates:
+            return export_comic_archive(candidates[0], out_path, format=fmt)
+        raise ValueError(f"No comic PDF found in {out_dir} to build {fmt.upper()} archive.")
+
     if fmt == "txt":
         return export_txt(text, out_path)
     if fmt in ("doc", "docx"):
@@ -770,5 +878,9 @@ def export_text(
     if fmt == "pdf":
         return export_pdf(text, out_path, layout=layout, cover_image=cover_image)
     if fmt == "epub":
+        if layout == "comic":
+            candidates = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
+            if candidates:
+                return export_comic_epub(candidates[0], out_path, title=base_name)
         return export_epub(text, out_path, title=base_name, layout=layout, cover_image=cover_image)
     raise ValueError(f"Unsupported format: {fmt}")

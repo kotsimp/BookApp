@@ -100,6 +100,10 @@ function removeFile(prefix) {
     const useTranslated = document.getElementById('ab-use-translated');
     if (useTranslated) useTranslated.checked = false;
   }
+  if (prefix === 'tr') {
+    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+    updateFormatAvailability(layout, '');
+  }
   // Reset file input
   const inp = document.getElementById(`${prefix}-file-input`);
   if (inp) inp.value = '';
@@ -138,11 +142,14 @@ async function uploadFile(prefix, file) {
 
     refreshHistory();
     if (prefix === 'tr') {
+      state.tr.file = file;
       const ext = file.name.split('.').pop().toLowerCase();
-      if (ext === 'cbz' || ext === 'zip') {
+      if (ext === 'cbz' || ext === 'cbr' || ext === 'zip') {
         const comicBtn = document.getElementById('layout-comic');
         if (comicBtn) selectLayout('comic', comicBtn);
       } else {
+        const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+        updateFormatAvailability(layout, ext);
         checkCoverImage(data.job_id);
       }
     }
@@ -172,9 +179,96 @@ function setLangs(src, tgt) {
 }
 
 // ── Output Format & Layout Selection ─────────────────────────
+function updateFormatAvailability(layout, fileExt) {
+  const isComic = layout === 'comic' || ['cbz', 'cbr'].includes(fileExt);
+
+  const btnTxt = document.getElementById('fmt-txt');
+  const btnDocx = document.getElementById('fmt-docx');
+  const btnPdf = document.getElementById('fmt-pdf');
+  const btnEpub = document.getElementById('fmt-epub');
+  const btnCbz = document.getElementById('fmt-cbz');
+  const btnCbr = document.getElementById('fmt-cbr');
+  const hintEl = document.getElementById('comic-format-hint');
+  const badgeNote = document.getElementById('tr-format-badge-note');
+
+  let curFmt = document.getElementById('tr-output-format')?.value || 'txt';
+
+  if (isComic) {
+    // Disable TXT and DOCX for Graphic Novels (artwork & speech balloons must be preserved)
+    if (btnTxt) {
+      btnTxt.disabled = true;
+      btnTxt.classList.add('format-btn-disabled');
+      btnTxt.classList.remove('active');
+      btnTxt.title = 'Μη διαθέσιμο για Graphic Novels (διατηρούνται εικόνες & μπαλόνια διαλόγων)';
+    }
+    if (btnDocx) {
+      btnDocx.disabled = true;
+      btnDocx.classList.add('format-btn-disabled');
+      btnDocx.classList.remove('active');
+      btnDocx.title = 'Μη διαθέσιμο για Graphic Novels (διατηρούνται εικόνες & μπαλόνια διαλόγων)';
+    }
+
+    // Enable comic formats: PDF, CBZ, CBR, EPUB
+    [btnPdf, btnEpub, btnCbz, btnCbr].forEach((b) => {
+      if (b) {
+        b.disabled = false;
+        b.classList.remove('format-btn-disabled');
+        b.style.display = 'flex';
+      }
+    });
+
+    if (hintEl) hintEl.style.display = 'flex';
+    if (badgeNote) badgeNote.textContent = '(PDF, CBZ, CBR, EPUB)';
+
+    // If currently on disabled format (txt or docx), switch to comic format
+    if (curFmt === 'txt' || curFmt === 'docx') {
+      const preferred = fileExt === 'cbr' ? btnCbr : (fileExt === 'cbz' ? btnCbz : btnPdf);
+      if (preferred) {
+        selectFormat(preferred.dataset.format, preferred);
+      }
+    }
+  } else {
+    // Standard / Literature: Enable TXT, DOCX, PDF, EPUB
+    [btnTxt, btnDocx, btnPdf, btnEpub].forEach((b) => {
+      if (b) {
+        b.disabled = false;
+        b.classList.remove('format-btn-disabled');
+        b.style.display = 'flex';
+      }
+    });
+
+    // Disable comic-only archives (CBZ, CBR) for standard text
+    if (btnCbz) {
+      btnCbz.disabled = true;
+      btnCbz.classList.add('format-btn-disabled');
+      btnCbz.classList.remove('active');
+      btnCbz.title = 'Διαθέσιμο μόνο σε Graphic Novels / Comics';
+    }
+    if (btnCbr) {
+      btnCbr.disabled = true;
+      btnCbr.classList.add('format-btn-disabled');
+      btnCbr.classList.remove('active');
+      btnCbr.title = 'Διαθέσιμο μόνο σε Graphic Novels / Comics';
+    }
+
+    if (hintEl) hintEl.style.display = 'none';
+    if (badgeNote) badgeNote.textContent = '';
+
+    // If currently on cbz or cbr, switch to pdf or docx
+    if (curFmt === 'cbz' || curFmt === 'cbr') {
+      if (btnPdf) selectFormat('pdf', btnPdf);
+    }
+  }
+}
+
 function selectFormat(fmt, btn) {
+  if (!btn) return;
+  if (btn.disabled || btn.classList.contains('format-btn-disabled')) {
+    toast(`⚠️ Το format ${fmt.toUpperCase()} είναι απενεργοποιημένο για Graphic Novels. Επιλέξτε PDF, CBZ, CBR ή EPUB.`, 'info');
+    return;
+  }
   // Deselect only format buttons (not layout buttons)
-  document.querySelectorAll('#tr-format-selector .format-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#tr-format-selector .format-btn').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tr-output-format').value = fmt;
   // Update download button label immediately
@@ -197,14 +291,14 @@ function selectFormat(fmt, btn) {
 }
 
 function selectLayout(layout, btn) {
-  document.querySelectorAll('#tr-layout-selector .format-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#tr-layout-selector .format-btn').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tr-layout-mode').value = layout;
 
+  const currentExt = state.tr.file ? state.tr.file.name.split('.').pop().toLowerCase() : '';
+  updateFormatAvailability(layout, currentExt);
+
   if (layout === 'comic') {
-    // Graphic Novel automatically selects PDF output to preserve full page artwork
-    const pdfBtn = document.getElementById('fmt-pdf');
-    if (pdfBtn) selectFormat('pdf', pdfBtn);
     const covGroup = document.getElementById('tr-cover-group');
     if (covGroup) covGroup.style.display = 'none';
   } else {
@@ -381,8 +475,12 @@ async function startTranslation() {
 
   const sourceLang = document.getElementById('tr-source-lang').value;
   const targetLang = document.getElementById('tr-target-lang').value;
-  const outputFormat = document.getElementById('tr-output-format').value || 'txt';
+  let outputFormat = document.getElementById('tr-output-format').value || 'txt';
   const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
+  if (layoutMode === 'comic' && (outputFormat === 'txt' || outputFormat === 'docx')) {
+    outputFormat = 'pdf';
+    document.getElementById('tr-output-format').value = 'pdf';
+  }
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
 
@@ -1567,6 +1665,9 @@ async function init() {
 
   // Load history
   await refreshHistory();
+
+  // Initialize format selector rules
+  updateFormatAvailability('standard', '');
 
   // Keyboard support for upload zones
   document.querySelectorAll('.upload-zone').forEach(zone => {
