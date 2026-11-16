@@ -228,9 +228,21 @@ def count_epub_chapters(file_path: str) -> int:
 # Unified Entry Point
 # ---------------------------------------------------------------------------
 
+def count_cbz_pages(file_path: str) -> int:
+    """Returns image page count inside a CBZ/ZIP comic archive."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            img_exts = {".jpg", ".jpeg", ".png", ".webp"}
+            count = sum(1 for n in zf.namelist() if Path(n).suffix.lower() in img_exts and not n.startswith("."))
+            return max(count, 1)
+    except Exception:
+        return 1
+
+
 def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None]:
     """
-    Unified parser. file_type: 'pdf', 'docx', 'epub'
+    Unified parser. file_type: 'pdf', 'docx', 'epub', 'cbz'
     Yields: {page: int, text: str, total: int}
     """
     if file_type == "pdf":
@@ -239,6 +251,10 @@ def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None
         yield from parse_docx(file_path)
     elif file_type == "epub":
         yield from parse_epub(file_path)
+    elif file_type in ("cbz", "zip"):
+        total = count_cbz_pages(file_path)
+        for i in range(total):
+            yield {"page": i + 1, "text": f"[Comic Page {i+1}]", "total": total}
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -251,6 +267,8 @@ def count_pages(file_path: str, file_type: str) -> int:
         return count_docx_pages(file_path)
     elif file_type == "epub":
         return count_epub_chapters(file_path)
+    elif file_type in ("cbz", "zip"):
+        return count_cbz_pages(file_path)
     return 1
 
 

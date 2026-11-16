@@ -67,8 +67,9 @@
           <span class="file-badge">PDF</span>
           <span class="file-badge">DOCX</span>
           <span class="file-badge">EPUB</span>
+          <span class="file-badge" style="border-color:var(--violet, #7c3aed); color:var(--violet-light, #a78bfa)">CBZ / COMIC</span>
         </div>
-        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub" hidden onchange="handleFileSelect(event, 'tr')" />
+        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.zip" hidden onchange="handleFileSelect(event, 'tr')" />
       </div>
 
       <div class="selected-file" id="tr-selected-file">
@@ -128,7 +129,7 @@
 
       <div class="form-group">
         <label class="form-label">Document Layout Style</label>
-        <div class="format-selector" id="tr-layout-selector" style="grid-template-columns: repeat(2, 1fr)">
+        <div class="format-selector" id="tr-layout-selector" style="grid-template-columns: repeat(3, 1fr)">
           <button class="format-btn active" data-layout="standard" onclick="selectLayout('standard', this)" id="layout-standard">
             <span class="format-icon">📄</span>
             <span class="format-label">Standard / Έγγραφο</span>
@@ -137,7 +138,12 @@
           <button class="format-btn" data-layout="literature" onclick="selectLayout('literature', this)" id="layout-literature">
             <span class="format-icon">📚</span>
             <span class="format-label">Λογοτεχνικό / E-Reader</span>
-            <span class="format-desc">iPad &amp; Kindle · Κεφάλαια, Εσοχές, Serif</span>
+            <span class="format-desc">Κεφάλαια, Εσοχές, Serif</span>
+          </button>
+          <button class="format-btn" data-layout="comic" onclick="selectLayout('comic', this)" id="layout-comic">
+            <span class="format-icon">🎨</span>
+            <span class="format-label">Graphic Novel / Comic</span>
+            <span class="format-desc">Εικόνες αναλλοίωτες · Μπαλόνια</span>
           </button>
         </div>
         <input type="hidden" id="tr-layout-mode" value="standard" />

@@ -72,7 +72,7 @@ async function processFile(file, prefix) {
 }
 
 function showSelectedFile(prefix, file) {
-  const iconMap = { pdf: '📕', docx: '📘', epub: '📗' };
+  const iconMap = { pdf: '📕', docx: '📘', epub: '📗', cbz: '🎨', zip: '🎨' };
   const ext = file.name.split('.').pop().toLowerCase();
   const icon = iconMap[ext] || '📄';
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
@@ -138,7 +138,13 @@ async function uploadFile(prefix, file) {
 
     refreshHistory();
     if (prefix === 'tr') {
-      checkCoverImage(data.job_id);
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'cbz' || ext === 'zip') {
+        const comicBtn = document.getElementById('layout-comic');
+        if (comicBtn) selectLayout('comic', comicBtn);
+      } else {
+        checkCoverImage(data.job_id);
+      }
     }
   } catch (err) {
     toast(`❌ Upload error: ${err.message}`, 'error');
@@ -195,9 +201,17 @@ function selectLayout(layout, btn) {
   btn.classList.add('active');
   document.getElementById('tr-layout-mode').value = layout;
 
-  const covGroup = document.getElementById('tr-cover-group');
-  if (covGroup && state.tr.jobId) {
-    covGroup.style.display = 'block';
+  if (layout === 'comic') {
+    // Graphic Novel automatically selects PDF output to preserve full page artwork
+    const pdfBtn = document.getElementById('fmt-pdf');
+    if (pdfBtn) selectFormat('pdf', pdfBtn);
+    const covGroup = document.getElementById('tr-cover-group');
+    if (covGroup) covGroup.style.display = 'none';
+  } else {
+    const covGroup = document.getElementById('tr-cover-group');
+    if (covGroup && state.tr.jobId) {
+      covGroup.style.display = 'block';
+    }
   }
 
   const fmt = document.getElementById('tr-output-format')?.value || 'txt';
@@ -677,12 +691,18 @@ function showResult(prefix, data) {
   if (prefix === 'tr') {
     const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
     const label = fmt.toUpperCase();
-    meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
+    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+    if (layout === 'comic') {
+      meta.textContent = 'Το Graphic Novel / Comic μεταφράστηκε με επιτυχία! Η εικονογράφηση διατηρήθηκε 100% και τα μπαλόνια διαλόγου αποδόθηκαν στα Ελληνικά.';
+    } else {
+      meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
+    }
     // Keep format label in download button in sync
     const labelEl = document.getElementById('tr-format-label');
-    if (labelEl) labelEl.textContent = label;
+    if (labelEl) {
+      labelEl.textContent = layout === 'comic' ? 'Graphic Novel (PDF)' : label;
+    }
     const dlBtn = document.getElementById('tr-download-btn');
-    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     if (dlBtn && state.tr.jobId) {
       dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
     }

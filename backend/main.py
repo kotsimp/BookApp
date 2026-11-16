@@ -112,11 +112,11 @@ class GlossaryTermRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub", ".doc"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub", ".doc", ".cbz", ".zip"}
 
 def _get_file_type(filename: str) -> Optional[str]:
     ext = Path(filename).suffix.lower()
-    mapping = {".pdf": "pdf", ".docx": "docx", ".epub": "epub"}
+    mapping = {".pdf": "pdf", ".docx": "docx", ".epub": "epub", ".cbz": "cbz", ".zip": "cbz"}
     return mapping.get(ext)
 
 
@@ -281,8 +281,24 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
+        # 0. Graphic Novel / Comic translation (balloons only, preserving 100% artwork)
+        if layout in ("comic", "graphic_novel") or file_type in ("cbz", "cbr"):
+            from backend.comic_translator import translate_comic_document
+            final_comic_pdf = await translate_comic_document(
+                job_id=job_id,
+                file_path=file_path,
+                file_type=file_type,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                output_path=output_path,
+            )
+            final_path = Path(final_comic_pdf)
+            job.output_path = str(final_comic_pdf)
+            job.output_format = "pdf"
+            job.layout_mode = "comic"
+
         # 1. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
-        if file_type == "docx" and fmt in ("docx", "doc"):
+        elif file_type == "docx" and fmt in ("docx", "doc"):
             final_docx_path = out_dir / f"{base_name}.docx"
 
             def docx_prog(done, total, msg):
