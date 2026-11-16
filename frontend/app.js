@@ -612,7 +612,7 @@ async function startTranslation() {
         layout_mode: layoutMode,
         reading_direction: readingDirection,
         ai_polish: aiPolish,
-        api_key: aiPolish ? apiKey : null,
+        api_key: apiKey || null,
       }),
     });
     if (!res.ok) {
@@ -723,7 +723,7 @@ async function startAudiobook() {
         rate: narrationRate,
         pitch: narrationPitch,
         ai_polish: aiPolish,
-        api_key: aiPolish ? apiKey : null,
+        api_key: apiKey || null,
       }),
     });
     if (!res.ok) {
