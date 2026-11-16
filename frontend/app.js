@@ -1392,6 +1392,28 @@ function closeAiPolishModal() {
   }
 }
 
+async function saveGeminiKeyOnly() {
+  const input = document.getElementById('gemini-api-key');
+  const apiKey = (input ? input.value : '').trim();
+  if (!apiKey) {
+    toast('Παρακαλώ εισάγετε το Gemini API Key σας.', 'error');
+    return;
+  }
+  localStorage.setItem('gemini_api_key', apiKey);
+  try {
+    await fetch(`${API}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gemini_api_key: apiKey }),
+    });
+  } catch (_) {}
+  const badge = document.getElementById('gemini-key-saved-badge');
+  if (badge) badge.style.display = 'inline';
+  const clearBtn = document.getElementById('btn-clear-key');
+  if (clearBtn) clearBtn.style.display = 'inline';
+  toast('Το Gemini API Key αποθηκεύτηκε επιτυχώς!', 'success');
+}
+
 async function clearGeminiKey() {
   localStorage.removeItem('gemini_api_key');
   const input = document.getElementById('gemini-api-key');
@@ -1818,6 +1840,16 @@ async function init() {
   // Initialize Theme and Editor Sync Scroll
   initTheme();
   setupSyncScroll();
+
+  // Auto-sync Gemini API key between localStorage and backend server
+  const localKey = localStorage.getItem('gemini_api_key');
+  if (localKey) {
+    fetch(`${API}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gemini_api_key: localKey }),
+    }).catch(() => {});
+  }
 
   // Check backend is reachable
   try {
