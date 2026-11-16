@@ -80,6 +80,7 @@ def apply_glossary(text: str, target_lang: str = "greek") -> str:
     """
     Applies glossary replacements to text using word-boundary substitutions.
     Sorted by term length descending so longer phrases match first.
+    Includes fast substring pre-filtering for high performance across 1000+ terms.
     """
     if not text or target_lang.lower() not in ("greek", "el"):
         return text
@@ -88,10 +89,15 @@ def apply_glossary(text: str, target_lang: str = "greek") -> str:
     # Sort terms by length descending to prevent sub-string overlap
     sorted_terms = sorted(glossary.keys(), key=len, reverse=True)
 
+    text_lower = text.lower()
     for term in sorted_terms:
+        # Fast substring pre-check: skip terms that do not appear in text
+        if term.lower() not in text_lower:
+            continue
         replacement = glossary[term]
-        # Match term on word boundaries (case-sensitive or insensitive as defined)
-        pattern = re.compile(rf"\b{re.escape(term)}\b")
+        flags = re.IGNORECASE if term.islower() else 0
+        pattern = re.compile(rf"\b{re.escape(term)}\b", flags)
         text = pattern.sub(replacement, text)
+        text_lower = text.lower()
 
     return text

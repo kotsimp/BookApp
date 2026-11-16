@@ -316,11 +316,26 @@ async def polish_text_with_gemini(
                 "Διατήρησε αυστηρή συνέπεια στην ονομασία και φωνητική απόδοση των παραπάνω όρων σε όλο το κείμενο."
             )
 
-        # Inject custom user glossary rules
+        # Inject contextually-relevant user glossary rules
         from backend.glossary import load_glossary, apply_glossary
         glossary_items = load_glossary()
         if glossary_items:
-            glossary_lines = "\n".join(f"- {k} -> {v}" for k, v in list(glossary_items.items())[:35])
+            full_context_lower = (text + "\n" + (original_text or "")).lower()
+            # Prioritize terms that actually appear in the source or draft text
+            matched_terms = [
+                (k, v) for k, v in glossary_items.items()
+                if k.lower() in full_context_lower or v.lower() in full_context_lower
+            ]
+            selected_terms = matched_terms[:50]
+            # If few specific terms matched, fill up to 30 with standard terms
+            if len(selected_terms) < 20:
+                for k, v in glossary_items.items():
+                    if (k, v) not in selected_terms:
+                        selected_terms.append((k, v))
+                    if len(selected_terms) >= 30:
+                        break
+
+            glossary_lines = "\n".join(f"- {k} -> {v}" for k, v in selected_terms)
             system_instruction += (
                 "\n\n--- ΓΛΩΣΣΑΡΙΟ ΚΑΙ ΟΡΟΛΟΓΙΑ ΧΡΗΣΤΗ (GLOSSARY RULES) ---\n"
                 "Τήρησε αυστηρά τις ακόλουθες καθιερωμένες αποδόσεις όρων:\n"
