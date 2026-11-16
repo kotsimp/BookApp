@@ -76,11 +76,14 @@ EXCLUDE_PATTERNS = [
 PREFERRED_FLASH_MODELS = [
     "gemini-flash-latest",
     "gemini-flash-lite-latest",
-    "gemini-2.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
     "gemini-3-flash-preview",
+    "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash-002",
@@ -228,7 +231,17 @@ async def polish_text_with_gemini(
             await asyncio.gather(*(_polish_batch(i, b) for i, b in enumerate(batches)))
             if all(not p for p in polished_batches) and first_error is not None:
                 raise first_error
-            return "\n\n".join(p for p in polished_batches if p)
+
+            final_batches = []
+            for b_idx, p in enumerate(polished_batches):
+                if p and p.strip():
+                    final_batches.append(p.strip())
+                else:
+                    orig_fallback = "\n\n".join(
+                        f"{m}\n\n{c}" if m else c for m, c in batches[b_idx]
+                    )
+                    final_batches.append(orig_fallback)
+            return "\n\n".join(final_batches)
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
         if len(text) > 4000:
@@ -340,7 +353,13 @@ async def _call_gemini_api(
                             cand_list = result.get("candidates", [])
                             if not cand_list:
                                 break
-                            polished = cand_list[0]["content"]["parts"][0]["text"].strip()
+                            parts = cand_list[0].get("content", {}).get("parts", [])
+                            if not parts:
+                                logger.warning(f"Model {model} candidate returned no content parts (finishReason: {cand_list[0].get('finishReason')})")
+                                break
+                            polished = parts[0].get("text", "").strip()
+                            if not polished:
+                                break
                             _CACHED_WORKING_MODEL = model
                             logger.info(f"Gemini API success using model: {model}")
                             return polished

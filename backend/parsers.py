@@ -93,15 +93,30 @@ def _clean_page_blocks(page) -> str:
         is_bottom = y1 > (h * 0.88)
         lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
 
-        # 1. Pure page numbers or numbers enclosed in dashes/spaces in header/footer
-        if (is_top or is_bottom) and any(re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", l, re.IGNORECASE) for l in lines):
-            continue
+        if is_top:
+            # 1. Pure page numbers or numbers enclosed in dashes/spaces at top
+            while lines and re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", lines[0], re.IGNORECASE):
+                lines.pop(0)
 
-        # 2. Short header block (< 55 chars) in top margin without trailing sentence punctuation
-        if is_top and len(t) < 55 and not t.endswith((".", "!", "?", ";", ":", "»", '"', "”")):
-            continue
+            # 2. Triplet header: Author\nPageNumber\nTitle (e.g. Peter Watts\n6\nBlindsight)
+            if len(lines) >= 3 and lines[1].isdigit() and len(lines[0]) < 50 and len(lines[2]) < 50:
+                lines = lines[3:]
+            # 3. Pair header: Title\nPageNumber or PageNumber\nTitle
+            elif len(lines) >= 2 and lines[1].isdigit() and len(lines[0]) < 50 and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”")):
+                lines = lines[2:]
+            elif len(lines) >= 2 and lines[0].isdigit() and len(lines[1]) < 50 and not lines[1].endswith((".", "!", "?", ";", ":", "»", '"', "”")):
+                lines = lines[2:]
+            # 4. Standalone short header block (< 55 chars) with no sentence-ending punctuation
+            elif len(lines) == 1 and len(lines[0]) < 55 and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”")) and not lines[0][0].islower():
+                lines = []
 
-        body_blocks.append(t)
+        if is_bottom:
+            # Strip running footers at bottom (e.g. page numbers)
+            while lines and re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", lines[-1], re.IGNORECASE):
+                lines.pop()
+
+        if lines:
+            body_blocks.append("\n".join(lines))
 
     return "\n\n".join(body_blocks)
 
