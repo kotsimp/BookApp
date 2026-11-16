@@ -15,8 +15,8 @@ class TestPoetryPauses(unittest.TestCase):
             "συγκίνησις το πνεύμα και το σώμα σου αγγίζει."
         )
         cleaned = _clean_tts_text(poem, narration_style="poetry")
-        # Must not inject comma after 'εκλεκτή'
-        self.assertIn("εκλεκτή συγκίνησις", cleaned)
+        # Must preserve verse line break and not inject comma after 'εκλεκτή'
+        self.assertIn("εκλεκτή\nσυγκίνησις", cleaned)
         self.assertNotIn("εκλεκτή,", cleaned)
 
     def test_poetry_no_double_ellipsis(self):
@@ -29,12 +29,14 @@ class TestPoetryPauses(unittest.TestCase):
         cleaned = _clean_tts_text(poem, narration_style="poetry")
         self.assertNotIn("... ...", cleaned)
         self.assertNotIn("...", cleaned)
+        # Stanzas must be separated by \n\n
+        self.assertIn("\n\nΤους", cleaned)
 
     def test_greek_ano_teleia_normalized(self):
         poem = "θα μπαίνεις σε λιμένας πρωτοειδωμένους·\nκαι τες καλές πραγμάτειες ν’ αποκτήσεις."
         cleaned = _clean_tts_text(poem, narration_style="poetry")
         self.assertNotIn("·", cleaned)
-        self.assertIn("πρωτοειδωμένους,", cleaned)
+        self.assertIn("πρωτοειδωμένους,\n", cleaned)
 
     def test_literature_no_awkward_ellipses_between_paragraphs(self):
         prose = (
@@ -55,7 +57,7 @@ class TestPoetryPauses(unittest.TestCase):
         self.assertNotIn("... ...", cleaned)
 
     def test_poetry_rates_and_pitches(self):
-        self.assertEqual(default_rates["poetry"], "-12%")
+        self.assertEqual(default_rates["poetry"], "-20%")
         self.assertEqual(default_pitches["poetry"], "-1Hz")
         self.assertIn("poetry", STYLE_PROMPTS)
 

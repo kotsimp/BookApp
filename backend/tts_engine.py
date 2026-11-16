@@ -40,7 +40,7 @@ TTS_CONCURRENCY = 4
 # Narration style prosody defaults (rate, pitch)
 DEFAULT_RATES = {
     "literature": "-12%",
-    "poetry": "-12%",
+    "poetry": "-20%",
     "slow_pauses": "-18%",
     "standard": "+0%",
     "fast": "+15%",
@@ -261,21 +261,17 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
     style = (narration_style or "literature").lower()
 
     if style == "poetry":
-        # In poetry, preserve stanzas with natural breath pauses while keeping verse enjambments intact
+        # In poetry, preserve verse lines (\n) and stanzas (\n\n) so the neural TTS engine
+        # recites line-by-line with authentic poetic cadence and natural verse breathing,
+        # without flattening verses into continuous prose or adding artificial double ellipses.
         stanzas = re.split(r"\n\s*\n+", text.strip())
         formatted_stanzas = []
         for stanza in stanzas:
             lines = [ln.strip() for ln in stanza.splitlines() if ln.strip()]
             if not lines:
                 continue
-            # Join verse lines within the stanza naturally as written by the poet
-            # (Do NOT blindly inject commas on enjambment lines where the sentence naturally continues)
-            stanza_str = " ".join(lines)
-            if stanza_str and stanza_str[-1] not in ".!?:;,…":
-                stanza_str += "."
-            formatted_stanzas.append(stanza_str)
-        # Stanzas transition cleanly with natural terminal punctuation pause (~0.7s) instead of dead voids
-        text = " ".join(formatted_stanzas)
+            formatted_stanzas.append("\n".join(lines))
+        text = "\n\n".join(formatted_stanzas)
         text = re.sub(r"\s*[—–]\s*", ", ", text)
     elif style in ("literature", "slow_pauses"):
         # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush or drag
