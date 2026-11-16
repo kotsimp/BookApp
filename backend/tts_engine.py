@@ -32,8 +32,8 @@ VOICES = {
     },
 }
 
-# Max chars per TTS request (2000 chars reduces WebSocket round-trips while staying well within edge-tts limits)
-TTS_CHUNK_SIZE = 2000
+# Max chars per TTS request (~1200 chars allows fast concurrent synthesis while staying well within edge-tts limits)
+TTS_CHUNK_SIZE = 1200
 # Number of concurrent edge-tts requests
 TTS_CONCURRENCY = 4
 
@@ -140,10 +140,12 @@ async def generate_audiobook(
     effective_rate = rate if rate else default_rates.get(style, "-15%")
     effective_pitch = default_pitches.get(style, "-2Hz")
 
+    start_progress = 25 if ai_polish else 10
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
-               current_step=f"Generating audio in {total_chunks} parts using {voice_name} ({style})...")
+               progress=start_progress,
+               current_step=f"🎙️ Generating neural audio in {total_chunks} parts using {voice_name} ({style})...")
 
     logger.info(
         f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, "
@@ -155,6 +157,28 @@ async def generate_audiobook(
     temp_dir.mkdir(parents=True, exist_ok=True)
     sem = asyncio.Semaphore(TTS_CONCURRENCY)
     completed = 0
+    ticker_stop = asyncio.Event()
+
+    async def _progress_ticker():
+        while not ticker_stop.is_set():
+            try:
+                await asyncio.sleep(2.0)
+                if ticker_stop.is_set():
+                    break
+                from backend.job_manager import get_job
+                j = get_job(job_id)
+                if j and j.status == "running":
+                    cur_prog = j.progress or start_progress
+                    if cur_prog < 88:
+                        update_job(
+                            job_id,
+                            progress=min(88, cur_prog + 2),
+                            current_step=f"🎙️ Synthesizing {voice_name} audio (part {min(completed + 1, total_chunks)}/{total_chunks})...",
+                        )
+            except Exception:
+                pass
+
+    ticker_task = asyncio.create_task(_progress_ticker())
 
     async def _process_chunk(idx: int, chunk: str) -> Optional[str]:
         nonlocal completed
@@ -172,21 +196,27 @@ async def generate_audiobook(
                 narration_style=style,
             )
         completed += 1
+        pct = start_progress + int((completed / total_chunks) * (88 - start_progress))
         update_job(
             job_id,
-            current_step=f"Generated audio part {completed} of {total_chunks}...",
+            current_step=f"🎙️ Generated audio part {completed} of {total_chunks}...",
             done_chunks=completed,
-            progress=int((completed / total_chunks) * 85),
+            progress=pct,
         )
         return str(chunk_path)
 
-    results = await asyncio.gather(*(_process_chunk(i, c) for i, c in enumerate(text_chunks)))
+    try:
+        results = await asyncio.gather(*(_process_chunk(i, c) for i, c in enumerate(text_chunks)))
+    finally:
+        ticker_stop.set()
+        ticker_task.cancel()
+
     chunk_files = [p for p in results if p]
 
     # Concatenate all chunks into final MP3
     update_job(job_id,
                current_step="Assembling final audiobook...",
-               progress=90)
+               progress=92)
 
     await _concatenate_mp3s(chunk_files, output_path)
 

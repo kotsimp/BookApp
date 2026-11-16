@@ -578,9 +578,12 @@ async def _call_gemini_api(
         }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            for attempt in range(4):
+            # Keep attempts tight (max 2) with fast 15s timeout to failover instantly to other flash models
+            max_attempts = 2
+            for attempt in range(max_attempts):
                 try:
-                    async with session.post(url, json=payload, headers=headers) as resp:
+                    req_timeout = aiohttp.ClientTimeout(total=15)
+                    async with session.post(url, json=payload, headers=headers, timeout=req_timeout) as resp:
                         if resp.status == 200:
                             result = await resp.json()
                             cand_list = result.get("candidates", [])
@@ -600,16 +603,24 @@ async def _call_gemini_api(
                             err_text = await resp.text()
                             raise PermissionError(f"Gemini API authentication error ({resp.status}): {err_text}")
                         elif resp.status == 404:
-                            logger.debug(f"Model {model} returned 404, trying next...")
+                            logger.debug(f"Model {model} returned 404, trying next candidate...")
+                            if _CACHED_WORKING_MODEL == model:
+                                _CACHED_WORKING_MODEL = None
                             break
-                        elif resp.status in (429, 500, 502, 503, 504):
+                        elif resp.status in (500, 502, 503, 504):
+                            # High demand / server overloaded: Fail over immediately to the next candidate model
                             err_text = await resp.text()
                             last_error = f"Gemini API error ({resp.status}): {err_text}"
-                            logger.warning(f"Model {model} transient error (attempt {attempt + 1}/4): {last_error}")
-                            if attempt < 3:
-                                wait_time = 12.0 * (attempt + 1) if resp.status == 429 else 2.0 * (attempt + 1)
-                                logger.info(f"Backing off for {wait_time:.1f}s before retrying {model}...")
-                                await asyncio.sleep(wait_time)
+                            logger.info(f"Model {model} overloaded/unavailable ({resp.status}). Immediately trying next candidate...")
+                            if _CACHED_WORKING_MODEL == model:
+                                _CACHED_WORKING_MODEL = None
+                            break
+                        elif resp.status == 429:
+                            err_text = await resp.text()
+                            last_error = f"Gemini API error (429): {err_text}"
+                            logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
+                            if attempt < max_attempts - 1:
+                                await asyncio.sleep(2.0)
                                 continue
                             break
                         else:
@@ -621,11 +632,18 @@ async def _call_gemini_api(
                             break
                 except PermissionError:
                     raise
+                except asyncio.TimeoutError:
+                    logger.warning(f"Model {model} timed out after 15s. Switching immediately to next candidate...")
+                    if _CACHED_WORKING_MODEL == model:
+                        _CACHED_WORKING_MODEL = None
+                    break
                 except Exception as e:
                     last_error = str(e)
-                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/4): {e}")
-                    if attempt < 3:
-                        await asyncio.sleep(2.0 * (attempt + 1))
+                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/{max_attempts}): {e}")
+                    if _CACHED_WORKING_MODEL == model:
+                        _CACHED_WORKING_MODEL = None
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(1.0)
 
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:
