@@ -1776,6 +1776,18 @@ async function deleteGlossaryRule(term) {
   }
 }
 
+// ── Page Refresh & Theme Management ────────────────────────
+function refreshPageApp() {
+  const heroIcon = document.getElementById('refresh-icon');
+  const navIcon = document.getElementById('nav-refresh-icon');
+  if (heroIcon) heroIcon.classList.add('spinning');
+  if (navIcon) navIcon.classList.add('spinning');
+  toast('Ανανέωση σελίδας και δεδομένων...', 'info');
+  setTimeout(() => {
+    window.location.reload();
+  }, 350);
+}
+
 // ── Theme Management (Dark / Light Mode) ──────────────────
 function initTheme() {
   const saved = localStorage.getItem('bookapp_theme') || 'dark';

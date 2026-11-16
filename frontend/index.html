@@ -18,6 +18,9 @@
   <!-- ── Hero ── -->
   <header class="hero animate-in" style="position:relative">
     <div style="position:absolute; top:1.2rem; right:1.5rem; display:flex; gap:0.5rem; align-items:center;">
+      <button id="refresh-page-btn" class="theme-toggle-btn" onclick="refreshPageApp()" title="Ανανέωση Σελίδας & Δεδομένων (Refresh)" aria-label="Refresh Page">
+        <span id="refresh-icon">🔄</span> <span id="refresh-label">Refresh</span>
+      </button>
       <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Εναλλαγή Dark / Light Mode" aria-label="Toggle Theme">
         <span id="theme-icon">🌓</span> <span id="theme-label">Theme</span>
       </button>
@@ -47,6 +50,10 @@
     <button class="tab-btn" id="btn-settings" onclick="openAiPolishModal()" title="Ρυθμίσεις & Gemini API Key">
       <span class="tab-icon">🔑</span>
       <span class="tab-label">Gemini API Key</span>
+    </button>
+    <button class="tab-btn" id="btn-nav-refresh" onclick="refreshPageApp()" title="Ανανέωση Σελίδας (Refresh)">
+      <span class="tab-icon" id="nav-refresh-icon">🔄</span>
+      <span class="tab-label">Refresh</span>
     </button>
   </nav>
 

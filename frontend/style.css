@@ -80,6 +80,16 @@
   transform: translateY(-1px);
 }
 
+@keyframes spin-anim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  display: inline-block;
+  animation: spin-anim 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .voice-preview-btn {
   background: transparent;
   border: 1px solid var(--border);
