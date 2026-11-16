@@ -35,3 +35,8 @@ Thumbs.db
 .env
 .env.local
 config/settings.json
+
+# Local SQLite database files
+data/*.db
+data/*.db-wal
+data/*.db-shm

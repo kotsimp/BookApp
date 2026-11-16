@@ -16,7 +16,12 @@
 <div class="app-wrapper">
 
   <!-- ── Hero ── -->
-  <header class="hero animate-in">
+  <header class="hero animate-in" style="position:relative">
+    <div style="position:absolute; top:1.2rem; right:1.5rem; display:flex; gap:0.5rem; align-items:center;">
+      <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Εναλλαγή Dark / Light Mode" aria-label="Toggle Theme">
+        <span id="theme-icon">🌓</span> <span id="theme-label">Theme</span>
+      </button>
+    </div>
     <div class="hero-badge">
       <span class="hero-badge-dot"></span>
       Neural AI Powered
@@ -80,6 +85,7 @@
         </div>
         <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
       </div>
+      <div id="tr-genre-hint" class="genre-badge-hint" style="display:none"></div>
     </div>
 
     <!-- Options Card -->
@@ -163,6 +169,18 @@
           </button>
         </div>
         <input type="hidden" id="tr-layout-mode" value="standard" />
+      </div>
+
+      <div class="form-group" id="tr-reading-dir-group" style="display:none; margin-top:8px">
+        <label class="form-label">Reading Direction (Φορά Ανάγνωσης Graphic Novel / Manga)</label>
+        <div style="display:flex; gap:16px; margin-top:4px">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem">
+            <input type="radio" name="tr-reading-dir" value="ltr" checked /> Standard (Left-to-Right ➡️)
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem">
+            <input type="radio" name="tr-reading-dir" value="rtl" /> Manga (Right-to-Left ⬅️)
+          </label>
+        </div>
       </div>
 
       <!-- Book Cover Image Section -->
@@ -433,6 +451,17 @@
           <input type="checkbox" id="ab-ai-polish" style="width:18px;height:18px;accent-color:var(--violet)" />
           <span style="font-size:0.9rem">✨ AI Polish for Spoken Audio (Gemini — expands abbreviations &amp; improves narration flow)</span>
         </label>
+      </div>
+
+      <div class="form-group" style="margin-top:10px">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
+          <input type="checkbox" id="ab-multi-voice" onchange="toggleMultiVoiceSelect()" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span style="font-size:0.9rem">🎭 <strong>Multi-Voice Dramatization (Πολυφωνική Αφήγηση)</strong>: Ξεχωριστή φωνή για διαλόγους</span>
+        </label>
+        <div id="ab-dialogue-voice-container" style="display:none; margin-top:8px; padding-left:28px">
+          <label class="form-label" style="font-size:0.85rem">Δευτερεύουσα Φωνή Διαλόγων (Dialogue Voice):</label>
+          <select class="form-select" id="ab-dialogue-voice-select"></select>
+        </div>
       </div>
 
       <div class="form-group" id="ab-translate-option" style="display:none">

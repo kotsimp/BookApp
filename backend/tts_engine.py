@@ -56,6 +56,199 @@ default_rates = DEFAULT_RATES
 default_pitches = DEFAULT_PITCHES
 
 
+def split_into_voice_segments(
+    text: str,
+    default_voice_code: str,
+    dialogue_voice_code: Optional[str] = None,
+) -> list[tuple[str, str]]:
+    """
+    Splits text into (chunk_text, voice_code) segments.
+    Supports:
+    1. Explicit tags: [Nestoras]: ..., [Athina]: ..., [VoiceName]: ...
+    2. Automatic dialogue alternation: Dialogue lines (starting with '—' or enclosed in «...»)
+       are routed to dialogue_voice_code, narration is routed to default_voice_code.
+    """
+    if not text.strip():
+        return []
+
+    alias_map = {
+        "nestoras": "el-GR-NestorasNeural",
+        "athina": "el-GR-AthinaNeural",
+        "aria": "en-US-AriaNeural",
+        "guy": "en-US-GuyNeural",
+        "jenny": "en-US-JennyNeural",
+        "davis": "en-US-DavisNeural",
+        "sonia": "en-GB-SoniaNeural",
+        "ryan": "en-GB-RyanNeural",
+        "narrator": default_voice_code,
+        "αφηγητής": default_voice_code,
+    }
+    if dialogue_voice_code:
+        alias_map["dialogue"] = dialogue_voice_code
+        alias_map["διάλογος"] = dialogue_voice_code
+
+    segments = []
+    lines = text.split("\n")
+
+    current_voice = default_voice_code
+    current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if current_lines:
+                current_lines.append("")
+            continue
+
+        # 1. Explicit speaker tag: e.g. [Athina]: ... or [Nestoras]: ...
+        tag_match = re.match(r"^\[([a-zA-Z\u0370-\u03ff\s]+)\]\s*:\s*(.*)$", stripped)
+        if tag_match:
+            speaker_tag = tag_match.group(1).strip().lower()
+            speech_content = tag_match.group(2).strip()
+            target_voice = alias_map.get(speaker_tag, default_voice_code)
+
+            if target_voice != current_voice and current_lines:
+                chunk_str = "\n".join(current_lines).strip()
+                if chunk_str:
+                    segments.append((chunk_str, current_voice))
+                current_lines = []
+
+            current_voice = target_voice
+            current_lines.append(speech_content)
+            continue
+
+        # 2. Dialogue alternation
+        if dialogue_voice_code and dialogue_voice_code != default_voice_code:
+            is_dialogue = stripped.startswith(("—", "–", "-", "«", '"')) or ("«" in stripped and "»" in stripped)
+            target_voice = dialogue_voice_code if is_dialogue else default_voice_code
+
+            if target_voice != current_voice and current_lines:
+                chunk_str = "\n".join(current_lines).strip()
+                if chunk_str:
+                    segments.append((chunk_str, current_voice))
+                current_lines = []
+
+            current_voice = target_voice
+            current_lines.append(stripped)
+            continue
+
+        current_lines.append(stripped)
+
+    if current_lines:
+        chunk_str = "\n".join(current_lines).strip()
+        if chunk_str:
+            segments.append((chunk_str, current_voice))
+
+    # Break oversized segments into TTS_CHUNK_SIZE
+    final_segments = []
+    for seg_text, seg_voice in segments:
+        if len(seg_text) > TTS_CHUNK_SIZE:
+            sub_chunks = split_into_chunks(seg_text, max_chars=TTS_CHUNK_SIZE)
+            for sc in sub_chunks:
+                if sc.strip():
+                    final_segments.append((sc, seg_voice))
+        else:
+            final_segments.append((seg_text, seg_voice))
+
+    return final_segments
+
+
+def tag_audiobook_file(
+    audio_path: str,
+    title: str = "",
+    author: str = "",
+    cover_image_path: Optional[str] = None,
+) -> None:
+    """Embeds ID3v2 metadata (Title, Artist, Album, Genre, Cover Art) into MP3 using mutagen."""
+    try:
+        from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, APIC, ID3NoHeaderError
+
+        try:
+            audio = ID3(audio_path)
+        except ID3NoHeaderError:
+            audio = ID3()
+
+        if title:
+            audio.add(TIT2(encoding=3, text=title))
+            audio.add(TALB(encoding=3, text=title))
+        if author:
+            audio.add(TPE1(encoding=3, text=author))
+        audio.add(TCON(encoding=3, text="Audiobook"))
+
+        if cover_image_path and Path(cover_image_path).exists():
+            try:
+                cover_bytes = Path(cover_image_path).read_bytes()
+                mime = "image/png" if cover_image_path.lower().endswith(".png") else "image/jpeg"
+                audio.add(APIC(
+                    encoding=3,
+                    mime=mime,
+                    type=3,
+                    desc="Cover",
+                    data=cover_bytes,
+                ))
+            except Exception as ex:
+                logger.warning(f"Could not embed cover art: {ex}")
+
+        audio.save(audio_path, v2_version=3)
+    except Exception as e:
+        logger.warning(f"Tagging audio file failed (non-critical): {e}")
+
+
+async def synthesize_voice_preview(
+    voice_code: str,
+    text: Optional[str] = None,
+) -> str:
+    """Synthesizes a short 2-3 second voice preview MP3 and returns its path."""
+    import edge_tts
+    base_temp = Path(__file__).resolve().parent.parent / "temp" / "previews"
+    base_temp.mkdir(parents=True, exist_ok=True)
+    out_file = base_temp / f"preview_{voice_code}.mp3"
+
+    sample_text = text or (
+        "Γεια σας! Αυτή είναι μια δοκιμή εκφώνησης για το BookApp."
+        if voice_code.startswith("el")
+        else "Hello! This is a preview of the neural voice narration for BookApp."
+    )
+
+    communicate = edge_tts.Communicate(sample_text, voice_code, rate="-10%")
+    await communicate.save(str(out_file))
+    return str(out_file)
+
+
+async def export_audiobook_m4b(
+    mp3_path: str,
+    m4b_path: str,
+    title: str = "",
+    author: str = "",
+    cover_image_path: Optional[str] = None,
+) -> str:
+    """Exports audio as .m4b with chapter metadata and cover art."""
+    import shutil
+    import subprocess
+    ffmpeg_bin = shutil.which("ffmpeg")
+    Path(m4b_path).parent.mkdir(parents=True, exist_ok=True)
+
+    if ffmpeg_bin:
+        cmd = [
+            ffmpeg_bin, "-y", "-i", mp3_path,
+            "-c:a", "aac", "-b:a", "64k",
+            "-metadata", f"title={title or 'Audiobook'}",
+            "-metadata", f"artist={author or 'BookApp'}",
+            "-metadata", "genre=Audiobook",
+            m4b_path
+        ]
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True))
+            return m4b_path
+        except Exception as e:
+            logger.warning(f"ffmpeg conversion failed: {e}. Falling back to tagged copy.")
+
+    shutil.copyfile(mp3_path, m4b_path)
+    tag_audiobook_file(m4b_path, title=title, author=author, cover_image_path=cover_image_path)
+    return m4b_path
+
+
 async def generate_audiobook(
     job_id: str,
     file_path: str,
@@ -68,29 +261,35 @@ async def generate_audiobook(
     rate: Optional[str] = None,
     pitch: Optional[str] = None,
     volume: Optional[str] = None,
+    dialogue_voice: Optional[str] = None,
     ai_polish: bool = False,
     api_key: Optional[str] = None,
 ) -> str:
     """
-    Generates an MP3 audiobook from a document or pre-translated text file.
+    Generates an MP3 or M4B audiobook from a document or pre-translated text file.
+    Supports single or multi-voice dramatization (dialogue vs narrator).
 
     Args:
         job_id: Job identifier for progress updates
         file_path: Original document path
         file_type: 'pdf', 'docx', or 'epub'
         language: 'english' or 'greek'
-        voice_name: Display name from VOICES dict (e.g. 'Athina (Female)')
-        output_path: Path to write final .mp3
+        voice_name: Display name from VOICES dict (e.g. 'Nestoras (Male)')
+        output_path: Path to write final .mp3 or .m4b
         translated_text_path: If set, read text from this file instead of parsing document
+        dialogue_voice: Optional second voice for character speech/dialogues
 
     Returns:
-        output_path of the generated MP3
+        output_path of the generated audiobook
     """
-    # Resolve voice code
+    # Resolve primary and dialogue voice codes
     voice_code = VOICES.get(language, {}).get(voice_name)
     if not voice_code:
-        # Fallback to first available voice for the language
         voice_code = list(VOICES.get(language, {"": "en-US-AriaNeural"}).values())[0]
+
+    dialogue_voice_code = None
+    if dialogue_voice:
+        dialogue_voice_code = VOICES.get(language, {}).get(dialogue_voice)
 
     from backend.job_manager import is_job_cancelled
     if is_job_cancelled(job_id):
@@ -151,18 +350,25 @@ async def generate_audiobook(
             progress_callback=_polish_prog,
         )
 
-    text_chunks = split_into_chunks(raw_text, TTS_CHUNK_SIZE)
-    total_chunks = len(text_chunks)
+    voice_segments = split_into_voice_segments(
+        raw_text,
+        default_voice_code=voice_code,
+        dialogue_voice_code=dialogue_voice_code,
+    )
+    if not voice_segments:
+        voice_segments = [(c, voice_code) for c in split_into_chunks(raw_text, TTS_CHUNK_SIZE)]
+    total_chunks = len(voice_segments)
 
     start_progress = 25 if ai_polish else 10
+    diag_str = f" + {dialogue_voice}" if dialogue_voice else ""
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
                progress=start_progress,
-               current_step=f"🎙️ Generating neural audio in {total_chunks} parts using {voice_name} ({style})...")
+               current_step=f"🎙️ Generating neural audio in {total_chunks} parts using {voice_name}{diag_str} ({style})...")
 
     logger.info(
-        f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}, "
+        f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}{diag_str}, "
         f"style={style}, rate={effective_rate}, pitch={effective_pitch}, source={text_source}"
     )
 
@@ -187,15 +393,16 @@ async def generate_audiobook(
                         update_job(
                             job_id,
                             progress=min(88, cur_prog + 2),
-                            current_step=f"🎙️ Synthesizing {voice_name} audio (part {min(completed + 1, total_chunks)}/{total_chunks})...",
+                            current_step=f"🎙️ Synthesizing audio (part {min(completed + 1, total_chunks)}/{total_chunks})...",
                         )
             except Exception:
                 pass
 
     ticker_task = asyncio.create_task(_progress_ticker())
 
-    async def _process_chunk(idx: int, chunk: str) -> Optional[str]:
+    async def _process_chunk(idx: int, item: tuple[str, str]) -> Optional[str]:
         nonlocal completed
+        chunk, chunk_voice = item
         from backend.job_manager import is_job_cancelled
         if is_job_cancelled(job_id):
             raise asyncio.CancelledError("Audiobook generation was cancelled.")
@@ -208,7 +415,7 @@ async def generate_audiobook(
                 raise asyncio.CancelledError("Audiobook generation was cancelled.")
             await _tts_chunk_with_retry(
                 chunk,
-                voice_code,
+                chunk_voice,
                 str(chunk_path),
                 rate=effective_rate,
                 pitch=effective_pitch,
@@ -226,7 +433,7 @@ async def generate_audiobook(
         return str(chunk_path)
 
     try:
-        results = await asyncio.gather(*(_process_chunk(i, c) for i, c in enumerate(text_chunks)))
+        results = await asyncio.gather(*(_process_chunk(i, item) for i, item in enumerate(voice_segments)))
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Audiobook generation was cancelled.")
         import shutil
@@ -246,12 +453,37 @@ async def generate_audiobook(
         update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
         raise asyncio.CancelledError("Audiobook generation was cancelled by user.")
 
-    # Concatenate all chunks into final MP3
+    # Concatenate all chunks into final MP3 / M4B
     update_job(job_id,
                current_step="Assembling final audiobook...",
                progress=92)
 
-    await _concatenate_mp3s(chunk_files, output_path)
+    # Detect cover image if available
+    cover_img = None
+    out_parent = Path(output_path).parent
+    c_jpg = out_parent / "cover_image.jpg"
+    if c_jpg.exists():
+        cover_img = str(c_jpg)
+    book_title = Path(file_path).stem if file_path else "Audiobook"
+
+    if output_path.lower().endswith(".m4b"):
+        temp_cat_mp3 = temp_dir / "full_concat.mp3"
+        await _concatenate_mp3s(chunk_files, str(temp_cat_mp3))
+        await export_audiobook_m4b(
+            str(temp_cat_mp3),
+            output_path,
+            title=book_title,
+            author="BookApp",
+            cover_image_path=cover_img,
+        )
+    else:
+        await _concatenate_mp3s(chunk_files, output_path)
+        tag_audiobook_file(
+            output_path,
+            title=book_title,
+            author="BookApp",
+            cover_image_path=cover_img,
+        )
 
     # Cleanup temp files
     for f in chunk_files:

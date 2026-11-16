@@ -576,7 +576,9 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            return apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek")
+            final_res = apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek")
+            from backend.typography import format_greek_typography
+            return format_greek_typography(final_res)
 
         await _run_progress(1, 1)
         single_input = text
@@ -586,7 +588,8 @@ async def polish_text_with_gemini(
                 f"--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n{text}"
             )
         polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
-        return apply_glossary(polished_single, "greek")
+        from backend.typography import format_greek_typography
+        return format_greek_typography(apply_glossary(polished_single, "greek"))
 
 
 # Alias for concise invocation
@@ -600,13 +603,25 @@ async def _call_gemini_api(
     session: Optional[aiohttp.ClientSession] = None,
     temperature: float = 0.25,
 ) -> str:
-    """Invokes Gemini generateContent with auto-discovery prioritizing ultra-fast Flash models."""
+    """Invokes Gemini generateContent with cache, auto-discovery prioritizing ultra-fast Flash models."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
         if "--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n" in content_text:
             draft_part = content_text.split("--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n")[-1]
             return f"[Επιμελημένο AI]: {draft_part.strip()}"
         return f"[Επιμελημένο AI]: {content_text}"
+
+    # Check cache first
+    cache_key = None
+    try:
+        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish", extra=f"{system_prompt[:50]}:{temperature}")
+        cached_result = db_get_cached_translation(cache_key)
+        if cached_result is not None:
+            logger.info("Retrieved AI polished chunk directly from SQLite cache.")
+            return cached_result
+    except Exception as ex:
+        logger.debug(f"Polish cache check skipped: {ex}")
 
     global _CACHED_WORKING_MODEL
 
@@ -684,6 +699,12 @@ async def _call_gemini_api(
                                 break
                             _CACHED_WORKING_MODEL = model
                             logger.info(f"Gemini API success using model: {model}")
+                            if cache_key:
+                                try:
+                                    from backend.database import db_set_cached_translation
+                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish")
+                                except Exception:
+                                    pass
                             return polished
                         elif resp.status in (401, 403):
                             err_text = await resp.text()

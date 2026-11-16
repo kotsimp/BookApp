@@ -51,6 +51,13 @@
 
 ### Βασικές Τεχνολογίες Backend:
 * **FastAPI + Uvicorn:** Υψηλής απόδοσης ασύγχρονος Web server.
+* **SQLite Database Layer (`data/bookapp.db`):** Μόνιμη αποθήκευση κατάστασης εργασιών και ρυθμίσεων σε WAL mode (Write-Ahead Logging) με thread-safe κλειδώματα, εξασφαλίζοντας μηδενική απώλεια δεδομένων μετά από επανεκκινήσεις.
+* **Semantic Translation & Polish Cache:** Σημασιολογική προσωρινή μνήμη μεταφράσεων και AI Polish βασισμένη σε κατακερματισμό περιεχομένου (SHA-256). Επαναλαμβανόμενες φράσεις και παράγραφοι επιστρέφονται ακαριαία (0ms) χωρίς κατανάλωση εξωτερικού API quota, με ζωντανά στατιστικά επιτυχιών (`GET /api/cache/stats`).
+* **Storage Auto-Cleanup Garbage Collector (`backend/storage_cleaner.py`):** Αυτόματος μηχανισμός εκκαθάρισης προσωρινών τμημάτων ήχου και εξαγωγών παλαιότερων των 48 ωρών, προστατεύοντας τα τελικά αρχεία εξόδου. Προσβάσιμος και μέσω `POST /api/admin/cleanup`.
+* **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`):** Εντοπισμός μπαλονιών διαλόγου, inpainting φόντου, έξυπνη κλιμάκωση γραμματοσειράς `fit-to-box` (έως 5.5pt), υποστήριξη ιαπωνικής φοράς ανάγνωσης Manga (RTL: top-to-bottom, right-to-left) και εξαγωγή σε PDF, CBZ, CBR και Fixed-Layout EPUB.
+* **Greek Editorial Typography Engine (`backend/typography.py`):** Αυτόματη μετατροπή εισαγωγικών σε «...», διαλόγων σε em-dash (`—`), αυτόματη επιβολή του κανόνα του τελικού «ν» (`δε/δεν`, `μη/μην`) και διόρθωση στίξης.
+* **Auto-Genre & Style Detector (`backend/genre_detector.py`):** Ευρετική και γλωσσική ανάλυση κειμένου (`POST /api/detect-genre`) για αυτόματη ανίχνευση λογοτεχνίας, ποίησης, τεχνικών ή διοικητικών κειμένων.
+* **Multi-Voice TTS Engine & M4B Exporter (`backend/tts_engine.py`):** Παραγωγή πολυφωνικών audiobooks (Αφηγητής + Διάλογοι), ενσωμάτωση εξωφύλλου και ετικετών ID3v2/MP4 μέσω `mutagen`, άμεση ακρόαση δειγμάτων (`GET /api/tts/preview`) και εξαγωγή σε `.m4b`.
 * **Server-Sent Events (SSE):** Μηχανισμός ζωντανής ενημέρωσης προόδου (0–100%) χωρίς polling.
 * **PyMuPDF (fitz):** Εξαγωγή κειμένου, αναγνώριση διάταξης και παραγωγή PDF με ελληνικές TrueType γραμματοσειρές (Arial/Calibri/Georgia).
 * **python-docx:** In-place ανάγνωση και εγγραφή εγγράφων Word με διατήρηση στυλ, γραμματοσειρών και πινάκων.
@@ -270,14 +277,40 @@ BookApp/
 
 ## 6. Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)
 
-Η εφαρμογή περιλαμβάνει πλήρη σουίτα αυτοματοποιημένων ελέγχων στο φάκελο `tests/`. Για να επιβεβαιώσετε την ορθή λειτουργία όλων των υποσυστημάτων:
+Η εφαρμογή περιλαμβάνει ολοκληρωμένη σουίτα **24 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/`. Για να επιβεβαιώσετε την ορθή λειτουργία όλων των υποσυστημάτων:
 
 ```bash
-# Βεβαιωθείτε ότι το .venv είναι ενεργό και ο server εκτελείται
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_pdf_initial_pages_preservation, tests.test_ai_polish_advanced, tests.test_api"
+# Βεβαιωθείτε ότι το .venv είναι ενεργό και εκτελέστε τον ενιαίο master test runner:
+python run_all_tests.py
 ```
 
-Όλοι οι έλεγχοι πρέπει να ολοκληρωθούν με **`PASSED`**.
+Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις 24 σουίτες δοκιμών:
+1. `test_ai_polish_advanced.py`: Δίγλωσση επιμέλεια, Audiobook phonetics, consistency dossier & checkpoints.
+2. `test_ai_polisher_deep.py`: Όλα τα 6 στυλ επιμέλειας, temperatures, multi-page splitting, cache invalidation.
+3. `test_api.py`: Ολοκληρωμένοι έλεγχοι REST endpoints, upload, translation & streaming.
+4. `test_categorized_glossary.py`: Κατηγοριοποιημένο γλωσσάρι (Technical, Literature, General).
+5. `test_code_health.py`: Υγεία κώδικα, έλεγχος σύνταξης και απουσία dead/obsolete blocks.
+6. `test_comic_translation.py`: Μετάφραση Graphic Novels (PDF, CBZ, CBR, EPUB) και απαγόρευση TXT/DOCX.
+7. `test_concurrency_and_stress.py`: Stress test 50 παράλληλων jobs, multi-thread settings, SSE queues.
+8. `test_database_and_cache.py`: SQLite persistence (`data/bookapp.db`), restart recovery & SHA-256 cache.
+9. `test_document_integrity_and_encoding.py`: BOM, UTF-16, CP1253, πολυτονικά ελληνικά, corrupted file handling.
+10. `test_dynamic_download.py`: Άμεση αλλαγή φορμάτ κατά τη λήψη χωρίς επανυπολογισμό.
+11. `test_edge_cases_and_robustness.py`: Οριακές περιπτώσεις, ακραία inputs και ανθεκτικότητα.
+12. `test_editor_glossary_ai.py`: In-browser Editor, κανόνες γλωσσαρίου και AI Polish.
+13. `test_exporter.py`: Εξαγωγή σε DOCX, PDF, EPUB, TXT, CBZ, CBR.
+14. `test_format_preservation.py`: Διατήρηση μορφοποίησης, πινάκων και στυλ σε DOCX/EPUB.
+15. `test_literature_formatting.py`: Λογοτεχνικό layout, καθαρισμός κεφαλίδων, κεφάλαια, εσοχές.
+16. `test_manga_rtl_and_balloon_fit.py`: Japanese Manga RTL φορά ανάγνωσης και fit-to-box κλιμάκωση.
+17. `test_multivoice_and_m4b.py`: Πολυφωνική αφήγηση, speaker tags, ID3 cover tagging και M4B export.
+18. `test_parsers.py`: Αναλυτές PDF, DOCX, EPUB, CBZ, TXT.
+19. `test_pdf_initial_pages_preservation.py`: Ακέραιη διατήρηση αρχικών σελίδων (TOC, πρόλογος).
+20. `test_poetry_pauses.py`: Ποιητική απαγγελία, εκθλίψεις, αποκοπές, άνω τελεία, διασκελισμός.
+21. `test_standalone_ai_polish.py`: Αυτόνομο AI Polish χωρίς προηγούμενη μετάφραση.
+22. `test_translator.py`: Μηχανή μετάφρασης GTX POST, επικύρωση ελληνικών, backoff.
+23. `test_tts_audiobook_deep.py`: Κατάλογος φωνών, prosody, συνένωση chunks, ακύρωση in-flight.
+24. `test_typography_and_genre.py`: Ελληνική τυπογραφία, κανόνας τελικού «ν», αυτόματη ανίχνευση είδους.
+
+Όλοι οι έλεγχοι ολοκληρώνονται με **`24/24 PASS (100% επιτυχία)`**.
 
 ---
 

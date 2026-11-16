@@ -69,9 +69,20 @@ async def _translate_with_retry(
     deep_trans: Optional[GoogleTranslator] = None,
     retries: int = 4,
 ) -> str:
-    """Translates text with GTX POST, exponential backoff, validation, and deep_translator fallback."""
+    """Translates text with cache lookup, GTX POST, exponential backoff, validation, and deep_translator fallback."""
     if not text.strip():
         return text
+
+    # Check SQLite semantic translation cache first
+    cache_key = None
+    try:
+        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        cache_key = compute_cache_key(text, source_lang, target_lang, engine="google")
+        cached_res = db_get_cached_translation(cache_key)
+        if cached_res is not None:
+            return cached_res
+    except Exception as ex:
+        logger.debug(f"Cache check skipped: {ex}")
 
     loop = asyncio.get_event_loop()
 
@@ -85,6 +96,13 @@ async def _translate_with_retry(
                     logger.warning(f"GTX returned untranslated text on attempt {attempt+1}/{retries}, retrying...")
                     await asyncio.sleep(1.0 * (attempt + 1))
                     continue
+                # Save to cache
+                if cache_key:
+                    try:
+                        from backend.database import db_set_cached_translation
+                        db_set_cached_translation(cache_key, text, result, source_lang, target_lang, engine="google")
+                    except Exception:
+                        pass
                 return result
         except Exception as e:
             logger.warning(f"GTX translation attempt {attempt+1}/{retries} error: {e}")
@@ -105,6 +123,12 @@ async def _translate_with_retry(
             logger.info("Attempting fallback via deep_translator...")
             result = await loop.run_in_executor(None, deep_trans.translate, text)
             if result and result.strip():
+                if cache_key:
+                    try:
+                        from backend.database import db_set_cached_translation
+                        db_set_cached_translation(cache_key, text, result, source_lang, target_lang, engine="google")
+                    except Exception:
+                        pass
                 return result
         except Exception as e:
             logger.error(f"Fallback translation error: {e}")
@@ -215,6 +239,9 @@ async def translate_document(
     output_text = "\n".join(output_lines)
     from backend.glossary import apply_glossary
     output_text = apply_glossary(output_text, target_lang)
+    if target_lang.lower() in ("greek", "el"):
+        from backend.typography import format_greek_typography
+        output_text = format_greek_typography(output_text)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

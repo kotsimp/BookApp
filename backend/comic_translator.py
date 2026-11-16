@@ -78,15 +78,18 @@ def _sample_balloon_bg_color(page: fitz.Page, rect: fitz.Rect) -> Tuple[float, f
     return (1.0, 1.0, 1.0)
 
 
-def _cluster_text_into_balloons(text_blocks: List[Any]) -> List[Dict[str, Any]]:
+def _cluster_text_into_balloons(text_blocks: List[Any], reading_direction: str = "ltr") -> List[Dict[str, Any]]:
     """
     Groups contiguous lines of text into individual speech balloons.
-    Lines with small vertical distance and horizontal overlap belong to the same bubble.
+    Supports standard LTR (left-to-right) or Manga RTL (right-to-left) ordering.
     """
     clusters: List[Dict[str, Any]] = []
 
-    # Sort blocks top-to-bottom, left-to-right
-    sorted_blocks = sorted(text_blocks, key=lambda b: (b[1], b[0]))
+    # Sort blocks: LTR -> top-to-bottom, left-to-right; RTL (Manga) -> top-to-bottom, right-to-left
+    if reading_direction.lower() == "rtl":
+        sorted_blocks = sorted(text_blocks, key=lambda b: (b[1], -b[2]))
+    else:
+        sorted_blocks = sorted(text_blocks, key=lambda b: (b[1], b[0]))
 
     for b in sorted_blocks:
         rect = fitz.Rect(b[:4])
@@ -265,9 +268,9 @@ async def _translate_page_vector(
         # Allow slight padding inside balloon
         target_box = fitz.Rect(bbox.x0 - 3, bbox.y0 - 2, bbox.x1 + 3, bbox.y1 + 2)
 
-        # Find optimal font size (from 15pt down to 7pt) that fits the balloon
+        # Dynamic smart font size fitting (from 16pt down to 5.5pt in fine increments)
         fitted = False
-        for fs in range(15, 6, -1):
+        for fs in [16, 15, 14, 13, 12, 11, 10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5]:
             rc = page.insert_textbox(
                 target_box,
                 greek_text,
@@ -281,13 +284,13 @@ async def _translate_page_vector(
                 break
 
         if not fitted:
-            # Fallback to 7pt if very long text
+            # Fallback to 5.5pt if text is unusually dense or lengthy
             page.insert_textbox(
                 target_box,
                 greek_text,
                 fontname="comic",
                 fontfile=font_path,
-                fontsize=7,
+                fontsize=5.5,
                 align=fitz.TEXT_ALIGN_CENTER,
             )
 
@@ -422,6 +425,7 @@ async def translate_comic_document(
     target_lang: str,
     output_path: str,
     api_key: Optional[str] = None,
+    reading_direction: str = "ltr",
     progress_callback: Optional[Callable] = None,
 ) -> str:
     """
@@ -504,8 +508,8 @@ async def translate_comic_document(
         page_dialogues = []
         if text_blocks:
             # Digital comic with vector text blocks: cluster into balloons
-            clusters = _cluster_text_into_balloons(text_blocks)
-            logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons.")
+            clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
+            logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
             page_dialogues = await _translate_page_vector(
                 page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
             )

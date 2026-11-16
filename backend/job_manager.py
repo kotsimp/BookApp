@@ -86,12 +86,62 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
         updated_at=now,
     )
     _jobs[job_id] = job
+    try:
+        from backend.database import db_save_job
+        db_save_job({
+            "job_id": job.job_id,
+            "file_path": job.file_path,
+            "file_name": job.file_name,
+            "file_type": job.file_type,
+            "status": job.status,
+            "mode": job.mode,
+            "progress": job.progress,
+            "current_step": job.current_step,
+            "total_chunks": job.total_chunks,
+            "done_chunks": job.done_chunks,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "output_path": job.output_path,
+            "output_format": job.output_format,
+            "layout_mode": job.layout_mode,
+            "error": job.error,
+        })
+    except Exception:
+        pass
     return job
 
 
 def get_job(job_id: str) -> Optional[Job]:
     if job_id in _jobs:
         return _jobs[job_id]
+
+    # Check SQLite database first
+    try:
+        from backend.database import db_get_job
+        row = db_get_job(job_id)
+        if row:
+            job = Job(
+                job_id=row["job_id"],
+                file_path=row["file_path"] or "",
+                file_name=row["file_name"] or "",
+                file_type=row["file_type"] or "",
+                status=row["status"] or "idle",
+                mode=row["mode"] or "",
+                progress=row["progress"] or 0,
+                current_step=row["current_step"] or "",
+                total_chunks=row["total_chunks"] or 0,
+                done_chunks=row["done_chunks"] or 0,
+                created_at=row["created_at"] or time.time(),
+                updated_at=row["updated_at"] or time.time(),
+                output_path=row["output_path"],
+                output_format=row["output_format"],
+                layout_mode=row["layout_mode"] or "standard",
+                error=row["error"],
+            )
+            _jobs[job_id] = job
+            return job
+    except Exception:
+        pass
 
     # Reconstruct from disk if server restarted
     try:
@@ -177,6 +227,29 @@ def update_job(job_id: str, **kwargs):
         for k, v in kwargs.items():
             setattr(job, k, v)
         job.updated_at = time.time()
+        # Persist to SQLite
+        try:
+            from backend.database import db_save_job
+            db_save_job({
+                "job_id": job.job_id,
+                "file_path": job.file_path,
+                "file_name": job.file_name,
+                "file_type": job.file_type,
+                "status": job.status,
+                "mode": job.mode,
+                "progress": job.progress,
+                "current_step": job.current_step,
+                "total_chunks": job.total_chunks,
+                "done_chunks": job.done_chunks,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+                "output_path": job.output_path,
+                "output_format": job.output_format,
+                "layout_mode": job.layout_mode,
+                "error": job.error,
+            })
+        except Exception:
+            pass
         # Notify SSE subscribers
         _notify_subscribers(job)
 
@@ -205,6 +278,34 @@ def _notify_subscribers(job: Job):
 
 
 def list_jobs() -> list[Job]:
+    # Check SQLite database first
+    try:
+        from backend.database import db_list_jobs
+        db_rows = db_list_jobs(limit=100)
+        for r in db_rows:
+            jid = r["job_id"]
+            if jid not in _jobs:
+                _jobs[jid] = Job(
+                    job_id=r["job_id"],
+                    file_path=r["file_path"] or "",
+                    file_name=r["file_name"] or "",
+                    file_type=r["file_type"] or "",
+                    status=r["status"] or "idle",
+                    mode=r["mode"] or "",
+                    progress=r["progress"] or 0,
+                    current_step=r["current_step"] or "",
+                    total_chunks=r["total_chunks"] or 0,
+                    done_chunks=r["done_chunks"] or 0,
+                    created_at=r["created_at"] or time.time(),
+                    updated_at=r["updated_at"] or time.time(),
+                    output_path=r["output_path"],
+                    output_format=r["output_format"],
+                    layout_mode=r["layout_mode"] or "standard",
+                    error=r["error"],
+                )
+    except Exception:
+        pass
+
     # Check disk for any jobs from previous runs
     try:
         from pathlib import Path
@@ -222,7 +323,7 @@ def list_jobs() -> list[Job]:
 
 
 def cleanup_old_jobs(max_age_seconds: int = 86400):
-    """Remove in-memory jobs and temp upload/output directories older than max_age_seconds (default 24h)."""
+    """Remove in-memory jobs, old DB records, and temp upload/output directories older than max_age_seconds (default 24h)."""
     import shutil
     from pathlib import Path
 
@@ -230,6 +331,18 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
     to_delete = [jid for jid, j in _jobs.items() if now - j.created_at > max_age_seconds]
     for jid in to_delete:
         del _jobs[jid]
+
+    try:
+        from backend.database import db_cleanup_old_jobs
+        db_cleanup_old_jobs(max_age_seconds)
+    except Exception:
+        pass
+
+    try:
+        from backend.storage_cleaner import clean_temp_storage
+        clean_temp_storage(max_age_hours=max(1, max_age_seconds // 3600))
+    except Exception:
+        pass
 
     base_temp = Path(__file__).resolve().parent.parent / "temp"
     for sub in ("uploads", "outputs"):

@@ -74,8 +74,9 @@ class TranslateRequest(BaseModel):
     job_id: str
     source_lang: str   # 'english' or 'greek'
     target_lang: str   # 'english' or 'greek'
-    output_format: str = "txt"  # txt, docx, pdf, epub
-    layout_mode: str = "standard"  # 'standard' or 'literature'
+    output_format: str = "txt"  # txt, docx, pdf, epub, cbz, cbr
+    layout_mode: str = "standard"  # 'standard', 'literature', or 'comic'
+    reading_direction: str = "ltr"  # 'ltr' or 'rtl' (Manga)
     ai_polish: bool = False
     api_key: Optional[str] = None
 
@@ -84,12 +85,18 @@ class AudiobookRequest(BaseModel):
     job_id: str
     language: str      # 'english' or 'greek' — language of the audio output
     voice_name: str    # e.g. 'Athina (Female)'
+    dialogue_voice: Optional[str] = None  # optional second voice for character speech / dialogues
     use_translated: bool = False  # if True, use the translated text from a prior translation job
     narration_style: str = "literature"  # 'literature' (natural book flow) or 'standard'
     rate: Optional[str] = None           # optional explicit speed e.g. '-18%', '-10%', '+0%'
     pitch: Optional[str] = None          # optional explicit pitch e.g. '-2Hz', '-1Hz', '+0Hz'
     ai_polish: bool = False              # if True, polish script with Gemini before TTS
     api_key: Optional[str] = None        # optional Gemini API key override
+
+
+class GenreDetectionRequest(BaseModel):
+    sample_text: str
+    file_type: Optional[str] = ""
 
 
 class UpdateTextRequest(BaseModel):
@@ -253,12 +260,14 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
 
     output_format = getattr(req, "output_format", "txt") or "txt"
     layout_mode = getattr(req, "layout_mode", "standard") or "standard"
+    reading_direction = getattr(req, "reading_direction", "ltr") or "ltr"
     update_job(
         req.job_id,
         mode="translate",
         status="running",
         output_format=output_format,
         layout_mode=layout_mode,
+        reading_direction=reading_direction,
         ai_polish=req.ai_polish,
         api_key=req.api_key,
     )
@@ -299,6 +308,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             from backend.comic_translator import translate_comic_document
             from backend.settings_manager import get_setting
             resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+            reading_dir = getattr(job, "reading_direction", "ltr") or "ltr"
             final_comic_pdf = await translate_comic_document(
                 job_id=job_id,
                 file_path=file_path,
@@ -307,6 +317,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 target_lang=target_lang,
                 output_path=output_path,
                 api_key=resolved_key if (ai_polish or resolved_key) else None,
+                reading_direction=reading_dir,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
             if fmt == "cbz":
@@ -329,7 +340,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 epub_path = out_dir / f"{base_name}.epub"
                 if not epub_path.exists():
                     from backend.exporter import export_comic_epub
-                    export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel")
+                    export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel", reading_direction=reading_dir)
                 final_path = epub_path
                 job.output_path = str(epub_path)
                 job.output_format = "epub"
@@ -443,7 +454,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         if not resolved_key:
             raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Please save your key in AI Polish first.")
 
-    update_job(req.job_id, mode="audiobook", status="running")
+    update_job(req.job_id, mode="audiobook", status="running", dialogue_voice=req.dialogue_voice)
 
     background_tasks.add_task(
         _run_audiobook,
@@ -457,6 +468,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         req.narration_style,
         req.rate,
         req.pitch,
+        req.dialogue_voice,
         req.ai_polish,
         req.api_key,
     )
@@ -466,7 +478,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
 
 async def _run_audiobook(
     job_id, file_path, file_type, language, voice_name, output_path, translated_path,
-    narration_style="literature", rate=None, pitch=None, ai_polish=False, api_key=None
+    narration_style="literature", rate=None, pitch=None, dialogue_voice=None, ai_polish=False, api_key=None
 ):
     task = asyncio.current_task()
     if task:
@@ -485,6 +497,7 @@ async def _run_audiobook(
             narration_style=narration_style,
             rate=rate,
             pitch=pitch,
+            dialogue_voice=dialogue_voice,
             ai_polish=ai_polish,
             api_key=api_key,
         )
@@ -1189,6 +1202,42 @@ async def remove_glossary_term(term: str):
     from backend.glossary import delete_term
     updated = delete_term(term)
     return {"status": "deleted", "glossary": updated}
+
+
+# ---------------------------------------------------------------------------
+# Genre Detection, Voice Previews & Cache / Storage Ops
+# ---------------------------------------------------------------------------
+
+@app.post("/api/detect-genre")
+async def detect_genre(req: GenreDetectionRequest):
+    """Auto-detects document genre, tone, recommended polish style and glossary category."""
+    from backend.genre_detector import detect_genre_and_style
+    return detect_genre_and_style(req.sample_text, req.file_type or "")
+
+
+@app.get("/api/tts/preview")
+async def tts_preview(voice: str = "el-GR-NestorasNeural", text: Optional[str] = None):
+    """Generates an instant 2-3s audio audition sample for a voice."""
+    from backend.tts_engine import synthesize_voice_preview
+    try:
+        path = await synthesize_voice_preview(voice, text)
+        return FileResponse(path, media_type="audio/mpeg", filename=f"preview_{voice}.mp3")
+    except Exception as e:
+        raise HTTPException(500, f"Voice preview failed: {e}")
+
+
+@app.get("/api/cache/stats")
+async def cache_stats():
+    """Returns database translation cache stats."""
+    from backend.database import db_get_cache_stats
+    return db_get_cache_stats()
+
+
+@app.post("/api/admin/cleanup")
+async def admin_storage_cleanup(max_age_hours: int = 48):
+    """Triggers storage cleanup for temporary audio chunks and obsolete extractions."""
+    from backend.storage_cleaner import clean_temp_storage
+    return clean_temp_storage(max_age_hours=max_age_hours)
 
 
 # ---------------------------------------------------------------------------

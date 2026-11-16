@@ -770,9 +770,11 @@ def export_comic_epub(
     out_path: Union[str, Path],
     title: str = "Graphic Novel",
     dpi: int = 150,
+    reading_direction: str = "ltr",
 ) -> Path:
     """
     Creates a pre-paginated fixed-layout EPUB containing rendered full-bleed comic pages.
+    Supports standard LTR or Japanese Manga RTL page progression.
     """
     import pymupdf
     from ebooklib import epub
@@ -790,6 +792,12 @@ def export_comic_epub(
     book.set_title(title)
     book.set_language("el")
     book.add_author("BookApp Comic Engine")
+    if reading_direction.lower() == "rtl":
+        book.set_direction("rtl")
+        try:
+            book.add_metadata(None, "meta", "rtl", {"property": "page-progression-direction"})
+        except Exception:
+            pass
 
     spine = ["nav"]
     chapters = []

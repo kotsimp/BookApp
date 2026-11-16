@@ -52,11 +52,11 @@ function handleFileSelect(e, prefix) {
 }
 
 async function processFile(file, prefix) {
-  const allowed = ['.pdf', '.docx', '.epub'];
+  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
   const ext = '.' + file.name.split('.').pop().toLowerCase();
 
   if (!allowed.includes(ext)) {
-    toast(`❌ File type "${ext}" is not supported. Please use PDF, DOCX, or EPUB.`, 'error');
+    toast(`❌ File type "${ext}" is not supported. Please use PDF, DOCX, EPUB, or CBZ.`, 'error');
     return;
   }
 
@@ -151,12 +151,70 @@ async function uploadFile(prefix, file) {
         const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
         updateFormatAvailability(layout, ext);
         checkCoverImage(data.job_id);
+
+        // Auto-Genre Detection
+        detectDocumentGenre(data.job_id, data.file_type);
       }
     }
   } catch (err) {
     toast(`❌ Upload error: ${err.message}`, 'error');
     removeFile(prefix);
   }
+}
+
+async function detectDocumentGenre(jobId, fileType) {
+  try {
+    const prevRes = await fetch(`${API}/preview/${jobId}`);
+    if (!prevRes.ok) return;
+    const prevData = await prevRes.json();
+    const sample = prevData.preview_text || '';
+    if (!sample.trim()) return;
+
+    const res = await fetch(`${API}/detect-genre`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sample_text: sample.substring(0, 3500), file_type: fileType }),
+    });
+    if (res.ok) {
+      const gInfo = await res.json();
+      showGenreHint(gInfo);
+    }
+  } catch (e) {
+    console.debug('Genre detection skipped:', e);
+  }
+}
+
+function showGenreHint(gInfo) {
+  const hintEl = document.getElementById('tr-genre-hint');
+  if (!hintEl) return;
+  const genreTitles = {
+    literature: '📖 Λογοτεχνικό (Literature)',
+    poetry: '🪶 Ποίηση / Στίχοι (Poetry)',
+    technical: '💻 Τεχνικό / Πληροφορική (Technical)',
+    formal: '🏛️ Επίσημο / Διοικητικό (Formal)',
+    comic: '🎨 Graphic Novel / Comic',
+  };
+  const title = genreTitles[gInfo.genre] || gInfo.genre;
+  const confPct = Math.round((gInfo.confidence || 0.8) * 100);
+  hintEl.innerHTML = `
+    <span>💡 <strong>Ανιχνεύθηκε ύφος:</strong> ${title} (${confPct}% βεβαιότητα). ${gInfo.reason || ''}</span>
+    <button class="btn-sm btn-outline" style="margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap" onclick="applyDetectedGenre('${gInfo.genre}')">Εφαρμογή Προτεινόμενου</button>
+  `;
+  hintEl.style.display = 'flex';
+}
+
+function applyDetectedGenre(genre) {
+  if (genre === 'comic') {
+    const b = document.getElementById('layout-comic');
+    if (b) selectLayout('comic', b);
+  } else if (genre === 'literature' || genre === 'poetry') {
+    const b = document.getElementById('layout-literature');
+    if (b) selectLayout('literature', b);
+  } else {
+    const b = document.getElementById('layout-standard');
+    if (b) selectLayout('standard', b);
+  }
+  toast(`✅ Εφαρμόστηκε στυλ: ${genre}`, 'success');
 }
 
 // ── Language Swap (Translate Tab) ──────────────────────────
@@ -308,6 +366,11 @@ function selectLayout(layout, btn) {
     }
   }
 
+  const readingDirGroup = document.getElementById('tr-reading-dir-group');
+  if (readingDirGroup) {
+    readingDirGroup.style.display = (layout === 'comic' || currentExt === 'cbz' || currentExt === 'cbr') ? 'block' : 'none';
+  }
+
   const fmt = document.getElementById('tr-output-format')?.value || 'txt';
   const dlBtn = document.getElementById('tr-download-btn');
   if (dlBtn && state.tr.jobId) {
@@ -449,15 +512,48 @@ function updateVoices() {
       <div class="voice-card-icon">${voiceIcons[name] || '🎙️'}</div>
       <div class="voice-card-name">${name.replace(' (Female)', ' ♀').replace(' (Male)', ' ♂')}</div>
       <div class="voice-card-lang">${code}</div>
+      <button class="voice-preview-btn" onclick="playVoicePreview('${code}', event)" title="Ακρόαση δείγματος">🔊 Ακρόαση</button>
     `;
     card.onclick = () => selectVoice(name, card);
     grid.appendChild(card);
   });
 
+  // Populate dialogue voice select for multi-voice mode
+  const diagSelect = document.getElementById('ab-dialogue-voice-select');
+  if (diagSelect) {
+    diagSelect.innerHTML = entries.map(([name, code]) => `<option value="${name}">${name}</option>`).join('');
+    if (entries.length > 1) {
+      diagSelect.selectedIndex = 1; // Default dialogue to second voice
+    }
+  }
+
   // Auto-select first voice
   if (entries.length > 0) {
     state.selectedVoice = entries[0][0];
     document.getElementById('ab-voice-selected').value = entries[0][0];
+  }
+}
+
+let currentAudioPreview = null;
+function playVoicePreview(voiceCode, event) {
+  if (event) event.stopPropagation();
+  if (currentAudioPreview) {
+    currentAudioPreview.pause();
+    currentAudioPreview = null;
+  }
+  const url = `${API}/tts/preview?voice=${encodeURIComponent(voiceCode)}`;
+  currentAudioPreview = new Audio(url);
+  toast(`🔊 Παραγωγή δείγματος για ${voiceCode}...`, 'info');
+  currentAudioPreview.play().catch(e => {
+    console.debug('Preview audio playback failed:', e);
+  });
+}
+
+function toggleMultiVoiceSelect() {
+  const chk = document.getElementById('ab-multi-voice');
+  const container = document.getElementById('ab-dialogue-voice-container');
+  if (container) {
+    container.style.display = chk && chk.checked ? 'block' : 'none';
   }
 }
 
@@ -483,6 +579,8 @@ async function startTranslation() {
   }
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
+  const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
+  const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
 
   // Update download button label to show chosen format
   const labelEl = document.getElementById('tr-format-label');
@@ -512,6 +610,7 @@ async function startTranslation() {
         target_lang: targetLang,
         output_format: outputFormat,
         layout_mode: layoutMode,
+        reading_direction: readingDirection,
         ai_polish: aiPolish,
         api_key: aiPolish ? apiKey : null,
       }),
@@ -608,6 +707,9 @@ async function startAudiobook() {
   setStatusBadge('ab', 'running');
 
   try {
+    const isMultiVoice = document.getElementById('ab-multi-voice')?.checked || false;
+    const dialogueVoice = isMultiVoice ? (document.getElementById('ab-dialogue-voice-select')?.value || null) : null;
+
     const res = await fetch(`${API}/audiobook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -615,6 +717,7 @@ async function startAudiobook() {
         job_id: jobId,
         language,
         voice_name: voiceName,
+        dialogue_voice: dialogueVoice,
         use_translated: useTranslated,
         narration_style: narrationStyle,
         rate: narrationRate,
@@ -1651,8 +1754,71 @@ async function deleteGlossaryRule(term) {
   }
 }
 
+// ── Theme Management (Dark / Light Mode) ──────────────────
+function initTheme() {
+  const saved = localStorage.getItem('bookapp_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  updateThemeButton(saved);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('bookapp_theme', next);
+  updateThemeButton(next);
+}
+
+function updateThemeButton(theme) {
+  const icon = document.getElementById('theme-icon');
+  const label = document.getElementById('theme-label');
+  if (icon && label) {
+    if (theme === 'light') {
+      icon.textContent = '☀️';
+      label.textContent = 'Light';
+    } else {
+      icon.textContent = '🌓';
+      label.textContent = 'Dark';
+    }
+  }
+}
+
+// ── Synchronized Scrolling for Split-Screen Editor ────────
+let isSyncingOrig = false;
+let isSyncingTrans = false;
+
+function setupSyncScroll() {
+  const orig = document.getElementById('editor-original-text');
+  const trans = document.getElementById('editor-translated-text');
+  if (!orig || !trans) return;
+
+  orig.addEventListener('scroll', () => {
+    if (isSyncingOrig) { isSyncingOrig = false; return; }
+    isSyncingTrans = true;
+    const maxOrig = orig.scrollHeight - orig.clientHeight;
+    if (maxOrig > 0) {
+      const pct = orig.scrollTop / maxOrig;
+      trans.scrollTop = pct * (trans.scrollHeight - trans.clientHeight);
+    }
+  });
+
+  trans.addEventListener('scroll', () => {
+    if (isSyncingTrans) { isSyncingTrans = false; return; }
+    isSyncingOrig = true;
+    const maxTrans = trans.scrollHeight - trans.clientHeight;
+    if (maxTrans > 0) {
+      const pct = trans.scrollTop / maxTrans;
+      orig.scrollTop = pct * (orig.scrollHeight - orig.clientHeight);
+    }
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────
 async function init() {
+  // Initialize Theme and Editor Sync Scroll
+  initTheme();
+  setupSyncScroll();
+
   // Check backend is reachable
   try {
     await fetch(`${API}/health`);
