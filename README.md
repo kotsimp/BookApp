@@ -26,7 +26,8 @@ A modern, high-performance local web application to **translate documents** betw
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
-| **Optimized AI Polish & Proofreading** | Google Gemini AI integration with 5 tailored styles (including dedicated `literature` for fiction & sci-fi), smart multi-page batching (~5 pages / 10k chars per call) cutting API calls by 80% to fit within the 15 RPM free tier, dynamic 12s–48s backoff, and persistent settings (`config/settings.json`). |
+| **Optimized AI Polish & Proofreading** | Google Gemini AI integration with 5 tailored styles (including dedicated `literature` for fiction & sci-fi and `audiobook` spoken narration script editor). Features **Bilingual Source-Anchoring** (page-level comparison between Greek draft and original English to fix mistranslations and false friends), **Entity & Character Consistency Dossier** (uniform character and term transliteration across chapters), **Rolling Narrative Context**, **Smart Real-Time Disk Checkpoints** (`.polish_checkpoint.json`), smart multi-page batching cutting API calls by 80%, dynamic backoff, and persistent settings (`config/settings.json`). |
+| **Audiobook Script Polish & Spoken Phonetics** | Dedicated spoken script refinement for Edge-TTS neural voices: phonetically transliterates foreign names/acronyms into Greek script (`Keeton` -> `Κίτον`, `Rorschach` -> `Ρόρσαχ`, `DNA` -> `Ντι-Εν-Έι`), fully expands numbers, years, percentages, and abbreviations into spoken words (`2006` -> `δύο χιλιάδες έξι`, `50%` -> `πενήντα τοις εκατό`), completely strips non-spoken artifacts (page markers, footnotes, URLs), and optimizes sentence breathing and pauses. |
 | **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
 | **Custom Glossary & Terminology** | Custom terminology mapping engine with regex word boundaries to enforce exact translations for domain terms. |
 | **Instant On-Demand Export** | Switch output format (**PDF**, **DOCX**, **EPUB**, **TXT**) post-translation with immediate download (< 1s) without re-translating. |
@@ -110,6 +111,8 @@ BookApp/
 │   ├── test_dynamic_download.py      # On-demand format conversion tests
 │   ├── test_editor_glossary_ai.py    # Editor, Glossary & AI Polish tests
 │   ├── test_standalone_ai_polish.py  # Standalone AI Polish & Settings API tests
+│   ├── test_pdf_initial_pages_preservation.py # Multi-page front matter preservation tests
+│   ├── test_ai_polish_advanced.py    # Bilingual anchoring, audiobook phonetics & checkpoint tests
 │   └── test_api.py                   # End-to-end integration tests
 ├── temp/                    # Uploads and outputs directory (auto-created)
 │   ├── uploads/

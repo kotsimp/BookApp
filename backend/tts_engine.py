@@ -116,6 +116,7 @@ async def generate_audiobook(
             raw_text,
             api_key=resolved_key,
             style="audiobook",
+            job_id=job_id,
             progress_callback=_polish_prog,
         )
 

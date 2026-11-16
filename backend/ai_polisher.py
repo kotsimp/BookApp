@@ -1,27 +1,33 @@
 """
 ai_polisher.py - AI-Powered Translation Proofreading & Refinement using Gemini API.
 Polishes machine-translated Greek text into natural, grammatically flawless,
-and stylistically appropriate language (formal administrative, technical, or natural).
+and stylistically appropriate language (formal administrative, technical, natural, literature, audiobook).
+Features bilingual source-anchoring, character/entity consistency dossier,
+rolling narrative context, and smart disk checkpointing.
 """
 
 import os
 import re
+import json
 import logging
 import asyncio
-import aiohttp
+from pathlib import Path
 from typing import Optional, Callable, Any
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 STYLE_PROMPTS = {
     "literature": (
-        "Είσαι βραβευμένος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη λογοτεχνία και την επιστημονική φαντασία (sci-fi / fiction). "
+        "Είσαι κορυφαίος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη λογοτεχνία και την επιστημονική φαντασία (sci-fi / speculative fiction). "
         "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα και ατμοσφαιρικό βάθος: "
         "1. Εξάλειψε τις μηχανικές/κατά λέξη μεταφράσεις, τις αγγλικούρες και τις συντακτικές αδεξιότητες (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις'). "
         "2. Χρησιμοποίησε πλούσιο, εκφραστικό ελληνικό λεξιλόγιο, διατηρώντας το ύφος, την ένταση και τον λογοτεχνικό ρυθμό του συγγραφέα. "
         "3. Διόρθωσε γραμματικά, συντακτικά και πτωτικά λάθη, αποδίδοντας τους διαλόγους με ζωντάνια και φυσικότητα. "
-        "4. Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
-        "5. Μην προσθέτεις εισαγωγικά σχόλια, επεξηγήσεις ή σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
+        "4. Εάν παρέχεται το πρωτότυπο κείμενο αναφοράς, συμβουλέψου το για να επιλύσεις τυχόν μεταφραστικές παρανοήσεις ή αμφισημίες του προσχεδίου. "
+        "5. Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
+        "6. Μην προσθέτεις εισαγωγικά σχόλια, επεξηγήσεις ή σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
     ),
     "natural": (
         "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
@@ -47,12 +53,22 @@ STYLE_PROMPTS = {
         "4. Επίστρεψε ΜΟΝΟ το διορθωμένο τεχνικό κείμενο χωρίς κανένα άλλο σχόλιο."
     ),
     "audiobook": (
-        "You are an expert audiobook script editor. Prepare the following text (keep its original language — Greek stays Greek, English stays English; do NOT translate) "
-        "so that a neural text-to-speech voice reads it with natural human storytelling flow: "
-        "1. Expand abbreviations into full spoken words (e.g., π.χ. -> για παράδειγμα, κ.λπ. -> και λοιπά, αρ. πρωτ. -> αριθμός πρωτοκόλλου, e.g. -> for example, etc. -> et cetera). "
-        "2. Remove non-spoken artifacts such as footnote numbers [1], page markers (=== PAGE X ===), raw URLs, and broken line-wrap hyphens. "
-        "3. Smooth awkward parentheses, slashes, and dense clauses using natural commas and periods so the narrator breathes and pauses naturally. "
-        "4. Preserve all paragraph and verse breaks and keep the exact meaning. Return ONLY the polished spoken script with no commentary."
+        "Είσαι έμπειρος επιμελητής σεναρίων και κειμένων για ηχογράφηση Audiobooks (Spoken Word & Neural TTS Script Editor). "
+        "Προσάρμοσε το κείμενο ώστε μια νευρωνική φωνή εκφώνησης (όπως Nestoras/Athina στο Edge-TTS) να το απαγγείλει με άψογη, ανθρώπινη ροή, φυσικές ανάσες και σωστή προφορά: "
+        "1. ΦΩΝΗΤΙΚΗ ΑΠΟΔΟΣΗ ΞΕΝΩΝ ΟΝΟΜΑΤΩΝ & ΟΡΩΝ: "
+        "   - Μετέγραψε όλα τα ξένα κύρια ονόματα, πρόσωπα, τοπωνύμια, σκάφη και έννοιες σε ελληνικούς χαρακτήρες με βάση τη φυσική φωνητική προφορά τους (π.χ. Keeton -> Κίτον, Rorschach -> Ρόρσαχ, Sarasti -> Σαράστι, Cunningham -> Κάνινγχαμ, Theseus -> Θησέας, Siri -> Σίρι). "
+        "   - Μετέγραψε λατινικά ακρωνύμια όπως προφέρονται στα ελληνικά (π.χ. DNA -> Ντι-Εν-Έι, AI -> Έι-Άι, NASA -> ΝΑΣΑ, GPS -> Τζι-Πι-Ες, PC -> Πι-Σι). "
+        "2. ΠΛΗΡΗΣ ΟΛΟΓΡΑΦΗ ΑΝΑΠΤΥΞΗ ΑΡΙΘΜΩΝ ΚΑΙ ΣΥΝΤΟΜΟΓΡΑΦΙΩΝ: "
+        "   - Ανέπτυξε όλους τους αριθμούς, έτη, ημερομηνίες, ποσοστά, μονάδες μέτρησης και νομίσματα σε πλήρεις λέξεις ανάλογα με τη γραμματική πτώση (π.χ. 'το 2006' -> 'το δύο χιλιάδες έξι', '50%' -> 'πενήντα τοις εκατό', '$100' -> 'εκατό δολάρια', '10 χλμ.' -> 'δέκα χιλιόμετρα'). "
+        "   - Ανέπτυξε συντομογραφίες σε πλήρεις προφορικές φράσεις (π.χ. 'π.χ.' -> 'για παράδειγμα', 'δηλ.' -> 'δηλαδή', 'κ.λπ.' -> 'και λοιπά', 'αρ.' -> 'αριθμός', 'σελ.' -> 'σελίδα'). "
+        "3. ΑΦΑΙΡΕΣΗ ΜΗ ΕΚΦΩΝΗΣΙΜΩΝ ΣΤΟΙΧΕΙΩΝ: "
+        "   - Αφαίρεσε πλήρως δείκτες υποσημειώσεων (π.χ. [1], [14]), δείκτες σελίδων (=== PAGE X ===), συνδέσμους URLs, επικεφαλίδες σελίδων και περιττά τυπογραφικά σύμβολα. "
+        "   - Αφαίρεσε τα ενωτικά σπασίματος λέξεων στο τέλος γραμμής. "
+        "4. ΡΥΘΜΟΣ, ΑΝΑΣΕΣ ΚΑΙ ΣΤΙΞΗ ΑΠΑΓΓΕΛΙΑΣ: "
+        "   - Αντικατάστησε αμήχανες παρενθέσεις, πλαγιοκαθέτους (/) και περίπλοκες δευτερεύουσες προτάσεις με κόμματα ή τελείες ώστε ο αφηγητής να παίρνει φυσικές ανάσες. "
+        "   - Διατήρησε τις αλλαγές παραγράφων για να δημιουργούνται αυτόματα φυσικές παύσεις. "
+        "   - Εάν το κείμενο εισόδου είναι στα Αγγλικά, εφάρμοσε τους αντίστοιχους αγγλικούς κανόνες ολογραφίας και ροής χωρίς να μεταφράσεις. Εάν είναι στα Ελληνικά, διατήρησε τα Ελληνικά. "
+        "5. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το έτοιμο κείμενο εκφώνησης, χωρίς κανένα εισαγωγικό ή επεξηγηματικό σχόλιο."
     ),
 }
 
@@ -66,6 +82,7 @@ def reset_model_cache():
     global _CACHED_WORKING_MODEL, _CACHED_AVAILABLE_MODELS
     _CACHED_WORKING_MODEL = None
     _CACHED_AVAILABLE_MODELS = None
+
 
 EXCLUDE_PATTERNS = [
     "-tts", "-image", "-audio", "-transcribe", "clip", "banana",
@@ -95,6 +112,56 @@ PREFERRED_FLASH_MODELS = [
 ]
 
 
+def _parse_pages_dict(text: str) -> dict[int, str]:
+    """Parses text containing '=== PAGE X ===' into a {page_num: text} mapping."""
+    page_dict: dict[int, str] = {}
+    if not text:
+        return page_dict
+    parts = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
+    curr_page = 0
+    for part in parts:
+        p_strip = part.strip()
+        if not p_strip:
+            continue
+        m = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", p_strip)
+        if m:
+            curr_page = int(m.group(1))
+        elif curr_page > 0:
+            page_dict[curr_page] = p_strip
+    return page_dict
+
+
+async def _extract_entity_dossier(
+    sample_text: str,
+    api_key: str,
+    session: Optional[aiohttp.ClientSession] = None,
+) -> str:
+    """
+    Extracts a concise glossary of recurring characters, places, and sci-fi/technical terms
+    to ensure uniform transliteration across all batches of a book or long document.
+    """
+    if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
+        return "- Keeton -> Κίτον\n- Theseus -> Θησέας\n- Rorschach -> Ρόρσαχ"
+
+    prompt = (
+        "Είσαι έμπειρος επιμελητής εκδόσεων και λογοτεχνικός μεταφραστής. Αναλύοντας το παρακάτω δείγμα κειμένου, "
+        "εντόπισε τα κυριότερα επαναλαμβανόμενα κύρια ονόματα (χαρακτήρες, διαστημόπλοια, εξωγήινες οντότητες, "
+        "τοπωνύμια) και εξειδικευμένους όρους. Δημιούργησε ένα συνοπτικό Μητρώο Ονομάτων & Ορολογίας (Entity Dossier) "
+        "με την ορθή, ενιαία απόδοσή τους στα Ελληνικά (φωνητική μεταγραφή ή απόδοση). "
+        "Μορφή κάθε γραμμής: '- Original Name -> Ελληνική Απόδοση'. "
+        "Περιόρισε το μητρώο στους 20-30 πιο κρίσιμους όρους. Μην προσθέτεις εισαγωγικά σχόλια."
+    )
+    try:
+        sample = sample_text[:18000]
+        dossier = await _call_gemini_api(sample, api_key, prompt, session=session)
+        if dossier and len(dossier.strip()) > 10:
+            logger.info(f"Generated Entity Dossier ({len(dossier)} chars)")
+            return dossier.strip()
+    except Exception as ex:
+        logger.warning(f"Entity dossier extraction skipped: {ex}")
+    return ""
+
+
 async def _get_available_models(api_key: str, session: aiohttp.ClientSession) -> list[str]:
     """Queries Gemini ModelService to get supported text-generation models for this API key."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
@@ -117,7 +184,6 @@ async def _get_available_models(api_key: str, session: aiohttp.ClientSession) ->
                     methods = m.get("supportedGenerationMethods", [])
                     if "generateContent" not in methods:
                         continue
-                    # Skip audio/image/specialized models
                     if any(p in name.lower() for p in EXCLUDE_PATTERNS):
                         continue
                     valid_models.append(name)
@@ -138,22 +204,50 @@ async def polish_text_with_gemini(
     api_key: Optional[str] = None,
     style: str = "formal",
     original_text: Optional[str] = None,
+    job_id: Optional[str] = None,
+    use_source_anchoring: bool = True,
     progress_callback: Optional[Callable[[int, int], Any]] = None,
 ) -> str:
     """
     Polishes and proofreads translated text using Google's Gemini API.
-    Splits into manageable chunks/pages if multiple pages are present,
-    reporting real-time progress through progress_callback.
+    Supports multi-page smart batching, bilingual source-anchored verification,
+    character consistency dossier, rolling narrative context, and disk checkpointing.
     """
     from backend.settings_manager import get_setting
     key = api_key or os.environ.get("GEMINI_API_KEY") or get_setting("gemini_api_key")
     if not key:
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 
-    system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
-    # Semaphore of 2 with pacing to respect Gemini Free Tier 15 RPM limits cleanly
+    base_system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
     sem = asyncio.Semaphore(2)
     client_timeout = aiohttp.ClientTimeout(total=60)
+
+    # Disk Checkpoint setup
+    checkpoint_file: Optional[Path] = None
+    checkpoint_data: dict[str, Any] = {"batches": {}, "chunks": {}}
+    if job_id:
+        out_dir = Path("temp/outputs") / job_id
+        if out_dir.exists():
+            checkpoint_file = out_dir / ".polish_checkpoint.json"
+            if checkpoint_file.is_file():
+                try:
+                    loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+                    if isinstance(loaded.get("batches"), dict):
+                        checkpoint_data["batches"] = loaded["batches"]
+                    if isinstance(loaded.get("chunks"), dict):
+                        checkpoint_data["chunks"] = loaded["chunks"]
+                    if isinstance(loaded.get("entity_dossier"), str):
+                        checkpoint_data["entity_dossier"] = loaded["entity_dossier"]
+                    logger.info(f"Loaded existing polish checkpoint with {len(checkpoint_data['batches'])} batches / {len(checkpoint_data['chunks'])} chunks")
+                except Exception as ex:
+                    logger.warning(f"Could not load polish checkpoint: {ex}")
+
+    def _save_checkpoint():
+        if checkpoint_file:
+            try:
+                checkpoint_file.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
+            except Exception as ex:
+                logger.warning(f"Could not write polish checkpoint: {ex}")
 
     async def _run_progress(done_count: int, total_count: int) -> None:
         if not progress_callback:
@@ -165,9 +259,31 @@ async def polish_text_with_gemini(
         except Exception as ex:
             logger.warning(f"Progress callback error: {ex}")
 
+    # Parse original text pages for source anchoring if provided
+    orig_pages: dict[int, str] = {}
+    if original_text and use_source_anchoring:
+        orig_pages = _parse_pages_dict(original_text)
+
     # If document has multiple pages marked by dividers, group into smart multi-page batches
     page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        # Extract entity consistency dossier for long documents / literature if not already cached
+        entity_dossier = checkpoint_data.get("entity_dossier", "")
+        if style == "literature" and not entity_dossier and (len(page_sections) > 10 or len(text) > 18000):
+            sample_src = original_text or text
+            entity_dossier = await _extract_entity_dossier(sample_src, key, session=session)
+            if entity_dossier:
+                checkpoint_data["entity_dossier"] = entity_dossier
+                _save_checkpoint()
+
+        system_instruction = base_system_instruction
+        if entity_dossier:
+            system_instruction += (
+                "\n\n--- ΜΗΤΡΩΟ ΟΝΟΜΑΤΩΝ & ΟΡΟΛΟΓΙΑΣ (ENTITY DOSSIER) ---\n"
+                f"{entity_dossier}\n"
+                "Διατήρησε αυστηρή συνέπεια στην ονομασία και φωνητική απόδοση των παραπάνω όρων σε όλο το κείμενο."
+            )
+
         if len(page_sections) > 1:
             # Pair page markers with their content
             pages = []
@@ -182,7 +298,6 @@ async def polish_text_with_gemini(
                     pages.append((curr_marker, p_strip))
 
             # Smart Multi-Page Batching: group ~5 pages (or ~10,000 chars) per Gemini call
-            # This turns 340 requests into ~50, reducing API calls by 80% and giving Gemini broader narrative context
             batches = []
             curr_b = []
             curr_chars = 0
@@ -206,29 +321,93 @@ async def polish_text_with_gemini(
             completed = 0
             first_error: Optional[Exception] = None
 
+            # Pre-fill batches already present in checkpoint
+            cached_batches = checkpoint_data.get("batches", {})
+            for b_idx in range(total_batches):
+                b_str = str(b_idx)
+                if b_str in cached_batches and cached_batches[b_str].strip():
+                    polished_batches[b_idx] = cached_batches[b_str]
+                    completed += 1
+
+            if completed > 0:
+                await _run_progress(completed, total_batches)
+
             async def _polish_batch(b_idx: int, batch_items: list[tuple[str, str]]) -> None:
                 nonlocal completed, first_error
-                batch_text = "\n\n".join(
+                if polished_batches[b_idx]:
+                    return  # Already restored from checkpoint
+
+                draft_batch_text = "\n\n".join(
                     f"{m}\n\n{c}" if m else c for m, c in batch_items
                 )
+
+                # Bilingual Source Anchoring: align original pages for this batch
+                source_batch_parts = []
+                if orig_pages and use_source_anchoring:
+                    for m, _ in batch_items:
+                        pm = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", m)
+                        if pm:
+                            pn = int(pm.group(1))
+                            if pn in orig_pages:
+                                source_batch_parts.append(f"=== PAGE {pn} ===\n{orig_pages[pn]}")
+
+                # Build input content with source reference and rolling context
+                content_components = []
+                if b_idx > 0:
+                    prev_draft = batches[b_idx - 1][-1][1]
+                    paras = [p.strip() for p in prev_draft.split("\n\n") if p.strip()]
+                    if paras:
+                        snippet = paras[-1][:350]
+                        content_components.append(
+                            f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ & ΡΟΗ - ΜΗΝ ΤΟ ΣΥΜΠΕΡΙΛΑΒΕΙΣ ΣΤΗΝ ΕΞΟΔΟ) ---\n[... {snippet}]"
+                        )
+
+                if source_batch_parts:
+                    orig_source_block = "\n\n".join(source_batch_parts)
+                    content_components.append(
+                        f"--- ΠΡΩΤΟΤΥΠΟ ΚΕΙΜΕΝΟ ΑΝΑΦΟΡΑΣ (SOURCE REFERENCE) ---\n{orig_source_block}"
+                    )
+                    content_components.append(
+                        f"--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n{draft_batch_text}"
+                    )
+                else:
+                    content_components.append(draft_batch_text)
+
+                prompt_content = "\n\n".join(content_components)
+
+                batch_instruction = system_instruction
+                if source_batch_parts:
+                    batch_instruction += (
+                        "\n\n--- ΟΔΗΓΙΑ ΔΙΓΛΩΣΣΗΣ ΕΠΑΛΗΘΕΥΣΗΣ ---\n"
+                        "Σου παρέχεται το Πρωτότυπο Κείμενο Αναφοράς καθώς και το Προσχέδιο Ελληνικής Μετάφρασης. "
+                        "Χρησιμοποίησε το πρωτότυπο κείμενο για να διορθώσεις τυχόν παρανοήσεις, αγγλισμούς ή παραλείψεις του προσχεδίου. "
+                        "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το τελικό διορθωμένο ελληνικό κείμενο, διατηρώντας ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων === PAGE X ===."
+                    )
+
                 async with sem:
                     try:
-                        polished = await _call_gemini_api(batch_text.strip(), key, system_instruction, session=session)
+                        polished = await _call_gemini_api(prompt_content.strip(), key, batch_instruction, session=session)
                         polished_batches[b_idx] = polished
+                        checkpoint_data["batches"][str(b_idx)] = polished
+                        _save_checkpoint()
                     except PermissionError:
                         raise
                     except Exception as ex:
                         if first_error is None:
                             first_error = ex
                         logger.warning(f"Batch {b_idx + 1}/{total_batches} polish failed (keeping original text): {ex}")
-                        polished_batches[b_idx] = batch_text
+                        polished_batches[b_idx] = draft_batch_text
                     # Pacing delay between batches
                     await asyncio.sleep(1.5)
 
                 completed += 1
                 await _run_progress(completed, total_batches)
 
-            await asyncio.gather(*(_polish_batch(i, b) for i, b in enumerate(batches)))
+            # Process remaining batches
+            pending_batches = [(i, b) for i, b in enumerate(batches) if not polished_batches[i]]
+            if pending_batches:
+                await asyncio.gather(*(_polish_batch(i, b) for i, b in pending_batches))
+
             if all(not p for p in polished_batches) and first_error is not None:
                 raise first_error
 
@@ -241,6 +420,14 @@ async def polish_text_with_gemini(
                         f"{m}\n\n{c}" if m else c for m, c in batches[b_idx]
                     )
                     final_batches.append(orig_fallback)
+
+            # Clean up checkpoint on complete success
+            if checkpoint_file and checkpoint_file.exists():
+                try:
+                    checkpoint_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
             return "\n\n".join(final_batches)
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
@@ -253,11 +440,38 @@ async def polish_text_with_gemini(
             succeeded = 0
             first_error: Optional[Exception] = None
 
+            cached_chunks = checkpoint_data.get("chunks", {})
+            for c_idx in range(total_chunks):
+                c_str = str(c_idx)
+                if c_str in cached_chunks and cached_chunks[c_str].strip():
+                    polished_chunks[c_idx] = cached_chunks[c_str]
+                    completed += 1
+                    succeeded += 1
+
+            if completed > 0:
+                await _run_progress(completed, total_chunks)
+
             async def _polish_chunk(c_idx: int, c_text: str) -> None:
                 nonlocal completed, succeeded, first_error
+                if str(c_idx) in cached_chunks and cached_chunks[str(c_idx)].strip():
+                    return
+
+                chunk_content = c_text
+                if c_idx > 0:
+                    prev_chunk = chunks[c_idx - 1]
+                    paras = [p.strip() for p in prev_chunk.split("\n\n") if p.strip()]
+                    if paras:
+                        snippet = paras[-1][:250]
+                        chunk_content = (
+                            f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ & ΡΟΗ - ΜΗΝ ΤΟ ΣΥΜΠΕΡΙΛΑΒΕΙΣ) ---\n[... {snippet}]\n\n"
+                            + chunk_content
+                        )
+
                 async with sem:
                     try:
-                        polished_chunks[c_idx] = await _call_gemini_api(c_text, key, system_instruction, session=session)
+                        polished_chunks[c_idx] = await _call_gemini_api(chunk_content, key, system_instruction, session=session)
+                        checkpoint_data["chunks"][str(c_idx)] = polished_chunks[c_idx]
+                        _save_checkpoint()
                         succeeded += 1
                     except PermissionError:
                         raise
@@ -269,13 +483,29 @@ async def polish_text_with_gemini(
                 completed += 1
                 await _run_progress(completed, total_chunks)
 
-            await asyncio.gather(*(_polish_chunk(i, c) for i, c in enumerate(chunks)))
+            pending_chunks = [(i, c) for i, c in enumerate(chunks) if str(i) not in cached_chunks]
+            if pending_chunks:
+                await asyncio.gather(*(_polish_chunk(i, c) for i, c in pending_chunks))
+
             if succeeded == 0 and first_error is not None:
                 raise first_error
+
+            if checkpoint_file and checkpoint_file.exists():
+                try:
+                    checkpoint_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
             return "\n\n".join(p for p in polished_chunks if p)
 
         await _run_progress(1, 1)
-        return await _call_gemini_api(text, key, system_instruction, session=session)
+        single_input = text
+        if original_text and use_source_anchoring:
+            single_input = (
+                f"--- ΠΡΩΤΟΤΥΠΟ ΚΕΙΜΕΝΟ ΑΝΑΦΟΡΑΣ (SOURCE REFERENCE) ---\n{original_text}\n\n"
+                f"--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n{text}"
+            )
+        return await _call_gemini_api(single_input, key, system_instruction, session=session)
 
 
 async def _call_gemini_api(
@@ -287,6 +517,9 @@ async def _call_gemini_api(
     """Invokes Gemini generateContent with auto-discovery prioritizing ultra-fast Flash models."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
+        if "--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n" in content_text:
+            draft_part = content_text.split("--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n")[-1]
+            return f"[Επιμελημένο AI]: {draft_part.strip()}"
         return f"[Επιμελημένο AI]: {content_text}"
 
     global _CACHED_WORKING_MODEL

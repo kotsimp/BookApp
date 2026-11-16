@@ -96,6 +96,7 @@ class PolishRequest(BaseModel):
     style: str = "formal"
     api_key: Optional[str] = None
     layout_mode: Optional[str] = None
+    bilingual_mode: bool = True
 
 
 class GlossaryTermRequest(BaseModel):
@@ -915,6 +916,32 @@ async def polish_translation(req: PolishRequest):
 
     from backend.ai_polisher import polish_text_with_gemini
 
+    # Locate or extract original text for bilingual source-anchoring if requested
+    original_text: Optional[str] = None
+    if req.bilingual_mode:
+        orig_files = list(out_dir.glob("*_original.txt"))
+        if orig_files:
+            try:
+                original_text = orig_files[0].read_text(encoding="utf-8")
+            except Exception:
+                pass
+        if not original_text and job and job.file_path and Path(job.file_path).exists():
+            try:
+                from backend.parsers import parse_document
+                pages = list(parse_document(job.file_path, job.file_type))
+                sections = []
+                for p in pages:
+                    p_num = p.get("page", 1)
+                    t = p.get("text", "").strip()
+                    if t:
+                        sections.append(f"=== PAGE {p_num} ===\n{t}")
+                if sections:
+                    original_text = "\n\n".join(sections)
+                    stem = Path(job.file_name).stem
+                    (out_dir / f"{stem}_original.txt").write_text(original_text, encoding="utf-8")
+            except Exception as ex:
+                logger.warning(f"Could not extract original text for bilingual anchoring: {ex}")
+
     def on_progress(current: int, total: int):
         pct = int((current / max(1, total)) * 100)
         POLISH_STATUS[req.job_id] = {
@@ -922,7 +949,7 @@ async def polish_translation(req: PolishRequest):
             "total": total,
             "percent": pct,
             "status": "running",
-            "step": f"Polishing page {current} of {total}...",
+            "step": f"Polishing batch {current} of {total}...",
         }
 
     POLISH_STATUS[req.job_id] = {
@@ -938,6 +965,9 @@ async def polish_translation(req: PolishRequest):
             text=text_to_polish,
             api_key=req.api_key,
             style=req.style,
+            original_text=original_text,
+            job_id=req.job_id,
+            use_source_anchoring=req.bilingual_mode,
             progress_callback=on_progress,
         )
         total_p = POLISH_STATUS.get(req.job_id, {}).get("total", 1)

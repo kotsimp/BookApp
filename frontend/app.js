@@ -1176,6 +1176,8 @@ async function runAiPolish() {
     }, 500);
   }
 
+  const bilingual = document.getElementById('ai-polish-bilingual')?.checked ?? true;
+
   try {
     const res = await fetch(`${API}/polish`, {
       method: 'POST',
@@ -1186,6 +1188,7 @@ async function runAiPolish() {
         style: style,
         api_key: apiKey,
         layout_mode: document.getElementById('tr-layout-mode')?.value || 'standard',
+        bilingual_mode: bilingual,
       }),
     });
 

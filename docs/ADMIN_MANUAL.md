@@ -60,7 +60,12 @@
 * **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
 * **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting, άμεση ανάγνωση pre-extracted `*_original.txt` και διατήρηση του αρχικού `file_type` κατά το disk recovery.
 * **Robust Translator Engine (HTTP POST & Validation):** Αποστολή αιτημάτων μετάφρασης μέσω HTTP POST στο Google GTX client API (`https://translate.googleapis.com/translate_a/single`), εξαλείφοντας περιορισμούς μήκους URI. Αυτόματος έλεγχος ελληνικών χαρακτήρων (`has_greek_text`) με εκθετικό backoff για αποτροπή σιωπηλών επιστροφών στα Αγγλικά.
-* **Optimized AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) με smart multi-page batching (~5 σελίδες / 10.000 χαρακτήρες ανά κλήση) και concurrency limiter (`MAX_CONCURRENT_REQUESTS = 2`). Μειώνει τις κλήσεις κατά 80% για συμβατότητα με το δωρεάν όριο (15 RPM) του Google AI Studio, διαθέτοντας dynamic exponential backoff (12s–48s) σε HTTP 429 και 5 εξειδικευμένα στυλ (συμπεριλαμβανομένου του `literature` για μυθιστορήματα και sci-fi).
+* **Optimized AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) με smart multi-page batching (~5 σελίδες / 10.000 χαρακτήρες ανά κλήση) και concurrency limiter (`MAX_CONCURRENT_REQUESTS = 2`). Περιλαμβάνει:
+  * **Source-Anchored Verification:** Δίγλωσση σύγκριση ανά σελίδα του ελληνικού προσχεδίου με το πρωτότυπο αγγλικό κείμενο για εξάλειψη παρερμηνειών και αγγλισμών.
+  * **Audiobook Script Polish & Spoken Phonetics:** Φωνητική μεταγραφή ξένων ονομάτων και ακρωνυμίων σε ελληνικούς χαρακτήρες (π.χ. `Keeton` ➔ `Κίτον`, `Theseus` ➔ `Θησέας`, `DNA` ➔ `Ντι-Εν-Έι`), πλήρης ολογράφως ανάπτυξη αριθμών/ετών/ποσοστών και αφαίρεση μη εκφωνήσιμων συμβόλων για άψογη εκφώνηση από νευρωνικές φωνές TTS (Nestoras/Athina).
+  * **Entity & Character Consistency Dossier:** Αυτόματη εξαγωγή και διοχέτευση μητρώου όρων και ονομάτων σε όλες τις επιμέρους παρτίδες για απόλυτη συνέπεια σε όλο το βιβλίο.
+  * **Rolling Context Window & Smart Real-Time Checkpointing:** Συνεχής ροή ανάμεσα σε διαδοχικές παρτίδες και αποθήκευση προόδου στο δίσκο (`.polish_checkpoint.json`) για μηδενική απώλεια tokens και άμεση συνέχιση σε περίπτωση επανεκκίνησης ή διακοπής.
+  * **Concurrency & Rate Limit Protection:** Μειώνει τις κλήσεις κατά 80% για συμβατότητα με το δωρεάν όριο (15 RPM) του Google AI Studio, διαθέτοντας dynamic exponential backoff (12s–48s) σε HTTP 429 και 5 εξειδικευμένα στυλ.
 * **Cover Image Management:** Πλήρης υποστήριξη εξαγωγής και διαχείρισης εξωφύλλων (`GET/HEAD /api/cover/{job_id}`, `POST /api/cover/{job_id}`, `DELETE /api/cover/{job_id}`). Αυτόματη ανίχνευση από πρωτότυπα PDF/EPUB/DOCX, προβολή μικρογραφίας, χειροκίνητη αντικατάσταση και πλήρης απομόνωση από τα candidate files λήψης (ώστε να μην κατεβαίνει εικόνα αντί για βιβλίο).
 * **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
 * **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC. Αφαιρεί running headers/footers και αριθμούς σελίδων από το κείμενο, απομονώνει τίτλους κεφαλαίων και παραθέματα, ενώνει σπασμένες προτάσεις ανάμεσα σε σελίδες και ενσωματώνει αυθεντικό εξώφυλλο στην 1η σελίδα.
@@ -268,7 +273,7 @@ BookApp/
 
 ```bash
 # Βεβαιωθείτε ότι το .venv είναι ενεργό και ο server εκτελείται
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_api"
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_pdf_initial_pages_preservation, tests.test_ai_polish_advanced, tests.test_api"
 ```
 
 Όλοι οι έλεγχοι πρέπει να ολοκληρωθούν με **`PASSED`**.
