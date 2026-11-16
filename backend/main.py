@@ -95,8 +95,14 @@ class AudiobookRequest(BaseModel):
 
 
 class GenreDetectionRequest(BaseModel):
-    sample_text: str
+    sample_text: Optional[str] = None
+    text: Optional[str] = None
     file_type: Optional[str] = ""
+
+
+class AdminCleanupRequest(BaseModel):
+    max_age_hours: int = 48
+    dry_run: bool = False
 
 
 class UpdateTextRequest(BaseModel):
@@ -1212,7 +1218,8 @@ async def remove_glossary_term(term: str):
 async def detect_genre(req: GenreDetectionRequest):
     """Auto-detects document genre, tone, recommended polish style and glossary category."""
     from backend.genre_detector import detect_genre_and_style
-    return detect_genre_and_style(req.sample_text, req.file_type or "")
+    input_text = req.sample_text or req.text or ""
+    return detect_genre_and_style(input_text, req.file_type or "")
 
 
 @app.get("/api/tts/preview")
@@ -1234,10 +1241,12 @@ async def cache_stats():
 
 
 @app.post("/api/admin/cleanup")
-async def admin_storage_cleanup(max_age_hours: int = 48):
+async def admin_storage_cleanup(req: Optional[AdminCleanupRequest] = None):
     """Triggers storage cleanup for temporary audio chunks and obsolete extractions."""
     from backend.storage_cleaner import clean_temp_storage
-    return clean_temp_storage(max_age_hours=max_age_hours)
+    hours = req.max_age_hours if req else 48
+    dry = req.dry_run if req else False
+    return clean_temp_storage(max_age_hours=hours, dry_run=dry)
 
 
 # ---------------------------------------------------------------------------
