@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-9%2F9%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-11%2F11%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), and **generate professional AI audiobooks** using Microsoft Edge neural voices.
 
@@ -26,6 +26,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
+| **Multi-Page Front Matter Preservation** | Line-level header/footer cleaning (`_clean_page_blocks`) ensures the initial pages of books (tables of contents, epigraphs, author dedications, and prologues) are 100% preserved without dropping text blocks. |
 | **Optimized AI Polish & Proofreading** | Google Gemini AI integration with 5 tailored styles (including dedicated `literature` for fiction & sci-fi and `audiobook` spoken narration script editor). Features **Bilingual Source-Anchoring** (page-level comparison between Greek draft and original English to fix mistranslations and false friends), **Entity & Character Consistency Dossier** (uniform character and term transliteration across chapters), **Rolling Narrative Context**, **Smart Real-Time Disk Checkpoints** (`.polish_checkpoint.json`), smart multi-page batching cutting API calls by 80%, dynamic backoff, and persistent settings (`config/settings.json`). |
 | **Audiobook Script Polish & Spoken Phonetics** | Dedicated spoken script refinement for Edge-TTS neural voices: phonetically transliterates foreign names/acronyms into Greek script (`Keeton` -> `Κίτον`, `Rorschach` -> `Ρόρσαχ`, `DNA` -> `Ντι-Εν-Έι`), fully expands numbers, years, percentages, and abbreviations into spoken words (`2006` -> `δύο χιλιάδες έξι`, `50%` -> `πενήντα τοις εκατό`), completely strips non-spoken artifacts (page markers, footnotes, URLs), and optimizes sentence breathing and pauses. |
 | **Translation Editor & Review** | Built-in in-browser Split-View / Full editor to review, edit, and search/replace translated text with live re-export. |
@@ -38,7 +39,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **One-Click Direct Audio** | Convert any completed translation directly into a Greek Audiobook with a single click. |
 | **Live Progress Streaming** | Real-time progress updates via Server-Sent Events (SSE) distinguishing between document pages and audio parts. |
 | **Disk Recovery & Auto-Cleanup** | Completed jobs survive server restarts via disk recovery, while startup housekeeping (`cleanup_old_jobs`) prunes stale temp directories older than 24 hours. |
-| **Automated Test Suite** | Comprehensive 9-part test suite verifying parsers, translator, exporters, format preservation, literature/e-reader formatting, dynamic download, editor/glossary/AI polish, and end-to-end APIs. |
+| **Automated Test Suite** | Comprehensive 11-part test suite verifying parsers, translator, exporters, format preservation, literature/e-reader formatting, dynamic download, editor/glossary/AI polish, front matter preservation, advanced bilingual polish, and end-to-end APIs. |
 
 ---
 
@@ -149,7 +150,7 @@ BookApp/
 To run the automated verification test suite:
 
 ```bash
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_api"
+python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_pdf_initial_pages_preservation, tests.test_ai_polish_advanced, tests.test_api"
 ```
 
 ---
