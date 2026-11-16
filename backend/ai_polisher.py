@@ -20,14 +20,22 @@ logger = logging.getLogger(__name__)
 
 STYLE_PROMPTS = {
     "literature": (
-        "Είσαι κορυφαίος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη λογοτεχνία και την επιστημονική φαντασία (sci-fi / speculative fiction). "
-        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα και ατμοσφαιρικό βάθος: "
-        "1. Εξάλειψε τις μηχανικές/κατά λέξη μεταφράσεις, τις αγγλικούρες και τις συντακτικές αδεξιότητες (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις'). "
-        "2. Χρησιμοποίησε πλούσιο, εκφραστικό ελληνικό λεξιλόγιο, διατηρώντας το ύφος, την ένταση και τον λογοτεχνικό ρυθμό του συγγραφέα. "
-        "3. Διόρθωσε γραμματικά, συντακτικά και πτωτικά λάθη, αποδίδοντας τους διαλόγους με ζωντάνια και φυσικότητα. "
-        "4. Εάν παρέχεται το πρωτότυπο κείμενο αναφοράς, συμβουλέψου το για να επιλύσεις τυχόν μεταφραστικές παρανοήσεις ή αμφισημίες του προσχεδίου. "
-        "5. Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
-        "6. Μην προσθέτεις εισαγωγικά σχόλια, επεξηγήσεις ή σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
+        "Είσαι διακεκριμένος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη πεζογραφία και την επιστημονική φαντασία (sci-fi / speculative fiction). "
+        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα, ρυθμό και ατμοσφαιρικό βάθος: "
+        "1. ΕΞΑΛΕΙΨΗ ΚΑΤΑ ΛΕΞΗ ΜΕΤΑΦΡΑΣΗΣ & ΑΓΓΛΙΣΜΩΝ: "
+        "   - Εξάλειψε πλήρως μηχανικές αδεξιότητες, αγγλισμούς και ξύλινες δομές (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις', 'έκανε νόημα' -> 'έγνεψε', 'ήταν ικανός να' -> 'μπορούσε να'). "
+        "   - ΜΗΝ μεταφράζεις ιδιωματισμούς κατά λέξη (idioms & metaphors). Απόδοσέ τους με ισοδύναμες, ζωντανές ελληνικές εκφράσεις που ταιριάζουν στο συγκείμενο. "
+        "   - Εάν παρέχεται το πρωτότυπο κείμενο αναφοράς, συμβουλέψου το για να επιλύσεις τυχόν μεταφραστικές παρανοήσεις, αμφισημίες ή ψευδόφιλες λέξεις (false friends) του προσχεδίου. "
+        "2. ΕΝΕΡΓΗΤΙΚΗ ΣΥΝΤΑΞΗ & ΛΟΓΟΤΕΧΝΙΚΗ ΡΟΗ: "
+        "   - Προτίμησε την ενεργητική σύνταξη έναντι της βαριάς αγγλικής παθητικής φωνής. "
+        "   - Μετάτρεψε δυσκίνητες μετοχικές φράσεις σε φυσικές χρονικές ή αιτιολογικές προτάσεις. "
+        "   - Χρησιμοποίησε πλούσιο, εκφραστικό ελληνικό λεξιλόγιο, διατηρώντας το ύφος, την ένταση και τον λογοτεχνικό ρυθμό του συγγραφέα. "
+        "3. ΖΩΝΤΑΝΙΑ ΔΙΑΛΟΓΩΝ & ΣΤΙΞΗ: "
+        "   - Απόδωσε τους διαλόγους με προφορική ζωντάνια και φυσικότητα. Διατήρησε τις παύλες διαλόγων (—) ή τα εισαγωγικά («...») σύμφωνα με τις ελληνικές εκδοτικές συμβάσεις. "
+        "   - Διόρθωσε όλα τα γραμματικά, συντακτικά και πτωτικά λάθη. "
+        "4. ΔΙΑΤΗΡΗΣΗ ΔΟΜΗΣ & ΔΕΙΚΤΩΝ: "
+        "   - Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων, τα κενά σκηνών (π.χ. * * *) και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
+        "5. Μην προσθέτεις εισαγωγικά σχόλια, προοίμια ή επεξηγηματικές σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
     ),
     "natural": (
         "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
@@ -85,6 +93,15 @@ STYLE_PROMPTS = {
         "   - Αφαίρεσε αριθμούς υποσημειώσεων, τίτλους σελίδων και περιττά τυπογραφικά σύμβολα. "
         "5. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το καθαρό ποιητικό κείμενο για απαγγελία, χωρίς κανένα εισαγωγικό ή επεξηγηματικό σχόλιο."
     ),
+}
+
+STYLE_TEMPERATURES = {
+    "literature": 0.35,
+    "natural": 0.25,
+    "audiobook": 0.25,
+    "poetry": 0.25,
+    "formal": 0.15,
+    "technical": 0.15,
 }
 
 # Cached discoveries to avoid querying Google ModelService on every single page
@@ -299,6 +316,19 @@ async def polish_text_with_gemini(
                 "Διατήρησε αυστηρή συνέπεια στην ονομασία και φωνητική απόδοση των παραπάνω όρων σε όλο το κείμενο."
             )
 
+        # Inject custom user glossary rules
+        from backend.glossary import load_glossary, apply_glossary
+        glossary_items = load_glossary()
+        if glossary_items:
+            glossary_lines = "\n".join(f"- {k} -> {v}" for k, v in list(glossary_items.items())[:35])
+            system_instruction += (
+                "\n\n--- ΓΛΩΣΣΑΡΙΟ ΚΑΙ ΟΡΟΛΟΓΙΑ ΧΡΗΣΤΗ (GLOSSARY RULES) ---\n"
+                "Τήρησε αυστηρά τις ακόλουθες καθιερωμένες αποδόσεις όρων:\n"
+                f"{glossary_lines}\n"
+            )
+
+        target_temp = STYLE_TEMPERATURES.get(style, 0.25)
+
         if len(page_sections) > 1:
             # Pair page markers with their content
             pages = []
@@ -401,7 +431,7 @@ async def polish_text_with_gemini(
 
                 async with sem:
                     try:
-                        polished = await _call_gemini_api(prompt_content.strip(), key, batch_instruction, session=session)
+                        polished = await _call_gemini_api(prompt_content.strip(), key, batch_instruction, session=session, temperature=target_temp)
                         polished_batches[b_idx] = polished
                         checkpoint_data["batches"][str(b_idx)] = polished
                         _save_checkpoint()
@@ -443,7 +473,7 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            return "\n\n".join(final_batches)
+            return apply_glossary("\n\n".join(final_batches), "greek")
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
         if len(text) > 4000:
@@ -484,7 +514,7 @@ async def polish_text_with_gemini(
 
                 async with sem:
                     try:
-                        polished_chunks[c_idx] = await _call_gemini_api(chunk_content, key, system_instruction, session=session)
+                        polished_chunks[c_idx] = await _call_gemini_api(chunk_content, key, system_instruction, session=session, temperature=target_temp)
                         checkpoint_data["chunks"][str(c_idx)] = polished_chunks[c_idx]
                         _save_checkpoint()
                         succeeded += 1
@@ -511,7 +541,7 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            return "\n\n".join(p for p in polished_chunks if p)
+            return apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek")
 
         await _run_progress(1, 1)
         single_input = text
@@ -520,7 +550,8 @@ async def polish_text_with_gemini(
                 f"--- ΠΡΩΤΟΤΥΠΟ ΚΕΙΜΕΝΟ ΑΝΑΦΟΡΑΣ (SOURCE REFERENCE) ---\n{original_text}\n\n"
                 f"--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n{text}"
             )
-        return await _call_gemini_api(single_input, key, system_instruction, session=session)
+        polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
+        return apply_glossary(polished_single, "greek")
 
 
 async def _call_gemini_api(
@@ -528,6 +559,7 @@ async def _call_gemini_api(
     api_key: str,
     system_prompt: str,
     session: Optional[aiohttp.ClientSession] = None,
+    temperature: float = 0.25,
 ) -> str:
     """Invokes Gemini generateContent with auto-discovery prioritizing ultra-fast Flash models."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
@@ -549,7 +581,7 @@ async def _call_gemini_api(
             }
         ],
         "generationConfig": {
-            "temperature": 0.2,
+            "temperature": temperature,
             "maxOutputTokens": 8192,
         }
     }

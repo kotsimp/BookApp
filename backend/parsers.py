@@ -276,6 +276,12 @@ def _clean_text(text: str) -> str:
     # Replace any remaining Private Use Area characters with a standard bullet
     text = re.sub(r'[\ue000-\uf8ff]', '• ', text)
 
+    # Standardize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+    # De-hyphenate line-wrapped words: e.g. "repre-\nsentation" -> "representation", "δια-\nδικασία" -> "διαδικασία"
+    text = re.sub(r'([a-zA-Z\u0370-\u03FF\u1F00-\u1FFF])-[\n]+\s*([a-zA-Z\u0370-\u03FF\u1F00-\u1FFF])', r'\1\2', text)
+
     # Replace multiple newlines with double newline (paragraph break)
     text = re.sub(r'\n{3,}', '\n\n', text)
     # Remove null bytes and other control chars except newline/tab
@@ -285,9 +291,11 @@ def _clean_text(text: str) -> str:
 
 def split_into_chunks(text: str, max_chars: int = 4500) -> list[str]:
     """
-    Splits text into chunks ≤ max_chars, splitting at sentence/paragraph
-    boundaries to preserve translation quality.
+    Splits text into chunks <= max_chars, splitting at sentence/paragraph
+    or clause boundaries to preserve grammatical coherence and translation quality.
     """
+    if not text:
+        return []
     if len(text) <= max_chars:
         return [text]
 
@@ -302,17 +310,43 @@ def split_into_chunks(text: str, max_chars: int = 4500) -> list[str]:
         else:
             if current:
                 chunks.append(current.strip())
+                current = ""
+
             # If single paragraph is too long, split by sentences
             if len(para) > max_chars:
-                sentences = re.split(r'(?<=[.!?])\s+', para)
-                current = ""
+                # Include Greek question mark (; / \u037e), ellipsis (…), and quotes
+                sentences = re.split(r'(?<=[.!?;…\u037e][»"”\'\)\]]?)\s+', para)
                 for sent in sentences:
                     if len(current) + len(sent) + 1 <= max_chars:
                         current = current + " " + sent if current else sent
                     else:
                         if current:
                             chunks.append(current.strip())
-                        current = sent
+                            current = ""
+
+                        # If single sentence is still longer than max_chars, split by clause boundaries
+                        if len(sent) > max_chars:
+                            clauses = re.split(r'(?<=[,:;—–])\s+', sent)
+                            for clause in clauses:
+                                if len(current) + len(clause) + 1 <= max_chars:
+                                    current = current + " " + clause if current else clause
+                                else:
+                                    if current:
+                                        chunks.append(current.strip())
+                                        current = ""
+                                    if len(clause) > max_chars:
+                                        words = clause.split(' ')
+                                        for word in words:
+                                            if len(current) + len(word) + 1 <= max_chars:
+                                                current = current + " " + word if current else word
+                                            else:
+                                                if current:
+                                                    chunks.append(current.strip())
+                                                current = word
+                                    else:
+                                        current = clause
+                        else:
+                            current = sent
             else:
                 current = para
 

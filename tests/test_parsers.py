@@ -26,7 +26,13 @@ dirty = "Hello\x00world\n\n\n\n\ntest"
 clean = _clean_text(dirty)
 assert "\x00" not in clean
 assert "\n\n\n" not in clean
-print("  Clean text: OK")
+
+# Test de-hyphenation across line wraps
+hyphen_text = "This is a repre-\nsentation of Greek δια-\nδικασία in text."
+clean_hyphen = _clean_text(hyphen_text)
+assert "representation" in clean_hyphen, f"Expected representation, got: {clean_hyphen}"
+assert "διαδικασία" in clean_hyphen, f"Expected διαδικασία, got: {clean_hyphen}"
+print("  Clean text & De-hyphenation: OK")
 
 # Empty text
 chunks = split_into_chunks("", 100)

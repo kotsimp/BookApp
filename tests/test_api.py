@@ -105,6 +105,15 @@ except urllib.error.HTTPError as e:
     assert e.code == 404
     print(f"  GET /status (missing job): OK (404 returned)")
 
+# Test 6e-2: POST /jobs/{job_id}/cancel for nonexistent job
+try:
+    req = urllib.request.Request(f"{API}/jobs/nonexistent-id/cancel", data=b"", headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req)
+    print("  POST /jobs/{id}/cancel (nonexistent): FAIL - should 404")
+except urllib.error.HTTPError as e:
+    assert e.code == 404
+    print("  POST /jobs/{id}/cancel (nonexistent): OK (404 returned)")
+
 # Test 6f: Upload a test DOCX file and translate it
 print("  --- Integration: Upload + Translate ---")
 from docx import Document
@@ -234,6 +243,38 @@ try:
         en_mp3 = resp.read()
         assert len(en_mp3) > 10000
         print(f"  GET /download (English audiobook MP3): OK ({len(en_mp3)} bytes)")
+
+    # Test 6f-3: Cancel in-flight job
+    print("  --- Integration: In-flight Job Cancellation ---")
+    cancel_docx_path = "temp/test_cancel.docx"
+    c_doc = Document()
+    for p_i in range(10):
+        c_doc.add_paragraph(f"Long paragraph number {p_i} with multiple sentences. Testing cancellation responsiveness.")
+    c_doc.save(cancel_docx_path)
+    status, data = api_post_file("/upload", cancel_docx_path, "test_cancel.docx")
+    assert status == 200
+    cancel_job_id = data["job_id"]
+    status, data = api_post_json("/translate", {
+        "job_id": cancel_job_id,
+        "source_lang": "english",
+        "target_lang": "greek",
+        "output_format": "txt",
+    })
+    assert status == 200
+    # Immediately cancel the job
+    time.sleep(0.2)
+    c_status, c_data = api_post_json(f"/jobs/{cancel_job_id}/cancel", {})
+    assert c_status == 200
+    assert c_data.get("status") == "cancelled"
+    # Wait briefly and verify status is cancelled
+    time.sleep(0.8)
+    status, sdata = api_get(f"/status/{cancel_job_id}")
+    assert sdata["status"] == "cancelled", f"Expected status 'cancelled', got {sdata['status']}"
+    print("  POST /jobs/{id}/cancel in-flight: OK")
+    api_delete(f"/jobs/{cancel_job_id}")
+    if os.path.exists(cancel_docx_path):
+        os.remove(cancel_docx_path)
+
     api_delete(f"/jobs/{job_id}")
     api_delete(f"/jobs/{gr_job_id}")
     for tmp_f in (test_docx_path, gr_docx_path):

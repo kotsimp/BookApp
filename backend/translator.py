@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 from deep_translator import GoogleTranslator
 from backend.parsers import parse_document, split_into_chunks
-from backend.job_manager import update_job
+from backend.job_manager import update_job, is_job_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,9 @@ async def translate_document(
     output_lines = []
 
     for idx, page_data in enumerate(pages):
+        if is_job_cancelled(job_id):
+            raise asyncio.CancelledError("Translation cancelled by user.")
+
         page_num = page_data["page"]
         page_text = page_data["text"]
 
@@ -172,6 +175,8 @@ async def translate_document(
         translated_chunks = []
 
         for chunk in chunks:
+            if is_job_cancelled(job_id):
+                raise asyncio.CancelledError("Translation cancelled by user.")
             if not chunk.strip():
                 translated_chunks.append(chunk)
                 continue

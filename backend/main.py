@@ -16,7 +16,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.job_manager import create_job, get_job, update_job, list_jobs, cleanup_old_jobs
+from backend.job_manager import (
+    create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
+    cancel_job, register_task, unregister_task, is_job_cancelled
+)
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
 from backend.tts_engine import generate_audiobook, get_available_voices
@@ -263,6 +266,9 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
 
 
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path):
+    task = asyncio.current_task()
+    if task:
+        register_task(job_id, task)
     try:
         job = get_job(job_id)
         fmt = getattr(job, "output_format", "txt") or "txt"
@@ -272,17 +278,24 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         stem = Path(file_path).stem
         base_name = f"{stem}_translated_{target_lang}"
 
+        if is_job_cancelled(job_id):
+            return
+
         # 1. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
         if file_type == "docx" and fmt in ("docx", "doc"):
             final_docx_path = out_dir / f"{base_name}.docx"
 
             def docx_prog(done, total, msg):
+                if is_job_cancelled(job_id):
+                    raise asyncio.CancelledError("Translation cancelled by user")
                 pct = int((done / max(total, 1)) * 92)
                 update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
 
             translated_txt = await translate_docx_in_place(
                 file_path, str(final_docx_path), source_lang, target_lang, docx_prog
             )
+            if is_job_cancelled(job_id):
+                return
             # Save plain text version for audiobooks / fallback
             Path(output_path).write_text(translated_txt, encoding="utf-8")
             final_path = final_docx_path
@@ -292,12 +305,16 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             final_epub_path = out_dir / f"{base_name}.epub"
 
             def epub_prog(done, total, msg):
+                if is_job_cancelled(job_id):
+                    raise asyncio.CancelledError("Translation cancelled by user")
                 pct = int((done / max(total, 1)) * 92)
                 update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
 
             translated_txt = await translate_epub_in_place(
                 file_path, str(final_epub_path), source_lang, target_lang, epub_prog
             )
+            if is_job_cancelled(job_id):
+                return
             Path(output_path).write_text(translated_txt, encoding="utf-8")
             final_path = final_epub_path
 
@@ -311,9 +328,14 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 target_lang=target_lang,
                 output_path=output_path,
             )
+            if is_job_cancelled(job_id):
+                return
             txt_content = Path(output_path).read_text(encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
             final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
+
+        if is_job_cancelled(job_id):
+            return
 
         # Mark job complete
         update_job(job_id,
@@ -325,9 +347,14 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             done_chunks=1,
             total_chunks=1,
         )
+    except asyncio.CancelledError:
+        logger.info(f"[{job_id}] Translation task was cancelled.")
+        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
     except Exception as e:
         logger.error(f"Translation/export error [{job_id}]: {e}", exc_info=True)
         update_job(job_id, status="error", error=str(e))
+    finally:
+        unregister_task(job_id)
 
 
 @app.post("/api/audiobook")
@@ -383,7 +410,12 @@ async def _run_audiobook(
     job_id, file_path, file_type, language, voice_name, output_path, translated_path,
     narration_style="literature", rate=None, pitch=None, ai_polish=False, api_key=None
 ):
+    task = asyncio.current_task()
+    if task:
+        register_task(job_id, task)
     try:
+        if is_job_cancelled(job_id):
+            return
         await generate_audiobook(
             job_id=job_id,
             file_path=file_path,
@@ -398,9 +430,14 @@ async def _run_audiobook(
             ai_polish=ai_polish,
             api_key=api_key,
         )
+    except asyncio.CancelledError:
+        logger.info(f"[{job_id}] Audiobook task was cancelled.")
+        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
     except Exception as e:
         logger.error(f"Audiobook error [{job_id}]: {e}", exc_info=True)
         update_job(job_id, status="error", error=str(e))
+    finally:
+        unregister_task(job_id)
 
 
 @app.get("/api/progress/{job_id}")
@@ -719,6 +756,17 @@ async def clear_all_jobs():
     _jobs.clear()
     POLISH_STATUS.clear()
     return {"status": "cleared", "count": 0}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job_endpoint(job_id: str):
+    """Cancels an active translation or audiobook generation job."""
+    success = cancel_job(job_id)
+    if not success:
+        job = get_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job '{job_id}' not found.")
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 @app.delete("/api/jobs/{job_id}")

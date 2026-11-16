@@ -381,6 +381,11 @@ async function startTranslation() {
   document.getElementById('tr-error-card').classList.remove('visible');
   document.getElementById('tr-progress-detail').textContent = '';
   document.getElementById('tr-start-btn').disabled = true;
+  const trCancelBtn = document.getElementById('tr-cancel-btn');
+  if (trCancelBtn) {
+    trCancelBtn.disabled = false;
+    trCancelBtn.innerHTML = '🛑 Cancel Translation';
+  }
   setStatusBadge('tr', 'running');
 
   try {
@@ -479,6 +484,11 @@ async function startAudiobook() {
   document.getElementById('ab-result-card').classList.remove('visible');
   document.getElementById('ab-error-card').classList.remove('visible');
   document.getElementById('ab-start-btn').disabled = true;
+  const abCancelBtn = document.getElementById('ab-cancel-btn');
+  if (abCancelBtn) {
+    abCancelBtn.disabled = false;
+    abCancelBtn.innerHTML = '🛑 Cancel Audiobook';
+  }
   setStatusBadge('ab', 'running');
 
   try {
@@ -522,7 +532,7 @@ function connectSSE(prefix, jobId) {
     const data = JSON.parse(event.data);
     updateProgress(prefix, data);
 
-    if (data.status === 'done' || data.status === 'error') {
+    if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
       sse.close();
       state[prefix].sse = null;
     }
@@ -542,7 +552,7 @@ function pollProgress(prefix, jobId) {
       const res = await fetch(`${API}/status/${jobId}`);
       const data = await res.json();
       updateProgress(prefix, data);
-      if (data.status === 'done' || data.status === 'error') {
+      if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
         clearInterval(interval);
       }
     } catch (e) {
@@ -593,6 +603,44 @@ function updateProgress(prefix, data) {
     showError(prefix, data.error || 'An unknown error occurred.');
     document.getElementById(`${prefix}-start-btn`).disabled = false;
     refreshHistory();
+  } else if (data.status === 'cancelled') {
+    setStatusBadge(prefix, 'cancelled');
+    document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
+    document.getElementById(`${prefix}-progress-step`).textContent = '🛑 Cancelled';
+    if (detailEl) detailEl.textContent = 'Process was cancelled.';
+    document.getElementById(`${prefix}-start-btn`).disabled = false;
+    const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
+    if (cancelBtn) {
+      cancelBtn.disabled = false;
+      cancelBtn.innerHTML = prefix === 'tr' ? '🛑 Cancel Translation' : '🛑 Cancel Audiobook';
+    }
+    refreshHistory();
+  }
+}
+
+async function cancelJob(prefix) {
+  const jobId = state[prefix]?.jobId;
+  if (!jobId) return;
+
+  const btn = document.getElementById(`${prefix}-cancel-btn`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Cancelling...';
+  }
+
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/cancel`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to cancel job');
+    }
+    toast(prefix === 'tr' ? 'Translation cancelled.' : 'Audiobook generation cancelled.', 'info');
+  } catch (e) {
+    toast(`Cancellation error: ${e.message}`, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = prefix === 'tr' ? '🛑 Cancel Translation' : '🛑 Cancel Audiobook';
+    }
   }
 }
 
@@ -605,6 +653,11 @@ function resetProgress(prefix) {
   document.getElementById(`${prefix}-progress-bar`).classList.add('shimmer');
   document.getElementById(`${prefix}-progress-pct`).textContent = '0%';
   document.getElementById(`${prefix}-start-btn`).disabled = true;
+  const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
+  if (cancelBtn) {
+    cancelBtn.disabled = false;
+    cancelBtn.innerHTML = prefix === 'tr' ? '🛑 Cancel Translation' : '🛑 Cancel Audiobook';
+  }
   const directBtn = document.getElementById('tr-direct-polish-btn');
   if (directBtn) directBtn.disabled = true;
 
@@ -652,7 +705,7 @@ function showError(prefix, msg) {
 function setStatusBadge(prefix, status) {
   const badge = document.getElementById(`${prefix}-status-badge`);
   badge.className = `status-badge status-${status}`;
-  const labels = { idle: 'Idle', running: 'Running', done: 'Complete', error: 'Error' };
+  const labels = { idle: 'Idle', running: 'Running', done: 'Complete', error: 'Error', cancelled: 'Cancelled' };
   badge.innerHTML = `<span class="status-dot"></span> ${labels[status] || status}`;
 }
 

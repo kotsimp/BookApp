@@ -210,6 +210,11 @@
         <div class="progress-bar-fill shimmer" id="tr-progress-bar" style="width:0%"></div>
       </div>
       <p class="progress-step" id="tr-progress-detail"></p>
+      <div style="display:flex; justify-content:flex-end; margin-top:14px">
+        <button class="btn btn-secondary btn-sm" id="tr-cancel-btn" onclick="cancelJob('tr')" style="border-color:var(--rose, #f43f5e); color:var(--rose, #f43f5e); display:inline-flex; align-items:center; gap:6px">
+          🛑 Cancel Translation
+        </button>
+      </div>
     </div>
 
     <!-- Result Card -->
@@ -433,6 +438,11 @@
         <div class="progress-bar-fill shimmer" id="ab-progress-bar" style="width:0%"></div>
       </div>
       <p class="progress-step" id="ab-progress-detail">Preparing document...</p>
+      <div style="display:flex; justify-content:flex-end; margin-top:14px">
+        <button class="btn btn-secondary btn-sm" id="ab-cancel-btn" onclick="cancelJob('ab')" style="border-color:var(--rose, #f43f5e); color:var(--rose, #f43f5e); display:inline-flex; align-items:center; gap:6px">
+          🛑 Cancel Audiobook
+        </button>
+      </div>
     </div>
 
     <!-- Result Card -->

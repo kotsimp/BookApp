@@ -557,6 +557,7 @@ body::after {
 .status-running  { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.25); }
 .status-done     { background: rgba(16,185,129,0.15); color: var(--emerald); border: 1px solid rgba(16,185,129,0.25); }
 .status-error    { background: rgba(244,63,94,0.15); color: var(--rose); border: 1px solid rgba(244,63,94,0.25); }
+.status-cancelled{ background: rgba(244,63,94,0.12); color: var(--rose); border: 1px solid rgba(244,63,94,0.25); }
 
 .status-dot {
   width: 6px; height: 6px;

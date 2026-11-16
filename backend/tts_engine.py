@@ -192,11 +192,16 @@ async def generate_audiobook(
 
     async def _process_chunk(idx: int, chunk: str) -> Optional[str]:
         nonlocal completed
+        from backend.job_manager import is_job_cancelled
+        if is_job_cancelled(job_id):
+            return None
         if not chunk.strip():
             completed += 1
             return None
         chunk_path = temp_dir / f"chunk_{idx:06d}.mp3"
         async with sem:
+            if is_job_cancelled(job_id):
+                return None
             await _tts_chunk_with_retry(
                 chunk,
                 voice_code,
@@ -218,6 +223,12 @@ async def generate_audiobook(
 
     try:
         results = await asyncio.gather(*(_process_chunk(i, c) for i, c in enumerate(text_chunks)))
+    except asyncio.CancelledError:
+        logger.info(f"[{job_id}] Audiobook generation was cancelled.")
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+        raise
     finally:
         ticker_stop.set()
         ticker_task.cancel()

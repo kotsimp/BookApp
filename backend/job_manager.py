@@ -4,6 +4,7 @@ Job Manager - tracks in-memory job state for all translation and audiobook tasks
 
 import uuid
 import time
+import asyncio
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -33,6 +34,38 @@ class Job:
 
 # Global in-memory registry
 _jobs: dict[str, Job] = {}
+_active_tasks: dict[str, asyncio.Task] = {}
+
+
+def register_task(job_id: str, task: asyncio.Task) -> None:
+    """Registers an active asyncio Task for cancellation."""
+    _active_tasks[job_id] = task
+
+
+def unregister_task(job_id: str) -> None:
+    """Unregisters an active asyncio Task."""
+    _active_tasks.pop(job_id, None)
+
+
+def is_job_cancelled(job_id: str) -> bool:
+    """Returns True if the job has been cancelled."""
+    job = _jobs.get(job_id)
+    return job is not None and job.status == "cancelled"
+
+
+def cancel_job(job_id: str) -> bool:
+    """Cancels a running job and its active asyncio task."""
+    job = _jobs.get(job_id)
+    task = _active_tasks.pop(job_id, None)
+    if task and not task.done():
+        task.cancel()
+    if job:
+        job.status = "cancelled"
+        job.current_step = "🛑 Cancelled by user."
+        job.updated_at = time.time()
+        _notify_subscribers(job)
+        return True
+    return False
 
 
 def create_job(file_path: str, file_name: str, file_type: str) -> Job:
