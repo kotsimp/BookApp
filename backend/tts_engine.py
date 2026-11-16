@@ -114,6 +114,11 @@ async def generate_audiobook(
         update_job(job_id, status="error", error="No text found to convert to audio.")
         raise ValueError("No text found to convert to audio.")
 
+    # Determine prosody and style (rate, pitch, pause style)
+    style = (narration_style or "literature").lower()
+    effective_rate = rate if rate else DEFAULT_RATES.get(style, "-12%")
+    effective_pitch = DEFAULT_PITCHES.get(style, "-1Hz")
+
     if ai_polish:
         from backend.ai_polisher import polish_text_with_gemini
         from backend.settings_manager import get_setting
@@ -141,11 +146,6 @@ async def generate_audiobook(
 
     text_chunks = split_into_chunks(raw_text, TTS_CHUNK_SIZE)
     total_chunks = len(text_chunks)
-
-    # Determine prosody (rate, pitch, pause style)
-    style = (narration_style or "literature").lower()
-    effective_rate = rate if rate else DEFAULT_RATES.get(style, "-12%")
-    effective_pitch = DEFAULT_PITCHES.get(style, "-1Hz")
 
     start_progress = 25 if ai_polish else 10
     update_job(job_id,

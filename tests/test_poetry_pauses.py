@@ -59,6 +59,40 @@ class TestPoetryPauses(unittest.TestCase):
         self.assertEqual(default_pitches["poetry"], "-1Hz")
         self.assertIn("poetry", STYLE_PROMPTS)
 
+    def test_generate_audiobook_style_variable_order(self):
+        # Ensure style variable is defined before ai_polish check
+        import asyncio
+        from backend.tts_engine import generate_audiobook
+        import tempfile, os
+
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w", encoding="utf-8") as f:
+            f.write("Σα βγεις στον πηγαιμό για την Ιθάκη.\n")
+            tmp_in = f.name
+        tmp_out = tmp_in.replace(".txt", ".mp3")
+
+        try:
+            async def run():
+                await generate_audiobook(
+                    job_id="test-regression-style-order",
+                    file_path=tmp_in,
+                    file_type="docx",
+                    language="greek",
+                    voice_name="Nestoras (Male)",
+                    output_path=tmp_out,
+                    translated_text_path=tmp_in,
+                    narration_style="poetry",
+                    ai_polish=True,
+                    api_key="AQ.TestKeyOrderValidation",
+                )
+            asyncio.run(run())
+        finally:
+            for p in (tmp_in, tmp_out):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+
 
 if __name__ == "__main__":
     unittest.main()
