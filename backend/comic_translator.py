@@ -123,12 +123,85 @@ def _cluster_text_into_balloons(text_blocks: List[Any]) -> List[Dict[str, Any]]:
     return clusters
 
 
+async def _ai_polish_comic_balloons(
+    balloons: List[Dict[str, str]],
+    api_key: str,
+) -> List[str]:
+    """
+    Polishes speech balloon dialogue using Gemini API specifically for Graphic Novels / Comics.
+    Produces concise, natural, colloquial Greek dialogue tailored for comic balloons.
+    """
+    if not balloons or not api_key:
+        return [b["draft"] for b in balloons]
+
+    if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
+        return [f"[AI Polish]: {b['draft']}" if b["draft"] else "" for b in balloons]
+
+    dialogue_inputs = [
+        {"id": i + 1, "source": b["source"], "draft": b["draft"]}
+        for i, b in enumerate(balloons) if b["draft"].strip()
+    ]
+    if not dialogue_inputs:
+        return [b["draft"] for b in balloons]
+
+    import urllib.request
+    prompt = (
+        "Είσαι έμπειρος επιμελητής και μεταφραστής εκδόσεων Graphic Novels, Comics και Manga. "
+        "Βελτίωσε και επιμελήσου τους ακόλουθους διαλόγους μπαλονιών στα Ελληνικά ώστε να αποκτήσουν άψογη, φυσική και ζωντανή προφορική ροή: "
+        "1. ΣΥΝΤΟΜΙΑ: Κράτησε τις ατάκες περιεκτικές και κοφτές ώστε να χωρούν άνετα στα μπαλόνια διαλόγου χωρίς να ξεχειλίζουν. "
+        "2. ΖΩΝΤΑΝΙΑ & ΥΦΟΣ: Χρησιμοποίησε φυσικό, σύγχρονο προφορικό λόγο, διατηρώντας το χιούμορ, την ένταση, τα επιφωνήματα και τον ιδιαίτερο χαρακτήρα των ηρώων. "
+        "3. ΕΞΑΛΕΙΨΗ ΑΓΓΛΙΣΜΩΝ: Απόδωσε ιδιωματισμούς με ισοδύναμες ελληνικές εκφράσεις και απέφυγε κατά λέξη μεταφράσεις. "
+        "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ έναν έγκυρο πίνακα JSON με αντικείμενα: [{\"id\": 1, \"polished\": \"τελική ατάκα στα ελληνικά\"}]."
+    )
+
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": f"{prompt}\n\nΔΙΑΛΟΓΟΙ ΣΕΛΙΔΑΣ:\n{json.dumps(dialogue_inputs, ensure_ascii=False, indent=2)}"}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 2048,
+        }
+    }
+
+    for model in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-1.5-flash"]:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
+            )
+            loop = asyncio.get_event_loop()
+            resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=12).read().decode("utf-8"))
+            data = json.loads(resp_raw)
+            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            res_list = json.loads(raw_text)
+            polished_map = {item["id"]: item.get("polished", "").strip() for item in res_list if "id" in item}
+
+            results = []
+            for i, b in enumerate(balloons):
+                item_id = i + 1
+                pol = polished_map.get(item_id)
+                results.append(pol if pol else b["draft"])
+            return results
+        except Exception as ex:
+            logger.debug(f"AI Polish attempt with {model} failed: {ex}")
+
+    return [b["draft"] for b in balloons]
+
+
 async def _translate_page_vector(
     page: fitz.Page,
     clusters: List[Dict[str, Any]],
     source_lang: str,
     target_lang: str,
     font_path: str,
+    api_key: Optional[str] = None,
 ) -> List[str]:
     """
     Translates detected speech balloons on a digital PDF page,
@@ -152,6 +225,17 @@ async def _translate_page_vector(
             logger.warning(f"Error translating balloon '{orig[:30]}': {ex}")
             translated_balloons.append(orig)
             page_dialogues.append(orig)
+
+    # 1b. AI Polish comic dialogue with Gemini if API key available
+    if api_key and translated_balloons:
+        try:
+            balloons_data = [{"source": c["text"], "draft": translated_balloons[i]} for i, c in enumerate(clusters)]
+            polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key)
+            if polished_texts and len(polished_texts) == len(translated_balloons):
+                translated_balloons = polished_texts
+                page_dialogues = [t for t in translated_balloons if t.strip()]
+        except Exception as ex:
+            logger.warning(f"AI Polish on comic page skipped: {ex}")
 
     # 2. Redact original text in balloons with matching background fill
     for c in clusters:
@@ -416,7 +500,7 @@ async def translate_comic_document(
             clusters = _cluster_text_into_balloons(text_blocks)
             logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons.")
             page_dialogues = await _translate_page_vector(
-                page, clusters, source_lang, target_lang, font_path
+                page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
             )
         else:
             # Scanned / raster image page: fallback to Gemini Vision if key exists

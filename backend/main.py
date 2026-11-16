@@ -76,6 +76,8 @@ class TranslateRequest(BaseModel):
     target_lang: str   # 'english' or 'greek'
     output_format: str = "txt"  # txt, docx, pdf, epub
     layout_mode: str = "standard"  # 'standard' or 'literature'
+    ai_polish: bool = False
+    api_key: Optional[str] = None
 
 
 class AudiobookRequest(BaseModel):
@@ -250,7 +252,15 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
 
     output_format = getattr(req, "output_format", "txt") or "txt"
     layout_mode = getattr(req, "layout_mode", "standard") or "standard"
-    update_job(req.job_id, mode="translate", status="running", output_format=output_format, layout_mode=layout_mode)
+    update_job(
+        req.job_id,
+        mode="translate",
+        status="running",
+        output_format=output_format,
+        layout_mode=layout_mode,
+        ai_polish=req.ai_polish,
+        api_key=req.api_key,
+    )
 
     background_tasks.add_task(
         _run_translation,
@@ -260,12 +270,14 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         req.source_lang,
         req.target_lang,
         output_path,
+        req.ai_polish,
+        req.api_key,
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
-async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path):
+async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path, ai_polish=False, api_key=None):
     task = asyncio.current_task()
     if task:
         register_task(job_id, task)
@@ -284,6 +296,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         # 0. Graphic Novel / Comic translation (balloons only, preserving 100% artwork)
         if layout in ("comic", "graphic_novel") or file_type in ("cbz", "cbr"):
             from backend.comic_translator import translate_comic_document
+            from backend.settings_manager import get_setting
+            resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
             final_comic_pdf = await translate_comic_document(
                 job_id=job_id,
                 file_path=file_path,
@@ -291,6 +305,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 source_lang=source_lang,
                 target_lang=target_lang,
                 output_path=output_path,
+                api_key=resolved_key if (ai_polish or resolved_key) else None,
             )
             final_path = Path(final_comic_pdf)
             job.output_path = str(final_comic_pdf)

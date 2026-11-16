@@ -383,6 +383,8 @@ async function startTranslation() {
   const targetLang = document.getElementById('tr-target-lang').value;
   const outputFormat = document.getElementById('tr-output-format').value || 'txt';
   const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
+  const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
+  const apiKey = localStorage.getItem('gemini_api_key') || null;
 
   // Update download button label to show chosen format
   const labelEl = document.getElementById('tr-format-label');
@@ -412,6 +414,8 @@ async function startTranslation() {
         target_lang: targetLang,
         output_format: outputFormat,
         layout_mode: layoutMode,
+        ai_polish: aiPolish,
+        api_key: aiPolish ? apiKey : null,
       }),
     });
     if (!res.ok) {
