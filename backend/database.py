@@ -109,6 +109,9 @@ def db_save_job(job_dict: Dict[str, Any]) -> None:
                         :layout_mode, :error, :metadata_json
                     )
                     ON CONFLICT(job_id) DO UPDATE SET
+                        file_path=excluded.file_path,
+                        file_name=excluded.file_name,
+                        file_type=excluded.file_type,
                         status=excluded.status,
                         mode=excluded.mode,
                         progress=excluded.progress,

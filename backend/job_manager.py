@@ -4,7 +4,9 @@ Job Manager - tracks in-memory job state for all translation and audiobook tasks
 
 import uuid
 import time
+import json
 import asyncio
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -14,22 +16,121 @@ class Job:
     job_id: str
     file_path: str
     file_name: str
-    file_type: str          # 'pdf', 'docx', 'epub'
-    status: str             # 'idle', 'running', 'done', 'error'
+    file_type: str          # 'pdf', 'docx', 'epub', 'cbz'
+    status: str             # 'idle', 'running', 'done', 'error', 'cancelled'
     mode: str               # 'translate' or 'audiobook'
     progress: int           # 0-100
     current_step: str       # human-readable status message
-    total_chunks: int       # total processing units
+    total_chunks: int       # total processing units (pages or AI batches)
     done_chunks: int        # completed units
     created_at: float
     updated_at: float
     # Optional / nullable fields (must have defaults)
     output_path: Optional[str] = None
-    output_format: Optional[str] = None  # txt, docx, pdf, epub
-    layout_mode: str = "standard"        # 'standard' or 'literature'
+    output_format: Optional[str] = None  # txt, docx, pdf, epub, cbz, cbr
+    layout_mode: str = "standard"        # 'standard', 'literature', 'comic'
     error: Optional[str] = None
+    source_lang: str = "english"
+    target_lang: str = "greek"
+    ai_polish: bool = False
+    reading_direction: str = "ltr"
+    total_pages: int = 0
+    done_pages: int = 0
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
+
+
+def _heal_file_path(job_id: str, file_path: str, file_name: str) -> str:
+    """Auto-heals stale temp/uploads/tmp/... paths by checking temp/uploads/<job_id>/."""
+    if file_path and Path(file_path).exists():
+        return file_path
+    base_up = Path(__file__).resolve().parent.parent / "temp" / "uploads" / job_id
+    if base_up.exists():
+        if file_name and (base_up / file_name).is_file():
+            return str(base_up / file_name)
+        ufiles = [f for f in base_up.iterdir() if f.is_file()]
+        if ufiles:
+            return str(ufiles[0])
+    return file_path
+
+
+def _job_to_db_dict(job: Job) -> dict:
+    return {
+        "job_id": job.job_id,
+        "file_path": job.file_path,
+        "file_name": job.file_name,
+        "file_type": job.file_type,
+        "status": job.status,
+        "mode": job.mode,
+        "progress": job.progress,
+        "current_step": job.current_step,
+        "total_chunks": job.total_chunks,
+        "done_chunks": job.done_chunks,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "output_path": job.output_path,
+        "output_format": job.output_format,
+        "layout_mode": job.layout_mode,
+        "error": job.error,
+        "metadata": {
+            "source_lang": job.source_lang,
+            "target_lang": job.target_lang,
+            "ai_polish": bool(job.ai_polish),
+            "reading_direction": job.reading_direction,
+            "total_pages": int(job.total_pages or 0),
+            "done_pages": int(job.done_pages or 0),
+        },
+    }
+
+
+def _job_from_db_row(row: dict) -> Job:
+    meta = {}
+    raw_meta = row.get("metadata_json")
+    if raw_meta:
+        try:
+            parsed = json.loads(raw_meta)
+            if isinstance(parsed, dict):
+                meta = parsed
+        except Exception:
+            pass
+
+    jid = row["job_id"]
+    orig_fp = row["file_path"] or ""
+    fname = row["file_name"] or ""
+    healed_fp = _heal_file_path(jid, orig_fp, fname)
+
+    job = Job(
+        job_id=jid,
+        file_path=healed_fp,
+        file_name=fname,
+        file_type=row["file_type"] or "",
+        status=row["status"] or "idle",
+        mode=row["mode"] or "",
+        progress=row["progress"] or 0,
+        current_step=row["current_step"] or "",
+        total_chunks=row["total_chunks"] or 0,
+        done_chunks=row["done_chunks"] or 0,
+        created_at=row["created_at"] or time.time(),
+        updated_at=row["updated_at"] or time.time(),
+        output_path=row["output_path"],
+        output_format=row["output_format"],
+        layout_mode=row["layout_mode"] or "standard",
+        error=row["error"],
+        source_lang=meta.get("source_lang") or "english",
+        target_lang=meta.get("target_lang") or "greek",
+        ai_polish=bool(meta.get("ai_polish", False)),
+        reading_direction=meta.get("reading_direction") or "ltr",
+        total_pages=int(meta.get("total_pages") or 0),
+        done_pages=int(meta.get("done_pages") or 0),
+    )
+
+    if healed_fp != orig_fp and healed_fp:
+        try:
+            from backend.database import db_save_job
+            db_save_job(_job_to_db_dict(job))
+        except Exception:
+            pass
+    return job
 
 
 # Global in-memory registry
@@ -96,24 +197,7 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
     _jobs[job_id] = job
     try:
         from backend.database import db_save_job
-        db_save_job({
-            "job_id": job.job_id,
-            "file_path": job.file_path,
-            "file_name": job.file_name,
-            "file_type": job.file_type,
-            "status": job.status,
-            "mode": job.mode,
-            "progress": job.progress,
-            "current_step": job.current_step,
-            "total_chunks": job.total_chunks,
-            "done_chunks": job.done_chunks,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-            "output_path": job.output_path,
-            "output_format": job.output_format,
-            "layout_mode": job.layout_mode,
-            "error": job.error,
-        })
+        db_save_job(_job_to_db_dict(job))
     except Exception:
         pass
     return job
@@ -121,31 +205,18 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
 
 def get_job(job_id: str) -> Optional[Job]:
     if job_id in _jobs:
-        return _jobs[job_id]
+        job = _jobs[job_id]
+        healed = _heal_file_path(job.job_id, job.file_path, job.file_name)
+        if healed != job.file_path:
+            job.file_path = healed
+        return job
 
     # Check SQLite database first
     try:
         from backend.database import db_get_job
         row = db_get_job(job_id)
         if row:
-            job = Job(
-                job_id=row["job_id"],
-                file_path=row["file_path"] or "",
-                file_name=row["file_name"] or "",
-                file_type=row["file_type"] or "",
-                status=row["status"] or "idle",
-                mode=row["mode"] or "",
-                progress=row["progress"] or 0,
-                current_step=row["current_step"] or "",
-                total_chunks=row["total_chunks"] or 0,
-                done_chunks=row["done_chunks"] or 0,
-                created_at=row["created_at"] or time.time(),
-                updated_at=row["updated_at"] or time.time(),
-                output_path=row["output_path"],
-                output_format=row["output_format"],
-                layout_mode=row["layout_mode"] or "standard",
-                error=row["error"],
-            )
+            job = _job_from_db_row(row)
             _jobs[job_id] = job
             return job
     except Exception:
@@ -153,7 +224,6 @@ def get_job(job_id: str) -> Optional[Job]:
 
     # Reconstruct from disk if server restarted
     try:
-        from pathlib import Path
         base_temp = Path(__file__).resolve().parent.parent / "temp"
         out_dir = base_temp / "outputs" / job_id
         up_dir = base_temp / "uploads" / job_id
@@ -238,24 +308,7 @@ def update_job(job_id: str, **kwargs):
         # Persist to SQLite
         try:
             from backend.database import db_save_job
-            db_save_job({
-                "job_id": job.job_id,
-                "file_path": job.file_path,
-                "file_name": job.file_name,
-                "file_type": job.file_type,
-                "status": job.status,
-                "mode": job.mode,
-                "progress": job.progress,
-                "current_step": job.current_step,
-                "total_chunks": job.total_chunks,
-                "done_chunks": job.done_chunks,
-                "created_at": job.created_at,
-                "updated_at": job.updated_at,
-                "output_path": job.output_path,
-                "output_format": job.output_format,
-                "layout_mode": job.layout_mode,
-                "error": job.error,
-            })
+            db_save_job(_job_to_db_dict(job))
         except Exception:
             pass
         # Notify SSE subscribers
@@ -273,6 +326,8 @@ def _notify_subscribers(job: Job):
                 "current_step": job.current_step,
                 "total_chunks": job.total_chunks,
                 "done_chunks": job.done_chunks,
+                "total_pages": int(getattr(job, "total_pages", 0) or 0),
+                "done_pages": int(getattr(job, "done_pages", 0) or 0),
                 "error": job.error,
                 "output_path": job.output_path,
             })
@@ -293,30 +348,12 @@ def list_jobs() -> list[Job]:
         for r in db_rows:
             jid = r["job_id"]
             if jid not in _jobs:
-                _jobs[jid] = Job(
-                    job_id=r["job_id"],
-                    file_path=r["file_path"] or "",
-                    file_name=r["file_name"] or "",
-                    file_type=r["file_type"] or "",
-                    status=r["status"] or "idle",
-                    mode=r["mode"] or "",
-                    progress=r["progress"] or 0,
-                    current_step=r["current_step"] or "",
-                    total_chunks=r["total_chunks"] or 0,
-                    done_chunks=r["done_chunks"] or 0,
-                    created_at=r["created_at"] or time.time(),
-                    updated_at=r["updated_at"] or time.time(),
-                    output_path=r["output_path"],
-                    output_format=r["output_format"],
-                    layout_mode=r["layout_mode"] or "standard",
-                    error=r["error"],
-                )
+                _jobs[jid] = _job_from_db_row(r)
     except Exception:
         pass
 
     # Check disk for any jobs from previous runs
     try:
-        from pathlib import Path
         base_temp = Path(__file__).resolve().parent.parent / "temp"
         out_root = base_temp / "outputs"
         if out_root.exists():
@@ -333,7 +370,6 @@ def list_jobs() -> list[Job]:
 def cleanup_old_jobs(max_age_seconds: int = 86400):
     """Remove in-memory jobs, old DB records, and temp upload/output directories older than max_age_seconds (default 24h)."""
     import shutil
-    from pathlib import Path
 
     now = time.time()
     to_delete = [jid for jid, j in _jobs.items() if now - j.created_at > max_age_seconds]

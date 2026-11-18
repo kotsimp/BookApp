@@ -413,6 +413,53 @@ class TestE2ERegressionGuard(unittest.TestCase):
             _jobs.pop(jid, None)
             db_delete_job(jid)
 
+    def test_9_sqlite_file_path_update_and_resume_settings_restore(self):
+        print("-> 9. Testing SQLite file_path persistence on upload & full resume settings restore...")
+        from backend.database import db_get_job
+        doc_p = Path("temp/reg_resume_settings.docx")
+        d = docx.Document()
+        d.add_paragraph("Test chapter text for verifying file_path persistence and resume settings restore.")
+        d.save(str(doc_p))
+        jid = None
+        try:
+            st_u, up = api_post_file("/upload", doc_p, "reg_resume_settings.docx")
+            self.assertEqual(st_u, 200)
+            jid = up["job_id"]
+
+            # 1) SQLite file_path MUST be temp/uploads/<job_id>/..., NEVER temp/uploads/tmp/...
+            row = db_get_job(jid)
+            self.assertIsNotNone(row)
+            self.assertIn(jid, row["file_path"], f"SQLite file_path stuck in tmp dir: {row['file_path']}")
+            self.assertNotIn("\\tmp\\", row["file_path"])
+            self.assertTrue(Path(row["file_path"]).is_file(), f"Persisted file_path missing on disk: {row['file_path']}")
+
+            # 2) Start a translation with literature + pdf + ai_polish=True and verify /api/status returns all settings
+            api_post_json("/translate", {
+                "job_id": jid,
+                "source_lang": "english",
+                "target_lang": "greek",
+                "output_format": "pdf",
+                "layout_mode": "literature",
+                "ai_polish": True,
+                "api_key": "AQ.TestMockResume123",
+            })
+            st_s, s_data = api_get(f"/status/{jid}")
+            self.assertEqual(st_s, 200)
+            self.assertEqual(s_data["output_format"], "pdf")
+            self.assertEqual(s_data["layout_mode"], "literature")
+            self.assertEqual(s_data["source_lang"], "english")
+            self.assertEqual(s_data["target_lang"], "greek")
+            self.assertTrue(s_data["ai_polish"])
+            self.assertGreaterEqual(s_data["total_pages"], 1)
+            print("   SQLite file_path update + full resume settings restore: OK")
+        finally:
+            doc_p.unlink(missing_ok=True)
+            if jid:
+                try:
+                    api_delete(f"/jobs/{jid}")
+                except Exception:
+                    pass
+
 
 if __name__ == "__main__":
     unittest.main()

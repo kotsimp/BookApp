@@ -265,6 +265,14 @@ async def upload_file(file: UploadFile = File(...)):
     from backend.parsers import detect_is_graphic_novel
     comic_info = detect_is_graphic_novel(str(final_path), file_type, file.filename)
 
+    # Persist page count and auto-detected comic layout in SQLite metadata
+    update_job(
+        job.job_id,
+        total_pages=page_count,
+        layout_mode="comic" if comic_info["is_comic"] else "standard",
+        ai_polish=bool(comic_info["is_scanned"]),
+    )
+
     logger.info(
         f"Uploaded: {file.filename} → job_id={job.job_id}, pages≈{page_count}, lang={detected_language}, is_comic={comic_info['is_comic']}, is_scanned={comic_info['is_scanned']}"
     )
@@ -307,6 +315,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         mode="translate",
         status="running",
         error=None,
+        source_lang=req.source_lang,
+        target_lang=req.target_lang,
         output_format=output_format,
         layout_mode=layout_mode,
         reading_direction=reading_direction,
@@ -602,6 +612,8 @@ async def progress_stream(job_id: str):
             "current_step": job.current_step,
             "total_chunks": job.total_chunks,
             "done_chunks": job.done_chunks,
+            "total_pages": int(getattr(job, "total_pages", 0) or 0),
+            "done_pages": int(getattr(job, "done_pages", 0) or 0),
             "error": job.error,
             "output_path": job.output_path,
         }
@@ -638,15 +650,39 @@ async def progress_stream(job_id: str):
 
 @app.get("/api/status/{job_id}")
 async def job_status(job_id: str):
-    """Get current job status (non-streaming)."""
+    """Get current job status and persisted translation settings (non-streaming)."""
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' not found.")
+
+    # Lazily populate exact page count for older jobs if missing
+    total_pages = int(getattr(job, "total_pages", 0) or 0)
+    if total_pages == 0 and job.file_path and Path(job.file_path).exists():
+        try:
+            total_pages = count_pages(job.file_path, job.file_type)
+            if total_pages > 0:
+                update_job(job_id, total_pages=total_pages)
+        except Exception:
+            pass
+
+    # Detect prior AI Polish session from checkpoint if metadata predates ai_polish persistence
+    ai_polish = bool(getattr(job, "ai_polish", False))
+    cp_file = OUTPUT_DIR / job_id / ".direct_ai_checkpoint.json"
+    if not ai_polish and cp_file.is_file():
+        ai_polish = True
+
     return {
         "job_id": job.job_id,
         "file_name": job.file_name,
         "file_type": job.file_type,
+        "output_format": job.output_format,
         "layout_mode": job.layout_mode,
+        "source_lang": getattr(job, "source_lang", "english") or "english",
+        "target_lang": getattr(job, "target_lang", "greek") or "greek",
+        "ai_polish": ai_polish,
+        "reading_direction": getattr(job, "reading_direction", "ltr") or "ltr",
+        "total_pages": total_pages,
+        "done_pages": int(getattr(job, "done_pages", 0) or 0),
         "status": job.status,
         "mode": job.mode,
         "progress": job.progress,
@@ -1379,6 +1415,8 @@ async def _execute_queue_item(q_item):
         mode="translate",
         status="running",
         error=None,
+        source_lang=q_item.source_lang,
+        target_lang=q_item.target_lang,
         output_format=q_item.output_format,
         layout_mode=q_item.layout_mode,
         reading_direction=q_item.reading_direction,

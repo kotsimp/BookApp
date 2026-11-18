@@ -867,7 +867,31 @@ async def translate_and_polish_direct_with_gemini(
         batches.append(curr_b)
 
     total_batches = max(1, len(batches))
-    update_job(job_id, total_chunks=total_batches, done_chunks=0, progress=5, current_step=f"Single-Pass AI Translation ({total_batches} parallel batches)...")
+    results = ["" for _ in batches]
+    completed = 0
+    pages_done = 0
+    cached_b = checkpoint_data.get("batches", {})
+    for i in range(total_batches):
+        if str(i) in cached_b and cached_b[str(i)].strip():
+            results[i] = cached_b[str(i)]
+            completed += 1
+            pages_done += len(batches[i])
+
+    init_pct = 8 + int((completed / total_batches) * 85) if completed > 0 else 5
+    init_step = (
+        f"Resuming Single-Pass AI Translation & Polish: batch {completed}/{total_batches} ({pages_done}/{total_pages} pages)..."
+        if completed > 0
+        else f"Single-Pass AI Translation ({total_batches} parallel batches, {total_pages} pages)..."
+    )
+    update_job(
+        job_id,
+        total_chunks=total_batches,
+        done_chunks=completed,
+        total_pages=total_pages,
+        done_pages=pages_done,
+        progress=init_pct,
+        current_step=init_step,
+    )
 
     sem = asyncio.Semaphore(5)
     target_temp = STYLE_TEMPERATURES.get(style, 0.30)
@@ -877,7 +901,7 @@ async def translate_and_polish_direct_with_gemini(
         # Extract entity consistency dossier for long documents
         entity_dossier = checkpoint_data.get("entity_dossier", "")
         if not entity_dossier and len(full_original) > 18000:
-            update_job(job_id, current_step="Extracting character & terminology dossier...", progress=6)
+            update_job(job_id, current_step="Extracting character & terminology dossier...", progress=max(6, init_pct))
             entity_dossier = await _extract_entity_dossier(full_original, api_key, session=session)
             if entity_dossier:
                 checkpoint_data["entity_dossier"] = entity_dossier
@@ -902,16 +926,8 @@ async def translate_and_polish_direct_with_gemini(
                     f"{g_lines}\n"
                 )
 
-        results = ["" for _ in batches]
-        completed = 0
-        cached_b = checkpoint_data.get("batches", {})
-        for i in range(total_batches):
-            if str(i) in cached_b and cached_b[str(i)].strip():
-                results[i] = cached_b[str(i)]
-                completed += 1
-
         async def _worker(b_idx: int, b_items: list[tuple[int, str]]):
-            nonlocal completed
+            nonlocal completed, pages_done
             if results[b_idx]:
                 return
             if is_job_cancelled(job_id):
@@ -921,6 +937,7 @@ async def translate_and_polish_direct_with_gemini(
             if all(not txt for _, txt in b_items):
                 results[b_idx] = "\n\n".join(f"=== PAGE {pn} ===" for pn, _ in b_items)
                 completed += 1
+                pages_done += len(b_items)
                 return
 
             batch_src = "\n\n".join(f"=== PAGE {pn} ===\n{txt}" for pn, txt in b_items)
@@ -961,13 +978,16 @@ async def translate_and_polish_direct_with_gemini(
                     results[b_idx] = "\n\n".join(fallback_parts)
 
             completed += 1
+            pages_done += len(b_items)
             pct = 8 + int((completed / total_batches) * 85)
             update_job(
                 job_id,
                 done_chunks=completed,
                 total_chunks=total_batches,
+                done_pages=pages_done,
+                total_pages=total_pages,
                 progress=pct,
-                current_step=f"Single-Pass AI Translation & Polish: batch {completed}/{total_batches}...",
+                current_step=f"Single-Pass AI Translation & Polish: batch {completed}/{total_batches} ({pages_done}/{total_pages} pages)...",
             )
 
         await asyncio.gather(*(_worker(i, b) for i, b in enumerate(batches)))

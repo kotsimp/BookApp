@@ -911,10 +911,25 @@ function updateProgress(prefix, data) {
   const detailEl = document.getElementById(`${prefix}-progress-detail`);
   if (data.total_chunks > 0 && data.status !== 'done') {
     if (prefix === 'tr') {
-      const isBatchMode = (data.current_step || '').toLowerCase().includes('batch');
-      detailEl.textContent = isBatchMode
-        ? `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (~4–5 pages each)`
-        : `Translated ${data.done_chunks} of ${data.total_chunks} pages`;
+      const stepLower = (data.current_step || '').toLowerCase();
+      const totalPages = Number(data.total_pages || 0);
+      const donePages = Number(data.done_pages || 0);
+      const isBatchMode =
+        stepLower.includes('batch') ||
+        stepLower.includes('single-pass') ||
+        stepLower.includes('ai translation') ||
+        (totalPages > 0 && totalPages > data.total_chunks);
+      if (isBatchMode) {
+        if (totalPages > 0 && donePages > 0) {
+          detailEl.textContent = `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (${donePages} / ${totalPages} pages)`;
+        } else if (totalPages > 0) {
+          detailEl.textContent = `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (${totalPages} pages total)`;
+        } else {
+          detailEl.textContent = `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (~4–5 pages each)`;
+        }
+      } else {
+        detailEl.textContent = `Translated ${data.done_chunks} of ${data.total_chunks} pages`;
+      }
     } else {
       detailEl.textContent = `Generated audio part ${data.done_chunks} of ${data.total_chunks}`;
     }
@@ -1236,9 +1251,11 @@ async function loadHistoryJob(jobId, mode) {
       const uploadZone = document.getElementById(`${prefix}-upload-zone`);
       const selectedFile = document.getElementById(`${prefix}-selected-file`);
       if (nameEl) nameEl.textContent = data.file_name;
+      const pagesTag = data.total_pages > 0 ? `${data.total_pages} pages · ` : '';
+      const fmtTag = data.output_format ? `${data.output_format.toUpperCase()} · ` : '';
       if (metaEl) metaEl.textContent = data.status === 'done'
-        ? 'Loaded from Session History · Ready'
-        : `Loaded from Session History · ${data.current_step || 'Ready to translate'}`;
+        ? `Loaded from Session History · ${pagesTag}${fmtTag}Ready`
+        : `Loaded from Session History · ${pagesTag}${fmtTag}${data.current_step || 'Ready to resume'}`;
       if (uploadZone) uploadZone.style.display = 'none';
       if (selectedFile) {
         selectedFile.style.display = '';
@@ -1249,7 +1266,38 @@ async function loadHistoryJob(jobId, mode) {
     if (prefix === 'tr') {
       const ext = (data.file_type || (data.file_name || '').split('.').pop() || '').toLowerCase();
       const isComic = data.layout_mode === 'comic' || ['cbz', 'cbr', 'zip'].includes(ext);
+
+      // Restore original language direction
+      if (data.source_lang && data.target_lang && langConfig[data.source_lang] && langConfig[data.target_lang]) {
+        setLangs(data.source_lang, data.target_lang);
+      }
+
+      // Restore comic lock or original layout style (standard / literature)
       setGraphicNovelLock(isComic);
+      if (!isComic) {
+        const savedLayout = (data.layout_mode === 'literature') ? 'literature' : 'standard';
+        const layoutBtn = document.getElementById(`layout-${savedLayout}`);
+        if (layoutBtn) selectLayout(savedLayout, layoutBtn);
+      }
+
+      // Restore original output format (pdf / epub / docx / txt / cbz / cbr)
+      if (data.output_format) {
+        const savedFmt = data.output_format.toLowerCase();
+        const fmtBtn = document.getElementById(`fmt-${savedFmt}`);
+        if (fmtBtn && !fmtBtn.disabled) {
+          selectFormat(savedFmt, fmtBtn);
+        }
+      }
+
+      // Restore AI Polish checkbox & reading direction
+      const aiChk = document.getElementById('tr-ai-polish');
+      if (aiChk && typeof data.ai_polish === 'boolean') {
+        aiChk.checked = data.ai_polish;
+      }
+      if (data.reading_direction) {
+        const dirRadio = document.querySelector(`input[name="tr-reading-dir"][value="${data.reading_direction}"]`);
+        if (dirRadio) dirRadio.checked = true;
+      }
     }
 
     if (prefix === 'ab') {
