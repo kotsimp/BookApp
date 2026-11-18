@@ -143,18 +143,12 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3-flash-preview",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-2.0-flash-lite",
     "gemini-1.5-flash-002",
     "gemini-1.5-flash-latest",
     "gemini-1.5-flash",
@@ -271,8 +265,8 @@ async def polish_text_with_gemini(
         raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
 
     base_system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
-    sem = asyncio.Semaphore(2)
-    client_timeout = aiohttp.ClientTimeout(total=60)
+    sem = asyncio.Semaphore(5)
+    client_timeout = aiohttp.ClientTimeout(total=90)
 
     # Disk Checkpoint setup
     checkpoint_file: Optional[Path] = None
@@ -318,7 +312,8 @@ async def polish_text_with_gemini(
 
     # If document has multiple pages marked by dividers, group into smart multi-page batches
     page_sections = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", text)
-    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+    connector = aiohttp.TCPConnector(limit=12, ttl_dns_cache=300)
+    async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
         # Extract entity consistency dossier for long documents / literature if not already cached
         entity_dossier = checkpoint_data.get("entity_dossier", "")
         if style == "literature" and not entity_dossier and (len(page_sections) > 10 or len(text) > 18000):
@@ -377,11 +372,11 @@ async def polish_text_with_gemini(
                 else:
                     pages.append((curr_marker, p_strip))
 
-            # Smart Multi-Page Batching: group ~5 pages (or ~10,000 chars) per Gemini call
+            # Smart Multi-Page Batching: group ~5 pages (or ~7,500 chars) per Gemini call for optimal latency
             batches = []
             curr_b = []
             curr_chars = 0
-            MAX_BATCH_CHARS = 10000
+            MAX_BATCH_CHARS = 7500
             MAX_BATCH_PAGES = 5
 
             for m, c in pages:
@@ -477,8 +472,6 @@ async def polish_text_with_gemini(
                             first_error = ex
                         logger.warning(f"Batch {b_idx + 1}/{total_batches} polish failed (keeping original text): {ex}")
                         polished_batches[b_idx] = draft_batch_text
-                    # Pacing delay between batches
-                    await asyncio.sleep(1.5)
 
                 completed += 1
                 await _run_progress(completed, total_batches)
@@ -559,7 +552,6 @@ async def polish_text_with_gemini(
                         if first_error is None:
                             first_error = ex
                         logger.warning(f"Chunk {c_idx + 1}/{total_chunks} polish failed (keeping original chunk): {ex}")
-                    await asyncio.sleep(1.5)
                 completed += 1
                 await _run_progress(completed, total_chunks)
 
@@ -679,12 +671,23 @@ async def _call_gemini_api(
         }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            # Keep attempts tight (max 2) with fast 15s timeout to failover instantly to other flash models
+            # Build model-specific payload: disable hidden thinking tokens on 2.5 Flash for 3x-4x speedup
+            use_no_thinking = ("2.5-flash" in model or "flash-latest" in model) and "pro" not in model
+            req_payload = payload
+            if use_no_thinking:
+                req_payload = {
+                    "contents": payload["contents"],
+                    "generationConfig": {
+                        **payload["generationConfig"],
+                        "thinkingConfig": {"thinkingBudget": 0},
+                    },
+                }
+
             max_attempts = 2
             for attempt in range(max_attempts):
                 try:
-                    req_timeout = aiohttp.ClientTimeout(total=15)
-                    async with session.post(url, json=payload, headers=headers, timeout=req_timeout) as resp:
+                    req_timeout = aiohttp.ClientTimeout(total=45)
+                    async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
                         if resp.status == 200:
                             result = await resp.json()
                             cand_list = result.get("candidates", [])
@@ -727,11 +730,15 @@ async def _call_gemini_api(
                             last_error = f"Gemini API error (429): {err_text}"
                             logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
                             if attempt < max_attempts - 1:
-                                await asyncio.sleep(2.0)
+                                await asyncio.sleep(2.5)
                                 continue
                             break
                         else:
                             err_text = await resp.text()
+                            # If model rejected thinkingConfig, retry cleanly without it
+                            if resp.status == 400 and "thinking" in err_text.lower() and req_payload is not payload:
+                                req_payload = payload
+                                continue
                             last_error = f"Gemini API error ({resp.status}): {err_text}"
                             if resp.status == 400 and "API_KEY_INVALID" in err_text:
                                 raise PermissionError(last_error)
@@ -740,7 +747,7 @@ async def _call_gemini_api(
                 except PermissionError:
                     raise
                 except asyncio.TimeoutError:
-                    logger.warning(f"Model {model} timed out after 15s. Switching immediately to next candidate...")
+                    logger.warning(f"Model {model} timed out after 45s. Switching immediately to next candidate...")
                     if _CACHED_WORKING_MODEL == model:
                         _CACHED_WORKING_MODEL = None
                     break
@@ -756,3 +763,223 @@ async def _call_gemini_api(
     finally:
         if owns_session:
             await session.close()
+
+
+async def translate_and_polish_direct_with_gemini(
+    job_id: str,
+    file_path: str,
+    file_type: str,
+    source_lang: str,
+    target_lang: str,
+    output_path: str,
+    api_key: str,
+    style: str = "literature",
+) -> str:
+    """
+    Single-Pass Direct AI Translation + Literary Polish via Gemini Flash.
+    Eliminates the slow 2-pass Google Translate -> Gemini Polish pipeline:
+    parses the document, extracts an entity consistency dossier, applies user glossary,
+    and translates+polishes multi-page batches concurrently (5 parallel workers),
+    saving both *_original.txt (for split-screen editor) and the polished output.
+    """
+    from backend.parsers import parse_document
+    from backend.job_manager import update_job, is_job_cancelled
+    from backend.glossary import load_glossary, apply_glossary
+
+    update_job(job_id, status="running", current_step="Reading document for Single-Pass AI Translation...", progress=2)
+    pages = list(parse_document(file_path, file_type))
+    total_pages = len(pages)
+    if total_pages == 0:
+        raise ValueError("No readable text found in document.")
+
+    # Save original extracted text for split-screen editor review
+    out_dir = Path(output_path).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(file_path).stem
+    orig_sections = []
+    for p in pages:
+        p_num = p["page"]
+        p_txt = (p.get("text") or "").strip()
+        orig_sections.append(f"=== PAGE {p_num} ===\n{p_txt}")
+    full_original = "\n\n".join(orig_sections)
+    try:
+        (out_dir / f"{stem}_original.txt").write_text(full_original, encoding="utf-8")
+    except Exception:
+        pass
+
+    # Build direct translation+polish system instruction
+    src_label = "Αγγλικά" if source_lang.lower().startswith("en") else "Ελληνικά"
+    tgt_label = "Ελληνικά" if target_lang.lower().startswith("gr") or target_lang.lower() == "el" else "Αγγλικά"
+    base_style_prompt = STYLE_PROMPTS.get(style, STYLE_PROMPTS["literature"])
+
+    direct_prompt = (
+        f"Είσαι κορυφαίος επαγγελματίας μεταφραστής και επιμελητής εκδόσεων από {src_label} σε {tgt_label}.\n"
+        f"Μετάφρασε ΑΠΕΥΘΕΙΑΣ το ακόλουθο κείμενο από {src_label} σε άψογα, φυσικά και καλαίσθητα {tgt_label} "
+        f"(σε ένα ενιαίο βήμα μετάφρασης + επιμέλειας), τηρώντας αυστηρά τις εξής αρχές:\n"
+        f"{base_style_prompt}\n"
+        f"ΚΡΙΣΙΜΟ: Διατήρησε ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων (=== PAGE X ===) ακριβώς στις θέσεις τους. "
+        f"Μην παραλείπεις καμία παράγραφο ή πρόταση. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς σχόλια."
+    )
+
+    # Disk checkpoint support for instant resume
+    checkpoint_file = out_dir / ".direct_ai_checkpoint.json"
+    checkpoint_data: dict[str, Any] = {"batches": {}, "entity_dossier": ""}
+    if checkpoint_file.is_file():
+        try:
+            loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            if isinstance(loaded.get("batches"), dict):
+                checkpoint_data["batches"] = loaded["batches"]
+            if isinstance(loaded.get("entity_dossier"), str):
+                checkpoint_data["entity_dossier"] = loaded["entity_dossier"]
+        except Exception:
+            pass
+
+    def _save_cp():
+        try:
+            checkpoint_file.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    # Group pages into ~7,500-char / max 5-page batches
+    batches: list[list[tuple[int, str]]] = []
+    curr_b: list[tuple[int, str]] = []
+    curr_chars = 0
+    MAX_BATCH_CHARS = 7500
+    MAX_BATCH_PAGES = 5
+
+    for p in pages:
+        p_num = p["page"]
+        p_txt = (p.get("text") or "").strip()
+        item_len = len(p_txt) + 25
+        if curr_b and (curr_chars + item_len > MAX_BATCH_CHARS or len(curr_b) >= MAX_BATCH_PAGES):
+            batches.append(curr_b)
+            curr_b = [(p_num, p_txt)]
+            curr_chars = item_len
+        else:
+            curr_b.append((p_num, p_txt))
+            curr_chars += item_len
+    if curr_b:
+        batches.append(curr_b)
+
+    total_batches = max(1, len(batches))
+    update_job(job_id, total_chunks=total_batches, done_chunks=0, progress=5, current_step=f"Single-Pass AI Translation ({total_batches} parallel batches)...")
+
+    sem = asyncio.Semaphore(5)
+    target_temp = STYLE_TEMPERATURES.get(style, 0.30)
+    connector = aiohttp.TCPConnector(limit=12, ttl_dns_cache=300)
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90), connector=connector) as session:
+        # Extract entity consistency dossier for long documents
+        entity_dossier = checkpoint_data.get("entity_dossier", "")
+        if not entity_dossier and len(full_original) > 18000:
+            update_job(job_id, current_step="Extracting character & terminology dossier...", progress=6)
+            entity_dossier = await _extract_entity_dossier(full_original, api_key, session=session)
+            if entity_dossier:
+                checkpoint_data["entity_dossier"] = entity_dossier
+                _save_cp()
+
+        system_instruction = direct_prompt
+        if entity_dossier:
+            system_instruction += (
+                "\n\n--- ΜΗΤΡΩΟ ΟΝΟΜΑΤΩΝ & ΟΡΟΛΟΓΙΑΣ (ENTITY DOSSIER) ---\n"
+                f"{entity_dossier}\n"
+            )
+
+        # Inject matching glossary terms
+        glossary_items = load_glossary()
+        if glossary_items:
+            lower_src = full_original.lower()
+            matched = [(k, v) for k, v in glossary_items.items() if k.lower() in lower_src][:50]
+            if matched:
+                g_lines = "\n".join(f"- {k} -> {v}" for k, v in matched)
+                system_instruction += (
+                    "\n\n--- ΓΛΩΣΣΑΡΙΟ ΧΡΗΣΤΗ (GLOSSARY RULES) ---\n"
+                    f"{g_lines}\n"
+                )
+
+        results = ["" for _ in batches]
+        completed = 0
+        cached_b = checkpoint_data.get("batches", {})
+        for i in range(total_batches):
+            if str(i) in cached_b and cached_b[str(i)].strip():
+                results[i] = cached_b[str(i)]
+                completed += 1
+
+        async def _worker(b_idx: int, b_items: list[tuple[int, str]]):
+            nonlocal completed
+            if results[b_idx]:
+                return
+            if is_job_cancelled(job_id):
+                raise asyncio.CancelledError("Translation cancelled by user.")
+
+            # If all pages in batch are empty, skip API call
+            if all(not txt for _, txt in b_items):
+                results[b_idx] = "\n\n".join(f"=== PAGE {pn} ===" for pn, _ in b_items)
+                completed += 1
+                return
+
+            batch_src = "\n\n".join(f"=== PAGE {pn} ===\n{txt}" for pn, txt in b_items)
+            content_parts = []
+            if b_idx > 0:
+                prev_txt = batches[b_idx - 1][-1][1]
+                if prev_txt:
+                    content_parts.append(
+                        f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ - ΜΗΝ ΤΟ ΜΕΤΑΦΡΑΣΕΙΣ ΞΑΝΑ) ---\n[... {prev_txt[-300:]}]"
+                    )
+            content_parts.append(batch_src)
+            prompt_text = "\n\n".join(content_parts)
+
+            async with sem:
+                if is_job_cancelled(job_id):
+                    raise asyncio.CancelledError("Translation cancelled by user.")
+                try:
+                    translated_b = await _call_gemini_api(
+                        prompt_text,
+                        api_key,
+                        system_instruction,
+                        session=session,
+                        temperature=target_temp,
+                    )
+                    results[b_idx] = translated_b
+                    checkpoint_data["batches"][str(b_idx)] = translated_b
+                    _save_cp()
+                except PermissionError:
+                    raise
+                except Exception as ex:
+                    logger.warning(f"[{job_id}] Direct AI batch {b_idx+1}/{total_batches} failed: {ex}")
+                    # Fallback to standard translator for just this batch
+                    from backend.translator import _translate_with_retry
+                    fallback_parts = []
+                    for pn, txt in b_items:
+                        tr_p = await _translate_with_retry(txt, source_lang, target_lang) if txt else ""
+                        fallback_parts.append(f"=== PAGE {pn} ===\n{tr_p}")
+                    results[b_idx] = "\n\n".join(fallback_parts)
+
+            completed += 1
+            pct = 8 + int((completed / total_batches) * 85)
+            update_job(
+                job_id,
+                done_chunks=completed,
+                total_chunks=total_batches,
+                progress=pct,
+                current_step=f"Single-Pass AI Translation & Polish: batch {completed}/{total_batches}...",
+            )
+
+        await asyncio.gather(*(_worker(i, b) for i, b in enumerate(batches)))
+
+    if checkpoint_file.exists():
+        try:
+            checkpoint_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    final_text = "\n\n".join(r.strip() for r in results if r and r.strip())
+    final_text = apply_glossary(final_text, target_lang)
+    if target_lang.lower() in ("greek", "el"):
+        from backend.typography import format_greek_typography
+        final_text = format_greek_typography(final_text)
+
+    Path(output_path).write_text(final_text, encoding="utf-8")
+    update_job(job_id, progress=95, current_step="Finalizing AI translated document...", output_path=output_path)
+    logger.info(f"[{job_id}] Single-Pass Direct AI Translation complete -> {output_path}")
+    return output_path

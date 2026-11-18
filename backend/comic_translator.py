@@ -297,25 +297,48 @@ async def _translate_page_vector(
     return page_dialogues
 
 
-async def _translate_page_image_vision(
-    page: fitz.Page,
+def _encode_comic_page_jpeg(page: fitz.Page, max_dim: int = 1400, quality: int = 82) -> bytes:
+    """Renders a comic page to an optimized JPEG (capped at max_dim) for fast, crisp Vision OCR."""
+    import io
+    pix = page.get_pixmap(dpi=130)
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    if max(img.width, img.height) > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
+async def _detect_comic_balloons_vision_async(
+    img_bytes: bytes,
     api_key: str,
     source_lang: str,
     target_lang: str,
-    font_path: str,
-) -> List[str]:
+    session=None,
+) -> List[Dict[str, Any]]:
     """
-    Multimodal Gemini Vision fallback for scanned/image-only comic pages.
-    Detects speech balloons, in-paints balloon backgrounds, and renders Greek text.
+    Calls Gemini Vision Flash asynchronously (with thinkingBudget=0 and SQLite SHA-256 cache)
+    to detect & translate all speech balloons on a scanned comic page.
     """
     import base64
-    import urllib.request
+    import hashlib
+    import aiohttp
 
-    page_dialogues = []
-    pix = page.get_pixmap(dpi=150)
-    img_bytes = pix.tobytes("jpeg")
+    img_hash = hashlib.sha256(img_bytes).hexdigest()
+    cache_key = None
+    try:
+        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        cache_key = compute_cache_key(img_hash, source_lang, target_lang, engine="gemini_comic_vision")
+        cached = db_get_cached_translation(cache_key)
+        if cached:
+            parsed = json.loads(cached)
+            if isinstance(parsed, list):
+                return parsed
+    except Exception:
+        pass
+
     img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-
+    tgt_name = "Greek" if target_lang.lower().startswith(("gr", "el")) else target_lang
     prompt = (
         "You are an expert graphic novel and comic book localization engine. "
         "Detect all dialogue text, speech balloons, thought bubbles, and narration boxes on this comic page. "
@@ -323,15 +346,15 @@ async def _translate_page_image_vision(
         "[\n"
         "  {\n"
         "    \"box_2d\": [ymin, xmin, ymax, xmax],\n"
-        "    \"original_text\": \"english dialogue\",\n"
-        "    \"translated_text\": \"greek translation for comic\",\n"
+        "    \"original_text\": \"original dialogue\",\n"
+        f"    \"translated_text\": \"natural {tgt_name} translation for comic\",\n"
         "    \"bg_color\": \"#ffffff\"\n"
         "  }\n"
         "]\n"
         "Coordinates must be normalized integers 0 to 1000 representing the exact bounding box of the text inside the balloon."
     )
 
-    payload = {
+    base_payload = {
         "contents": [{
             "role": "user",
             "parts": [
@@ -345,63 +368,98 @@ async def _translate_page_image_vision(
         }
     }
 
-    detected_items = []
-    # Try preferred flash models with backoff
-    for model in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-1.5-flash"]:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
-            )
-            loop = asyncio.get_event_loop()
-            resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req).read().decode("utf-8"))
-            data = json.loads(resp_raw)
-            text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
-            detected_items = json.loads(text_resp)
-            if isinstance(detected_items, list) and detected_items:
-                break
-        except urllib.error.HTTPError as http_err:
-            try:
-                err_detail = http_err.read().decode("utf-8")
-            except Exception:
-                err_detail = str(http_err)
-            if http_err.code in (400, 401, 403) and ("API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower()):
-                logger.error(f"Gemini API key is invalid: {err_detail}")
-                raise ValueError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
-            logger.debug(f"Vision model {model} attempt HTTP error {http_err.code}: {err_detail}")
-            await asyncio.sleep(0.5)
-        except Exception as ex:
-            if "Gemini API Key είναι άκυρο" in str(ex):
-                raise
-            logger.debug(f"Vision model {model} attempt failed: {ex}")
-            await asyncio.sleep(0.5)
+    owns_session = session is None
+    if owns_session:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
 
+    detected_items: List[Dict[str, Any]] = []
+    try:
+        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+        for model in ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            use_no_thinking = "2.5-flash" in model or "flash-latest" in model
+            req_payload = (
+                {
+                    "contents": base_payload["contents"],
+                    "generationConfig": {
+                        **base_payload["generationConfig"],
+                        "thinkingConfig": {"thinkingBudget": 0},
+                    },
+                }
+                if use_no_thinking
+                else base_payload
+            )
+            try:
+                async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=35)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        cand_list = data.get("candidates", [])
+                        if not cand_list:
+                            continue
+                        parts = cand_list[0].get("content", {}).get("parts", [])
+                        if not parts:
+                            continue
+                        text_resp = parts[0].get("text", "")
+                        parsed = json.loads(text_resp)
+                        if isinstance(parsed, list):
+                            detected_items = parsed
+                            if cache_key:
+                                try:
+                                    from backend.database import db_set_cached_translation
+                                    db_set_cached_translation(cache_key, img_hash, json.dumps(detected_items, ensure_ascii=False), source_lang, target_lang, engine="gemini_comic_vision")
+                                except Exception:
+                                    pass
+                            break
+                    elif resp.status in (400, 401, 403):
+                        err_detail = await resp.text()
+                        if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
+                            logger.error(f"Gemini API key is invalid: {err_detail}")
+                            raise ValueError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
+                        if resp.status == 400 and "thinking" in err_detail.lower() and req_payload is not base_payload:
+                            async with session.post(url, json=base_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=35)) as retry_resp:
+                                if retry_resp.status == 200:
+                                    data = await retry_resp.json()
+                                    text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
+                                    parsed = json.loads(text_resp)
+                                    if isinstance(parsed, list):
+                                        detected_items = parsed
+                                        break
+                    elif resp.status == 429:
+                        await asyncio.sleep(1.5)
+                        continue
+            except ValueError:
+                raise
+            except Exception as ex:
+                logger.debug(f"Vision model {model} attempt failed: {ex}")
+                await asyncio.sleep(0.3)
+    finally:
+        if owns_session:
+            await session.close()
+
+    return detected_items
+
+
+def _render_vision_balloons_on_page(
+    page: fitz.Page,
+    detected_items: List[Dict[str, Any]],
+    font_path: str,
+) -> List[str]:
+    """Redacts detected balloon text boxes and renders translated Greek comic dialogue."""
     if not detected_items:
-        logger.info("No text detected via Vision on scanned page.")
         return []
 
-    # Inpaint and render on the PDF page using detected bounding boxes
+    page_dialogues: List[str] = []
     w, h = page.rect.width, page.rect.height
     for item in detected_items:
         box = item.get("box_2d")
         if not box or len(box) != 4:
             continue
         ymin, xmin, ymax, xmax = box
-        # Convert normalized 0-1000 to page coordinates
-        rx0 = (xmin / 1000.0) * w
-        ry0 = (ymin / 1000.0) * h
-        rx1 = (xmax / 1000.0) * w
-        ry1 = (ymax / 1000.0) * h
-        rect = fitz.Rect(rx0, ry0, rx1, ry1)
-
-        # Redact/cover old text
+        rect = fitz.Rect((xmin / 1000.0) * w, (ymin / 1000.0) * h, (xmax / 1000.0) * w, (ymax / 1000.0) * h)
         page.add_redact_annot(rect, fill=(1, 1, 1))
 
     page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
-    # Typeset Greek dialogue
     for item in detected_items:
         box = item.get("box_2d")
         if not box or len(box) != 4:
@@ -413,8 +471,7 @@ async def _translate_page_image_vision(
             continue
         page_dialogues.append(greek_text)
 
-        # Fit font size
-        for fs in range(14, 6, -1):
+        for fs in range(14, 5, -1):
             rc = page.insert_textbox(
                 rect,
                 greek_text,
@@ -427,6 +484,28 @@ async def _translate_page_image_vision(
                 break
 
     return page_dialogues
+
+
+async def _translate_page_image_vision(
+    page: fitz.Page,
+    api_key: str,
+    source_lang: str,
+    target_lang: str,
+    font_path: str,
+    session=None,
+) -> List[str]:
+    """
+    Multimodal Gemini Vision fallback for scanned/image-only comic pages.
+    Detects speech balloons, in-paints balloon backgrounds, and renders Greek text.
+    """
+    img_bytes = _encode_comic_page_jpeg(page)
+    detected_items = await _detect_comic_balloons_vision_async(
+        img_bytes, api_key, source_lang, target_lang, session=session
+    )
+    if not detected_items:
+        logger.info("No text detected via Vision on scanned page.")
+        return []
+    return _render_vision_balloons_on_page(page, detected_items, font_path)
 
 
 async def translate_comic_document(
@@ -503,49 +582,79 @@ async def translate_comic_document(
     if not has_vector_text and not resolved_api_key:
         logger.warning(f"[{job_id}] Graphic novel is image-only/scanned and no Gemini API key is configured.")
 
-    update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages...")
+    update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages (parallel Vision engine)...")
 
-    all_document_dialogues = []
+    all_document_dialogues: List[Tuple[int, List[str]]] = [(i + 1, []) for i in range(total_pages)]
+    vision_pages_to_process: List[Tuple[int, bytes]] = []
+    completed_count = 0
 
+    # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
     for page_idx in range(total_pages):
         if is_job_cancelled(job_id):
             doc.close()
             raise asyncio.CancelledError("Comic translation cancelled by user.")
 
         page = doc[page_idx]
-        progress_pct = int(((page_idx) / max(total_pages, 1)) * 92)
-        update_job(
-            job_id,
-            current_step=f"Translating graphic novel page {page_idx + 1} of {total_pages}...",
-            progress=progress_pct,
-            done_chunks=page_idx,
-            total_chunks=total_pages,
-        )
-
-        # Extract text blocks
         raw_blocks = page.get_text("blocks")
         text_blocks = [b for b in raw_blocks if len(b) >= 5 and b[4].strip() and b[1] != b[3]]
 
-        page_dialogues = []
         if text_blocks:
-            # Digital comic with vector text blocks: cluster into balloons
             clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
             logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
             page_dialogues = await _translate_page_vector(
                 page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
             )
+            all_document_dialogues[page_idx] = (page_idx + 1, page_dialogues)
+            completed_count += 1
+            update_job(
+                job_id,
+                current_step=f"Translating graphic novel page {completed_count} of {total_pages}...",
+                progress=int((completed_count / max(total_pages, 1)) * 92),
+                done_chunks=completed_count,
+                total_chunks=total_pages,
+            )
         else:
-            # Scanned / raster image page: fallback to Gemini Vision if key exists
-            logger.info(f"[{job_id}] Page {page_idx + 1}: no vector text found. Checking image vision...")
             if resolved_api_key:
-                page_dialogues = await _translate_page_image_vision(
-                    page, resolved_api_key, source_lang, target_lang, font_path
-                )
+                vision_pages_to_process.append((page_idx, _encode_comic_page_jpeg(page)))
             else:
                 logger.warning(f"[{job_id}] Page {page_idx + 1} is image-only and no Gemini API key was provided.")
+                completed_count += 1
 
-        all_document_dialogues.append((page_idx + 1, page_dialogues))
-        await asyncio.sleep(0.3)
+    # Pass 2: Execute Gemini Vision balloon detection 4 pages in parallel over a shared HTTP session
+    if vision_pages_to_process and resolved_api_key:
+        import aiohttp
+        vision_sem = asyncio.Semaphore(4)
+        connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
+        vision_results: Dict[int, List[Dict[str, Any]]] = {}
+
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async def _vision_worker(p_idx: int, img_bytes: bytes):
+                nonlocal completed_count
+                if is_job_cancelled(job_id):
+                    raise asyncio.CancelledError("Comic translation cancelled by user.")
+                async with vision_sem:
+                    if is_job_cancelled(job_id):
+                        raise asyncio.CancelledError("Comic translation cancelled by user.")
+                    items = await _detect_comic_balloons_vision_async(
+                        img_bytes, resolved_api_key, source_lang, target_lang, session=session
+                    )
+                    vision_results[p_idx] = items
+                completed_count += 1
+                update_job(
+                    job_id,
+                    current_step=f"AI Vision translated graphic novel page {completed_count} of {total_pages}...",
+                    progress=int((completed_count / max(total_pages, 1)) * 92),
+                    done_chunks=completed_count,
+                    total_chunks=total_pages,
+                )
+
+            await asyncio.gather(*(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process))
+
+        # Apply detected redactions and Greek text rendering cleanly on the PDF document
+        for p_idx, items in sorted(vision_results.items()):
+            if items:
+                rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path)
+                all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
 
     # Save translated graphic novel PDF
     stem = Path(file_path).stem

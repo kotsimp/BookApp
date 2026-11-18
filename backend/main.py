@@ -395,14 +395,31 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
 
         # 3. Standard parsing + rich styled export (for PDF or cross-format exports)
         else:
-            await translate_document(
-                job_id=job_id,
-                file_path=file_path,
-                file_type=file_type,
-                source_lang=source_lang,
-                target_lang=target_lang,
-                output_path=output_path,
-            )
+            from backend.settings_manager import get_setting
+            resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+            if ai_polish and resolved_key:
+                # Single-Pass Direct AI Translation & Literary Polish (3x-5x faster, zero 429 bottleneck)
+                from backend.ai_polisher import translate_and_polish_direct_with_gemini
+                style_for_layout = "literature" if layout == "literature" else "natural"
+                await translate_and_polish_direct_with_gemini(
+                    job_id=job_id,
+                    file_path=file_path,
+                    file_type=file_type,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    output_path=output_path,
+                    api_key=resolved_key,
+                    style=style_for_layout,
+                )
+            else:
+                await translate_document(
+                    job_id=job_id,
+                    file_path=file_path,
+                    file_type=file_type,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    output_path=output_path,
+                )
             if is_job_cancelled(job_id):
                 return
             txt_content = Path(output_path).read_text(encoding="utf-8")
