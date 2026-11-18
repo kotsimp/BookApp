@@ -1216,9 +1216,14 @@ async function loadHistoryJob(jobId, mode) {
       const uploadZone = document.getElementById(`${prefix}-upload-zone`);
       const selectedFile = document.getElementById(`${prefix}-selected-file`);
       if (nameEl) nameEl.textContent = data.file_name;
-      if (metaEl) metaEl.textContent = data.status === 'done' ? 'Loaded from Session History · Ready' : 'Loaded from Session History';
+      if (metaEl) metaEl.textContent = data.status === 'done'
+        ? 'Loaded from Session History · Ready'
+        : `Loaded from Session History · ${data.current_step || 'Ready to translate'}`;
       if (uploadZone) uploadZone.style.display = 'none';
-      if (selectedFile) selectedFile.style.display = 'flex';
+      if (selectedFile) {
+        selectedFile.classList.add('visible');
+        selectedFile.style.display = 'flex';
+      }
     }
 
     if (prefix === 'ab') {
@@ -1255,14 +1260,32 @@ async function loadHistoryJob(jobId, mode) {
       updateProgress(prefix, data);
       connectSSE(prefix, jobId);
     } else if (data.has_output && data.status === 'done' && (prefix === 'tr' || mode === 'audiobook')) {
-      // Re-enable download button
+      // Re-enable action buttons and show completed output
       document.getElementById(`${prefix}-start-btn`).disabled = false;
+      if (prefix === 'tr') {
+        const addQBtn = document.getElementById('tr-add-queue-btn');
+        if (addQBtn) addQBtn.disabled = false;
+        const directBtn = document.getElementById('tr-direct-polish-btn');
+        if (directBtn && !state.tr.isComic) directBtn.disabled = false;
+      }
       showResult(prefix, data);
       setStatusBadge(prefix, 'done');
       document.getElementById(`${prefix}-progress-card`).style.display = 'block';
       document.getElementById(`${prefix}-progress-pct`).textContent = '100%';
       document.getElementById(`${prefix}-progress-bar`).style.width = '100%';
       document.getElementById(`${prefix}-progress-step`).textContent = data.current_step;
+    } else {
+      // Idle, queued, cancelled, or error job loaded from history -> enable start/resume buttons!
+      const startBtn = document.getElementById(`${prefix}-start-btn`);
+      if (startBtn) startBtn.disabled = false;
+      if (prefix === 'tr') {
+        const addQBtn = document.getElementById('tr-add-queue-btn');
+        if (addQBtn) addQBtn.disabled = false;
+        const directBtn = document.getElementById('tr-direct-polish-btn');
+        if (directBtn && !state.tr.isComic) directBtn.disabled = false;
+      }
+      resetProgress(prefix);
+      toast(`📄 Φορτώθηκε "${data.file_name || 'έγγραφο'}" — έτοιμο για μετάφραση/συνέχιση!`, 'info');
     }
     if (prefix === 'tr') {
       checkCoverImage(jobId);
