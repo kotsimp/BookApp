@@ -1525,6 +1525,11 @@ function openDirectPolishModal() {
     toast('Please upload a document or paste text in Editor first.', 'error');
     return;
   }
+  const biChk = document.getElementById('ai-polish-bilingual');
+  if (biChk) {
+    // Only default Source-Anchored Verification to checked when a prior translation exists
+    biChk.checked = (state.tr.status === 'done');
+  }
   openAiPolishModal();
 }
 

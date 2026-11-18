@@ -305,6 +305,11 @@ async def polish_text_with_gemini(
         except Exception as ex:
             logger.warning(f"Progress callback error: {ex}")
 
+    # Auto-disable redundant Source-Anchored Verification if original_text is identical to draft text
+    if original_text and original_text.strip() == (text or "").strip():
+        use_source_anchoring = False
+        original_text = None
+
     # Parse original text pages for source anchoring if provided
     orig_pages: dict[int, str] = {}
     if original_text and use_source_anchoring:

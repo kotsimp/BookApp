@@ -1157,6 +1157,13 @@ async def polish_translation(req: PolishRequest):
             except Exception as ex:
                 logger.warning(f"Could not extract original text for bilingual anchoring: {ex}")
 
+    # Auto-disable redundant Source-Anchored Verification when original == draft (e.g. standalone Greek polish)
+    effective_bilingual = req.bilingual_mode
+    if effective_bilingual and original_text and original_text.strip() == (text_to_polish or "").strip():
+        logger.info(f"[{req.job_id}] Standalone polish detected (source identical to draft) — auto-disabling Source-Anchored Verification.")
+        original_text = None
+        effective_bilingual = False
+
     def on_progress(current: int, total: int):
         pct = int((current / max(1, total)) * 100)
         POLISH_STATUS[req.job_id] = {
@@ -1182,7 +1189,7 @@ async def polish_translation(req: PolishRequest):
             style=req.style,
             original_text=original_text,
             job_id=req.job_id,
-            use_source_anchoring=req.bilingual_mode,
+            use_source_anchoring=effective_bilingual,
             progress_callback=on_progress,
         )
         total_p = POLISH_STATUS.get(req.job_id, {}).get("total", 1)
