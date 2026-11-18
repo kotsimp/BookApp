@@ -42,6 +42,7 @@ class TestAIPolisherDeep(unittest.TestCase):
 
     def test_multi_page_batch_splitting(self):
         print("-> 2. Testing Multi-Page Batch Parsing & Marker Preservation...")
+        from backend.ai_polisher import _parse_pages_dict
         sample_doc = (
             "=== PAGE 1 ===\n"
             "Κεφάλαιο Πρώτο: Η Ανακάλυψη.\n"
@@ -49,27 +50,22 @@ class TestAIPolisherDeep(unittest.TestCase):
             "=== PAGE 2 ===\n"
             "Η σιωπή απλώθηκε στο δωμάτιο. Η θερμοκρασία άρχισε να πέφτει απότομα.\n"
         )
-        parts = re.split(r"(={3,}\s*PAGE\s+\d+\s*={3,})", sample_doc)
-        pages = []
-        curr_marker = ""
-        for part in parts:
-            p_strip = part.strip()
-            if not p_strip:
-                continue
-            if re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", p_strip):
-                curr_marker = p_strip
-            else:
-                pages.append((curr_marker, p_strip))
-
+        pages = _parse_pages_dict(sample_doc)
         self.assertEqual(len(pages), 2)
-        self.assertEqual(pages[0][0], "=== PAGE 1 ===")
-        self.assertEqual(pages[1][0], "=== PAGE 2 ===")
+        self.assertIn(1, pages)
+        self.assertIn(2, pages)
+        self.assertIn("Κεφάλαιο Πρώτο", pages[1])
+        self.assertIn("Η σιωπή απλώθηκε", pages[2])
         print("   Multi-page batch parsing: OK")
 
     def test_model_cache_invalidation(self):
         print("-> 3. Testing Model Cache Invalidation...")
+        import backend.ai_polisher as ap
+        ap._CACHED_WORKING_MODEL = "gemini-fake-model"
+        ap._CACHED_AVAILABLE_MODELS = ["gemini-fake-model"]
         reset_model_cache()
-        reset_model_cache()
+        self.assertIsNone(ap._CACHED_WORKING_MODEL)
+        self.assertIsNone(ap._CACHED_AVAILABLE_MODELS)
         print("   Model cache invalidation: OK")
 
     def test_mock_polish_execution(self):

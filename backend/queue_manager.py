@@ -131,8 +131,13 @@ def add_to_queue(
     is_scanned: bool = False,
 ) -> QueueItem:
     """Adds an uploaded job to the batch queue (or updates/re-queues it if already present)."""
-    if source_lang == target_lang:
+    global _queue_auto_start
+    src_norm = (source_lang or "english").strip().lower()
+    tgt_norm = (target_lang or "greek").strip().lower()
+    if src_norm == tgt_norm:
         raise ValueError("Source and target languages must be different.")
+    source_lang = src_norm
+    target_lang = tgt_norm
 
     job = get_job(job_id)
     if not job:
@@ -144,6 +149,7 @@ def add_to_queue(
     # Auto-detect comic vs book compatibility safely for mixed batches
     effective_comic = bool(
         is_comic
+        or getattr(job, "layout_mode", "") == "comic"
         or job.file_type in ("cbz", "cbr")
         or (job.file_name or "").lower().endswith((".cbz", ".cbr", ".zip"))
     )
@@ -178,6 +184,8 @@ def add_to_queue(
             existing.is_scanned = is_scanned
             existing.status = "queued"
             existing.error = None
+            if is_mixed_queue():
+                _queue_auto_start = False
             clear_job_cancellation(job_id)
             update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
             return existing
@@ -205,7 +213,6 @@ def add_to_queue(
     )
     _queue_items.append(item)
     if is_mixed_queue():
-        global _queue_auto_start
         if _queue_auto_start:
             logger.info("[Queue] Mixed batch detected (books + comics) — auto-disabling Auto-Start for safe settings review.")
         _queue_auto_start = False
@@ -295,7 +302,7 @@ async def _process_queue_loop(
     Each item runs in its own isolated child Task so cancelling a single running item
     never terminates the queue processor loop — it cleanly moves on to the next item.
     """
-    global _queue_paused
+    global _queue_paused, _queue_task
     logger.info("Smart Batch Queue processor started.")
     try:
         while not _queue_paused:
@@ -319,7 +326,8 @@ async def _process_queue_loop(
                     next_item.status = "done"
             except asyncio.CancelledError:
                 cur_task = asyncio.current_task()
-                if cur_task is not None and cur_task.cancelling() > 0:
+                cancelling_fn = getattr(cur_task, "cancelling", None) if cur_task is not None else None
+                if cur_task is not None and (cancelling_fn() > 0 if callable(cancelling_fn) else cur_task.cancelled()):
                     # Outer queue loop itself is being cancelled (e.g. server shutdown)
                     if not item_task.done():
                         item_task.cancel()
@@ -331,6 +339,8 @@ async def _process_queue_loop(
                 next_item.error = str(ex)
                 logger.error(f"[Queue] Job {next_item.job_id} failed: {ex}")
     finally:
+        if _queue_task is asyncio.current_task():
+            _queue_task = None
         logger.info("Smart Batch Queue processor finished/idle.")
 
 
@@ -346,17 +356,28 @@ def apply_settings_to_queued_items(
     """Applies the user's latest Translation Settings to all currently 'queued' items
     while strictly preserving per-item Comic vs Book safety rules.
     """
-    if source_lang and target_lang and source_lang == target_lang:
+    src_norm = source_lang.strip().lower() if source_lang else None
+    tgt_norm = target_lang.strip().lower() if target_lang else None
+    if src_norm and tgt_norm and src_norm == tgt_norm:
         raise ValueError("Source and target languages must be different.")
+
+    # Pre-validate against existing queued items so partial updates can't create source == target
+    for item in _queue_items:
+        if item.status != "queued":
+            continue
+        eff_src = src_norm or (item.source_lang or "").strip().lower()
+        eff_tgt = tgt_norm or (item.target_lang or "").strip().lower()
+        if eff_src and eff_tgt and eff_src == eff_tgt:
+            raise ValueError("Source and target languages must be different.")
 
     updated = 0
     for item in _queue_items:
         if item.status != "queued":
             continue
-        if source_lang:
-            item.source_lang = source_lang
-        if target_lang:
-            item.target_lang = target_lang
+        if src_norm:
+            item.source_lang = src_norm
+        if tgt_norm:
+            item.target_lang = tgt_norm
         if reading_direction:
             item.reading_direction = reading_direction
         if api_key is not None:

@@ -131,12 +131,12 @@ def db_save_job(job_dict: Dict[str, Any]) -> None:
                     "file_type": job_dict.get("file_type", ""),
                     "status": job_dict.get("status", "idle"),
                     "mode": job_dict.get("mode", ""),
-                    "progress": int(job_dict.get("progress", 0)),
-                    "current_step": job_dict.get("current_step", ""),
-                    "total_chunks": int(job_dict.get("total_chunks", 0)),
-                    "done_chunks": int(job_dict.get("done_chunks", 0)),
-                    "created_at": float(job_dict.get("created_at", time.time())),
-                    "updated_at": float(job_dict.get("updated_at", time.time())),
+                    "progress": int(job_dict.get("progress") or 0),
+                    "current_step": job_dict.get("current_step") or "",
+                    "total_chunks": int(job_dict.get("total_chunks") or 0),
+                    "done_chunks": int(job_dict.get("done_chunks") or 0),
+                    "created_at": float(job_dict.get("created_at") or time.time()),
+                    "updated_at": float(job_dict.get("updated_at") or time.time()),
                     "output_path": job_dict.get("output_path"),
                     "output_format": job_dict.get("output_format"),
                     "layout_mode": job_dict.get("layout_mode", "standard"),
@@ -214,13 +214,13 @@ def db_clear_all_jobs() -> int:
 
 
 def db_reset_orphaned_running_jobs() -> int:
-    """Resets any stale 'running' jobs left over after a server restart to 'idle' so they can resume cleanly."""
+    """Resets any stale 'running' or 'queued' jobs left over after a server restart to 'idle' so they can resume cleanly."""
     with _db_lock:
         conn = _get_connection()
         try:
             with conn:
                 res = conn.execute(
-                    "UPDATE jobs SET status = 'idle', current_step = 'Ready to resume (saved checkpoint)' WHERE status = 'running'"
+                    "UPDATE jobs SET status = 'idle', current_step = 'Ready to resume (saved checkpoint)' WHERE status IN ('running', 'queued')"
                 )
                 return res.rowcount
         except Exception as e:
@@ -252,8 +252,8 @@ def db_cleanup_old_jobs(max_age_seconds: int = 86400 * 7) -> int:
 
 def compute_cache_key(source_text: str, source_lang: str, target_lang: str, engine: str, extra: str = "") -> str:
     """Computes a SHA256 cache key for text and translation/polish parameters."""
-    normalized = source_text.strip()
-    payload = f"{source_lang.lower()}->{target_lang.lower()}::{engine.lower()}::{extra}::{normalized}"
+    normalized = (source_text or "").strip()
+    payload = f"{(source_lang or '').lower()}->{(target_lang or '').lower()}::{(engine or '').lower()}::{extra or ''}::{normalized}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

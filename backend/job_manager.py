@@ -40,8 +40,21 @@ class Job:
     subscribers: list       = field(default_factory=list)
 
 
+def is_valid_job_id(job_id: Optional[str]) -> bool:
+    """Returns True if job_id is a safe single-segment identifier with no path traversal."""
+    if not isinstance(job_id, str) or not job_id.strip():
+        return False
+    if "/" in job_id or "\\" in job_id or ".." in job_id or "\x00" in job_id:
+        return False
+    if job_id in (".", "..") or job_id.startswith(".") or ":" in job_id:
+        return False
+    return True
+
+
 def _heal_file_path(job_id: str, file_path: str, file_name: str) -> str:
     """Auto-heals stale temp/uploads/tmp/... paths by checking temp/uploads/<job_id>/."""
+    if not is_valid_job_id(job_id):
+        return file_path
     if file_path and Path(file_path).exists():
         return file_path
     base_up = Path(__file__).resolve().parent.parent / "temp" / "uploads" / job_id
@@ -156,11 +169,16 @@ def is_job_cancelled(job_id: str) -> bool:
 
 def cancel_job(job_id: str) -> bool:
     """Cancels a running job and its active asyncio task, persisting cancelled state to SQLite."""
-    job = _jobs.get(job_id)
+    if not is_valid_job_id(job_id):
+        return False
+    job = _jobs.get(job_id) or get_job(job_id)
     task = _active_tasks.pop(job_id, None)
     if task and not task.done():
         task.cancel()
     if job:
+        if job.status == "done":
+            # Do not corrupt an already completed job's status
+            return False
         job.status = "cancelled"
         job.current_step = "🛑 Cancelled by user."
         job.updated_at = time.time()
@@ -215,6 +233,8 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
 
 
 def get_job(job_id: str) -> Optional[Job]:
+    if not is_valid_job_id(job_id):
+        return None
     if job_id in _jobs:
         job = _jobs[job_id]
         healed = _heal_file_path(job.job_id, job.file_path, job.file_name)
@@ -310,9 +330,15 @@ def get_job(job_id: str) -> Optional[Job]:
 def update_job(job_id: str, **kwargs):
     job = _jobs.get(job_id)
     if job:
-        # Protect cancelled status: once cancelled, background steps cannot reset status to running or done
-        if job.status == "cancelled" and kwargs.get("status") in ("running", "done"):
-            kwargs.pop("status", None)
+        # Protect cancelled status: once cancelled, background steps cannot overwrite status/step/output
+        if job.status == "cancelled":
+            incoming_status = kwargs.get("status")
+            if incoming_status in ("running", "done", "error") or incoming_status is None:
+                kwargs.pop("status", None)
+                kwargs.pop("current_step", None)
+                kwargs.pop("progress", None)
+                kwargs.pop("output_path", None)
+                kwargs.pop("error", None)
         for k, v in kwargs.items():
             setattr(job, k, v)
         job.updated_at = time.time()
@@ -326,22 +352,46 @@ def update_job(job_id: str, **kwargs):
         _notify_subscribers(job)
 
 
-def _notify_subscribers(job: Job):
-    dead = []
-    for q in job.subscribers:
+def _push_to_queue(q: asyncio.Queue, payload: dict) -> None:
+    try:
+        q.put_nowait(payload)
+    except asyncio.QueueFull:
+        # Drop oldest stale event so subscriber stays alive and receives latest/terminal state
         try:
-            # Put without blocking - if queue is full, skip
-            q.put_nowait({
-                "status": job.status,
-                "progress": job.progress,
-                "current_step": job.current_step,
-                "total_chunks": job.total_chunks,
-                "done_chunks": job.done_chunks,
-                "total_pages": int(getattr(job, "total_pages", 0) or 0),
-                "done_pages": int(getattr(job, "done_pages", 0) or 0),
-                "error": job.error,
-                "output_path": job.output_path,
-            })
+            q.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            pass
+
+
+def _notify_subscribers(job: Job):
+    payload = {
+        "status": job.status,
+        "progress": job.progress,
+        "current_step": job.current_step,
+        "total_chunks": job.total_chunks,
+        "done_chunks": job.done_chunks,
+        "total_pages": int(getattr(job, "total_pages", 0) or 0),
+        "done_pages": int(getattr(job, "done_pages", 0) or 0),
+        "error": job.error,
+        "output_path": job.output_path,
+    }
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    dead = []
+    for q in list(job.subscribers):
+        try:
+            q_loop = getattr(q, "_loop", None)
+            if q_loop is not None and q_loop.is_running() and q_loop is not running_loop:
+                q_loop.call_soon_threadsafe(_push_to_queue, q, payload)
+            else:
+                _push_to_queue(q, payload)
         except Exception:
             dead.append(q)
     for q in dead:
@@ -379,17 +429,25 @@ def list_jobs() -> list[Job]:
 
 
 def cleanup_old_jobs(max_age_seconds: int = 86400):
-    """Remove in-memory jobs, old DB records, and temp upload/output directories older than max_age_seconds (default 24h)."""
+    """Remove stale non-running in-memory jobs, old DB records, and temp upload/output directories."""
     import shutil
 
     now = time.time()
-    to_delete = [jid for jid, j in _jobs.items() if now - j.created_at > max_age_seconds]
+    active_ids = {
+        jid for jid, j in list(_jobs.items())
+        if j.status in ("running", "queued") or jid in _active_tasks
+    }
+    to_delete = [
+        jid for jid, j in list(_jobs.items())
+        if jid not in active_ids and (now - j.created_at > max_age_seconds)
+    ]
     for jid in to_delete:
-        del _jobs[jid]
+        _jobs.pop(jid, None)
 
     try:
         from backend.database import db_cleanup_old_jobs, db_reset_orphaned_running_jobs
-        db_reset_orphaned_running_jobs()
+        if not _active_tasks:
+            db_reset_orphaned_running_jobs()
         db_cleanup_old_jobs(max_age_seconds)
     except Exception:
         pass
@@ -401,15 +459,16 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
         pass
 
     base_temp = Path(__file__).resolve().parent.parent / "temp"
-    for sub in ("uploads", "outputs"):
+    output_max_age = max(max_age_seconds, 7 * 86400)
+    for sub, age_limit in (("uploads", max_age_seconds), ("outputs", output_max_age)):
         root = base_temp / sub
         if not root.exists():
             continue
         for entry in root.iterdir():
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name == "tmp" or entry.name in active_ids:
                 continue
             try:
-                if now - entry.stat().st_mtime > max_age_seconds:
+                if now - entry.stat().st_mtime > age_limit:
                     shutil.rmtree(str(entry), ignore_errors=True)
             except Exception:
                 pass

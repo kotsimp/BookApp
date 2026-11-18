@@ -4,15 +4,42 @@
 
 'use strict';
 
-const API = 'http://localhost:8000/api';
+const API = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null' && window.location.protocol.startsWith('http'))
+  ? `${window.location.origin}/api`
+  : 'http://localhost:8000/api';
+
+async function parseApiError(res, fallbackMsg = 'Request failed') {
+  try {
+    const err = await res.json();
+    if (typeof err?.detail === 'string' && err.detail.trim()) return err.detail;
+    if (Array.isArray(err?.detail)) {
+      return err.detail.map(d => d?.msg || JSON.stringify(d)).join('; ') || fallbackMsg;
+    }
+    if (err?.message) return String(err.message);
+  } catch (_) {
+    // Non-JSON 500/502 response body
+  }
+  return `${fallbackMsg} (HTTP ${res.status})`;
+}
 
 // ── State ──────────────────────────────────────────────────
 const state = {
-  tr: { jobId: null, file: null, sse: null, status: 'idle' },
-  ab: { jobId: null, file: null, sse: null, status: 'idle' },
+  tr: { jobId: null, file: null, sse: null, pollInterval: null, status: 'idle' },
+  ab: { jobId: null, file: null, sse: null, pollInterval: null, status: 'idle' },
   voices: {},
   selectedVoice: '',
 };
+
+function stopJobTracking(prefix) {
+  if (state[prefix]?.sse) {
+    try { state[prefix].sse.close(); } catch (_) {}
+    state[prefix].sse = null;
+  }
+  if (state[prefix]?.pollInterval) {
+    clearInterval(state[prefix].pollInterval);
+    state[prefix].pollInterval = null;
+  }
+}
 
 // ── Tab Switching ──────────────────────────────────────────
 function switchTab(tab) {
@@ -68,14 +95,19 @@ function handleFileSelect(e, prefix) {
 }
 
 async function processFile(file, prefix) {
-  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
-  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  const allowed = prefix === 'ab'
+    ? ['.pdf', '.docx', '.epub']
+    : ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+  const dotIdx = file.name.lastIndexOf('.');
+  const ext = dotIdx > 0 ? file.name.slice(dotIdx).toLowerCase() : '(no extension)';
 
   if (!allowed.includes(ext)) {
-    toast(`❌ File type "${ext}" is not supported. Please use PDF, DOCX, EPUB, or CBZ.`, 'error');
+    const supportedList = prefix === 'ab' ? 'PDF, DOCX, or EPUB' : 'PDF, DOCX, EPUB, or CBZ';
+    toast(`❌ File type "${ext}" is not supported. Please use ${supportedList}.`, 'error');
     return;
   }
 
+  stopJobTracking(prefix);
   state[prefix].file = file;
   state[prefix].jobId = null;
   resetProgress(prefix);
@@ -101,6 +133,7 @@ function showSelectedFile(prefix, file) {
 }
 
 function removeFile(prefix) {
+  stopJobTracking(prefix);
   state[prefix].file = null;
   state[prefix].jobId = null;
   const selEl = document.getElementById(`${prefix}-selected-file`);
@@ -233,8 +266,7 @@ async function uploadFile(prefix, file) {
   try {
     const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Upload failed');
+      throw new Error(await parseApiError(res, 'Upload failed'));
     }
     const data = await res.json();
     state[prefix].jobId = data.job_id;
@@ -248,8 +280,10 @@ async function uploadFile(prefix, file) {
       startBtn.disabled = false;
       if (prefix === 'tr') startBtn.textContent = '🌐 Start Translation';
     }
-    const directBtn = document.getElementById('tr-direct-polish-btn');
-    if (directBtn) directBtn.disabled = false;
+    if (prefix === 'tr' && !data.is_comic) {
+      const directBtn = document.getElementById('tr-direct-polish-btn');
+      if (directBtn) directBtn.disabled = false;
+    }
     toast(`✅ "${file.name}" uploaded successfully.`, 'success');
 
     // Direct upload in Audiobook tab: lock Audio Language to detected document language
@@ -554,11 +588,13 @@ async function handleCoverUpload(e) {
   try {
     toast('Uploading book cover image...', 'info');
     const res = await fetch(`${API}/cover/${jobId}`, { method: 'POST', body: formData });
-    if (!res.ok) throw new Error('Cover upload failed');
+    if (!res.ok) throw new Error(await parseApiError(res, 'Cover upload failed'));
     toast('✅ Book cover updated successfully! Included in PDF, EPUB & DOCX.', 'success');
     await checkCoverImage(jobId);
   } catch (err) {
     toast(`Failed to upload cover: ${err.message}`, 'error');
+  } finally {
+    if (e?.target) e.target.value = '';
   }
 }
 
@@ -566,7 +602,8 @@ async function removeCoverImage() {
   const jobId = state.tr.jobId;
   if (!jobId) return;
   try {
-    await fetch(`${API}/cover/${jobId}`, { method: 'DELETE' });
+    const res = await fetch(`${API}/cover/${jobId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to remove cover'));
     toast('Book cover removed.', 'info');
     await checkCoverImage(jobId);
   } catch (err) {
@@ -578,6 +615,7 @@ async function removeCoverImage() {
 async function loadVoices() {
   try {
     const res = await fetch(`${API}/voices`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.voices = await res.json();
     updateVoices();
   } catch (e) {
@@ -754,8 +792,7 @@ async function startTranslation() {
       }),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to start translation');
+      throw new Error(await parseApiError(res, 'Failed to start translation'));
     }
 
     // Connect SSE for progress
@@ -865,8 +902,7 @@ async function startAudiobook() {
       }),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to start audiobook generation');
+      throw new Error(await parseApiError(res, 'Failed to start audiobook generation'));
     }
 
     connectSSE('ab', jobId);
@@ -878,15 +914,19 @@ async function startAudiobook() {
 
 // ── SSE Progress Stream ────────────────────────────────────
 function connectSSE(prefix, jobId) {
-  if (state[prefix].sse) {
-    state[prefix].sse.close();
-  }
+  stopJobTracking(prefix);
 
   const sse = new EventSource(`${API}/progress/${jobId}`);
   state[prefix].sse = sse;
 
   sse.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+    let data;
+    try {
+      data = JSON.parse(event.data);
+    } catch (parseErr) {
+      console.warn('Malformed SSE JSON payload ignored:', parseErr);
+      return;
+    }
     updateProgress(prefix, data);
 
     if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
@@ -904,18 +944,36 @@ function connectSSE(prefix, jobId) {
 }
 
 function pollProgress(prefix, jobId) {
+  stopJobTracking(prefix);
+  let consecutiveErrors = 0;
   const interval = setInterval(async () => {
     try {
       const res = await fetch(`${API}/status/${jobId}`);
+      if (!res.ok) {
+        consecutiveErrors += 1;
+        if (res.status === 404 || consecutiveErrors >= 5) {
+          stopJobTracking(prefix);
+          showError(prefix, await parseApiError(res, 'Lost connection to job status'));
+          setActionButtonsEnabled(prefix, true);
+        }
+        return;
+      }
+      consecutiveErrors = 0;
       const data = await res.json();
       updateProgress(prefix, data);
       if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
-        clearInterval(interval);
+        stopJobTracking(prefix);
       }
     } catch (e) {
-      clearInterval(interval);
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 5) {
+        stopJobTracking(prefix);
+        showError(prefix, 'Connection to server lost while tracking progress.');
+        setActionButtonsEnabled(prefix, true);
+      }
     }
   }, 2000);
+  state[prefix].pollInterval = interval;
 }
 
 function updateProgress(prefix, data) {
@@ -1078,7 +1136,7 @@ function showResult(prefix, data) {
     // Keep format label in download button in sync
     const labelEl = document.getElementById('tr-format-label');
     if (labelEl) {
-      labelEl.textContent = layout === 'comic' ? 'Graphic Novel (PDF)' : label;
+      labelEl.textContent = layout === 'comic' ? `Graphic Novel (${fmt.toUpperCase()})` : label;
     }
     const dlBtn = document.getElementById('tr-download-btn');
     if (dlBtn && state.tr.jobId) {
@@ -1122,22 +1180,31 @@ async function downloadOutput(prefix) {
 
 function sendToAudiobook() {
   if (!state.tr.jobId) return;
+  stopJobTracking('ab');
+  resetProgress('ab', true);
   // Transfer job ID and file metadata to the audiobook tab
   state.ab.jobId = state.tr.jobId;
   state.ab.file = state.tr.file;
 
   const rawTrName = document.getElementById('tr-file-name')?.textContent;
   const rawTrMeta = document.getElementById('tr-file-meta')?.textContent;
+  const trIcon = document.getElementById('tr-file-icon')?.textContent || '📄';
   const trName = (rawTrName && rawTrName !== 'filename.pdf') ? rawTrName : 'Document';
   const trMeta = (rawTrMeta && rawTrMeta !== 'Loading...') ? rawTrMeta : 'Ready';
 
+  const abIcon = document.getElementById('ab-file-icon');
   const abName = document.getElementById('ab-file-name');
   const abMeta = document.getElementById('ab-file-meta');
+  if (abIcon) abIcon.textContent = trIcon;
   if (abName) abName.textContent = trName;
   if (abMeta) abMeta.textContent = trMeta;
 
   document.getElementById('ab-upload-zone').style.display = 'none';
-  document.getElementById('ab-selected-file').style.display = 'flex';
+  const abSel = document.getElementById('ab-selected-file');
+  if (abSel) {
+    abSel.style.display = '';
+    abSel.classList.add('visible');
+  }
   document.getElementById('ab-start-btn').disabled = false;
 
   const sourceLang = document.getElementById('tr-source-lang')?.value || 'english';
@@ -1189,8 +1256,9 @@ function syncAudiobookLangWithSource() {
 async function refreshHistory() {
   try {
     const res = await fetch(`${API}/jobs`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const jobs = await res.json();
-    renderHistory(jobs);
+    renderHistory(Array.isArray(jobs) ? jobs : []);
   } catch (e) {
     console.warn('Could not refresh history:', e);
   }
@@ -1238,6 +1306,8 @@ async function deleteHistoryJob(event, jobId) {
       if (state.ab.jobId === jobId) removeFile('ab');
       await refreshHistory();
       await refreshBatchQueue();
+    } else {
+      toast(await parseApiError(res, 'Failed to delete job'), 'error');
     }
   } catch (err) {
     toast('Failed to delete job.', 'error');
@@ -1258,6 +1328,8 @@ async function clearAllHistory() {
       else resetProgress('ab');
       await refreshHistory();
       await refreshBatchQueue();
+    } else {
+      toast(await parseApiError(res, 'Failed to clear history'), 'error');
     }
   } catch (err) {
     toast('Failed to clear history.', 'error');
@@ -1268,13 +1340,16 @@ async function loadHistoryJob(jobId, mode) {
   const onAudiobookTab = document.getElementById('tab-audiobook')?.classList.contains('active');
   const targetTab = (mode === 'audiobook' || onAudiobookTab) ? 'audiobook' : 'translate';
   const prefix = targetTab === 'audiobook' ? 'ab' : 'tr';
-  state[prefix].jobId = jobId;
-  switchTab(targetTab);
 
   try {
     const res = await fetch(`${API}/status/${jobId}`);
-    if (!res.ok) throw new Error('Job not found');
+    if (!res.ok) throw new Error(await parseApiError(res, 'Job not found'));
     const data = await res.json();
+
+    stopJobTracking(prefix);
+    state[prefix].jobId = jobId;
+    state[prefix].file = null;
+    switchTab(targetTab);
 
     if (data.file_name) {
       const nameEl = document.getElementById(`${prefix}-file-name`);
@@ -1502,11 +1577,13 @@ function applyReplace(replaceAll = false) {
     const count = (text.split(findVal).length - 1);
     text = text.replaceAll(findVal, replVal);
     textarea.value = text;
+    if (count > 0) markEditorDirty();
     updateEditorStats();
     toast(`Replaced ${count} occurrences.`, 'success');
   } else {
     if (text.includes(findVal)) {
       textarea.value = text.replace(findVal, replVal);
+      markEditorDirty();
       updateEditorStats();
       toast('Replaced first occurrence.', 'success');
     } else {
@@ -1517,7 +1594,10 @@ function applyReplace(replaceAll = false) {
 
 async function saveEditorText() {
   const jobId = state.tr.jobId;
-  if (!jobId) return;
+  if (!jobId) {
+    toast('Run AI Polish or upload a document first to create a saveable job.', 'info');
+    return;
+  }
 
   const text = document.getElementById('editor-translated-text').value;
   const btn = document.getElementById('btn-save-editor');
@@ -1781,8 +1861,7 @@ async function runAiPolish() {
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'AI Polishing failed');
+      throw new Error(await parseApiError(res, 'AI Polishing failed'));
     }
 
     const data = await res.json();
@@ -1801,12 +1880,14 @@ async function runAiPolish() {
       meta.textContent = 'Your document has been polished with Gemini AI. Click below to download the file.';
     }
 
-    // If editor is open, put the polished text into it
+    // If editor is open, put the polished text into it and clear dirty flag
     document.getElementById('editor-translated-text').value = data.polished_text;
+    clearEditorDirty();
     updateEditorStats();
     if (editorCard.style.display === 'none') {
-      openEditor();
+      await openEditor();
     }
+    refreshHistory();
     setTimeout(() => {
       if (document.getElementById('ai-polish-modal').style.display !== 'none') {
         closeAiPolishModal();
@@ -1856,6 +1937,7 @@ async function loadGlossary() {
 
   try {
     const res = await fetch(`${API}/glossary?categorized=true`);
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load glossary'));
     const data = await res.json();
 
     glossaryState.items = Array.isArray(data.terms) ? data.terms : [];
@@ -1953,7 +2035,7 @@ function renderGlossaryTable() {
         <td><strong>${escHtml(item.source)}</strong></td>
         <td>${escHtml(item.target)}</td>
         <td style="text-align:center">
-          <button class="glossary-del-btn" onclick="deleteGlossaryRule('${escHtml(item.source)}')" title="Διαγραφή όρου">✕</button>
+          <button class="glossary-del-btn" data-source="${escHtml(item.source)}" onclick="deleteGlossaryRule(this.dataset.source)" title="Διαγραφή όρου">✕</button>
         </td>
       </tr>
     `;
@@ -2284,10 +2366,23 @@ async function enqueueMultipleFiles(files) {
   }
 }
 
+let _queuePollInFlight = false;
+let _queuePollFailures = 0;
+
 async function refreshBatchQueue() {
+  if (_queuePollInFlight) return;
+  _queuePollInFlight = true;
   try {
     const res = await fetch(`${API}/queue`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      _queuePollFailures += 1;
+      if (_queuePollFailures >= 5 && _queuePollTimer) {
+        clearInterval(_queuePollTimer);
+        _queuePollTimer = null;
+      }
+      return;
+    }
+    _queuePollFailures = 0;
     const q = await res.json();
     renderBatchQueue(q);
 
@@ -2301,7 +2396,14 @@ async function refreshBatchQueue() {
       refreshHistory();
     }
   } catch (err) {
+    _queuePollFailures += 1;
+    if (_queuePollFailures >= 5 && _queuePollTimer) {
+      clearInterval(_queuePollTimer);
+      _queuePollTimer = null;
+    }
     console.warn('Batch queue refresh error:', err);
+  } finally {
+    _queuePollInFlight = false;
   }
 }
 

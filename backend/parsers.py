@@ -74,9 +74,36 @@ def _extract_page_text(page) -> str:
     return text
 
 
+# Strict Roman numeral pattern (1..399, excluding single 'I' and English words like Did/Mild/Vivid/Civil/Mix/Dim)
+_ROMAN_PAGE_NUM_RE = re.compile(
+    r"^(?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$"
+)
+_CHAPTER_HEADING_GUARD_RE = re.compile(
+    r"^(?:chapter|chap\.|part|book|prologue|epilogue|preface|introduction|afterword|κεφάλαιο|κεφ\.|μέρος|πρόλογος|επίλογος|εισαγωγή)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_standalone_page_number(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    # Dash-enclosed page number (e.g. "- 12 -", "— 1984 —")
+    if re.match(r"^[-–—]\s*\d{1,4}\s*[-–—]$", s):
+        return True
+    # Plain 1-3 digit page number (avoid stripping 4-digit years like '1984')
+    if re.match(r"^\d{1,3}$", s):
+        return True
+    # Valid Roman numeral of length >= 2 (lowercase or ALL-CAPS only, never Title-case English words like 'Did'/'Mild'/'Civil')
+    if len(s) >= 2 and (s.islower() or s.isupper()) and _ROMAN_PAGE_NUM_RE.match(s.upper()):
+        if s.lower() not in {"did", "dim", "mix", "mid", "lid", "mild", "vivid", "livid", "civil", "civic", "mimic"}:
+            return True
+    return False
+
+
 def _clean_page_blocks(page) -> str:
     """
-    Extracts body text from a PDF page while excluding running headers and footers
+    Extracts text blocks from a PyMuPDF page while stripping running headers and footers
     (such as author names, book titles, and page numbers at the top/bottom margins).
     """
     blocks = page.get_text("blocks")
@@ -90,13 +117,13 @@ def _clean_page_blocks(page) -> str:
         if not t:
             continue
         y0, y1 = b[1], b[3]
-        is_top = y0 < (h * 0.12)
-        is_bottom = y1 > (h * 0.88)
+        is_top = h > 0 and y0 < (h * 0.12)
+        is_bottom = h > 0 and y1 > (h * 0.88)
         lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
 
         if is_top:
             # 1. Pure page numbers or numbers enclosed in dashes/spaces at top
-            while lines and re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", lines[0], re.IGNORECASE):
+            while lines and _is_standalone_page_number(lines[0]):
                 lines.pop(0)
 
             # 2. Triplet header: Author\nPageNumber\nTitle (e.g. Peter Watts\n6\nBlindsight)
@@ -108,12 +135,19 @@ def _clean_page_blocks(page) -> str:
             elif len(lines) >= 2 and lines[0].isdigit() and len(lines[1]) < 50 and not lines[1].endswith((".", "!", "?", ";", ":", "»", '"', "”")):
                 lines = lines[2:]
             # 4. Standalone short header block (< 55 chars) with no sentence-ending punctuation
-            elif len(lines) == 1 and len(lines[0]) < 55 and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”")) and not lines[0][0].islower():
+            #    (never strip genuine chapter/section headings!)
+            elif (
+                len(lines) == 1
+                and len(lines[0]) < 55
+                and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”"))
+                and not lines[0][0].islower()
+                and not _CHAPTER_HEADING_GUARD_RE.match(lines[0])
+            ):
                 lines = []
 
         if is_bottom:
             # Strip running footers at bottom (e.g. page numbers)
-            while lines and re.match(r"^(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcdm]+)$", lines[-1], re.IGNORECASE):
+            while lines and _is_standalone_page_number(lines[-1]):
                 lines.pop()
 
         if lines:
@@ -130,6 +164,8 @@ def parse_pdf(file_path: str) -> Generator[dict, None, None]:
     import pymupdf  # fitz
 
     with pymupdf.open(file_path) as doc:
+        if doc.needs_pass:
+            raise ValueError("PDF file is password-protected / encrypted and cannot be read without a password.")
         total_pages = len(doc)
         logger.info(f"PDF has {total_pages} pages: {file_path}")
         for page_num in range(total_pages):
@@ -155,15 +191,31 @@ def count_pdf_pages(file_path: str) -> int:
 # DOCX Parsing via python-docx
 # ---------------------------------------------------------------------------
 
+def _extract_docx_paragraphs_and_tables(doc) -> list[str]:
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    seen_tcs = set()
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                tc_id = id(cell._tc)
+                if tc_id in seen_tcs:
+                    continue
+                seen_tcs.add(tc_id)
+                for p in cell.paragraphs:
+                    if p.text.strip():
+                        paragraphs.append(p.text)
+    return paragraphs
+
+
 def parse_docx(file_path: str) -> Generator[dict, None, None]:
     """
-    Yields dicts: {page: int, text: str} for paragraph blocks of a DOCX.
-    Groups paragraphs into ~500-word "virtual pages" for progress reporting.
+    Yields dicts: {page: int, text: str} for paragraph and table blocks of a DOCX.
+    Groups paragraphs into ~300-word "virtual pages" for progress reporting.
     """
     from docx import Document
 
     doc = Document(file_path)
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    paragraphs = _extract_docx_paragraphs_and_tables(doc)
 
     # Group into virtual pages of ~300 words
     virtual_page = []
@@ -192,7 +244,8 @@ def parse_docx(file_path: str) -> Generator[dict, None, None]:
 def count_docx_pages(file_path: str) -> int:
     from docx import Document
     doc = Document(file_path)
-    total_words = sum(len(p.text.split()) for p in doc.paragraphs if p.text.strip())
+    paragraphs = _extract_docx_paragraphs_and_tables(doc)
+    total_words = sum(len(p.split()) for p in paragraphs)
     return max(1, total_words // 300)
 
 
@@ -200,19 +253,41 @@ def count_docx_pages(file_path: str) -> int:
 # EPUB Parsing via EbookLib + BeautifulSoup
 # ---------------------------------------------------------------------------
 
+def _get_epub_spine_items(book):
+    from ebooklib import ITEM_DOCUMENT
+    ordered = []
+    seen_ids = set()
+    for spine_entry in getattr(book, "spine", []) or []:
+        item_id = spine_entry[0] if isinstance(spine_entry, (tuple, list)) else spine_entry
+        if item_id in seen_ids:
+            continue
+        item = book.get_item_with_id(item_id)
+        if item is not None and item.get_type() == ITEM_DOCUMENT:
+            ordered.append(item)
+            seen_ids.add(item_id)
+    for item in book.get_items():
+        if item.get_type() == ITEM_DOCUMENT and item.get_id() not in seen_ids:
+            ordered.append(item)
+            seen_ids.add(item.get_id())
+    return ordered
+
+
 def parse_epub(file_path: str) -> Generator[dict, None, None]:
     """
-    Yields dicts: {page: int, text: str} for each chapter of an EPUB.
+    Yields dicts: {page: int, text: str} for each chapter of an EPUB in spine reading order,
+    stripping <style> and <script> blocks cleanly.
     """
-    from ebooklib import epub, ITEM_DOCUMENT
+    from ebooklib import epub
     from bs4 import BeautifulSoup
 
     book = epub.read_epub(file_path)
-    items = [item for item in book.get_items() if item.get_type() == ITEM_DOCUMENT]
-    total = len(items)
+    items = _get_epub_spine_items(book)
+    total = max(1, len(items))
 
     for idx, item in enumerate(items, 1):
         soup = BeautifulSoup(item.get_content(), "html.parser")
+        for junk in soup(["style", "script"]):
+            junk.decompose()
         text = soup.get_text(separator="\n", strip=True)
         text = _clean_text(text)
         if text.strip():
@@ -220,9 +295,9 @@ def parse_epub(file_path: str) -> Generator[dict, None, None]:
 
 
 def count_epub_chapters(file_path: str) -> int:
-    from ebooklib import epub, ITEM_DOCUMENT
+    from ebooklib import epub
     book = epub.read_epub(file_path)
-    return sum(1 for item in book.get_items() if item.get_type() == ITEM_DOCUMENT)
+    return max(1, len(_get_epub_spine_items(book)))
 
 
 # ---------------------------------------------------------------------------
@@ -230,24 +305,50 @@ def count_epub_chapters(file_path: str) -> int:
 # ---------------------------------------------------------------------------
 
 def count_cbz_pages(file_path: str) -> int:
-    """Returns image page count inside a CBZ/ZIP comic archive."""
+    """Returns image page count inside a CBZ/ZIP comic archive (excluding macOS metadata)."""
     import zipfile
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
             img_exts = {".jpg", ".jpeg", ".png", ".webp"}
-            count = sum(1 for n in zf.namelist() if Path(n).suffix.lower() in img_exts and not n.startswith("."))
+            count = sum(
+                1 for n in zf.namelist()
+                if Path(n).suffix.lower() in img_exts
+                and not n.startswith(".")
+                and not Path(n).name.startswith(".")
+                and "__MACOSX/" not in n.replace("\\", "/")
+            )
             return max(count, 1)
     except Exception:
         return 1
 
 
+def _read_text_with_encoding_fallback(file_path: str) -> str:
+    raw = Path(file_path).read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", errors="replace")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig", errors="replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        for enc in ("cp1253", "iso-8859-7", "cp1252"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
+
+
 def parse_txt(file_path: str) -> Generator[dict, None, None]:
-    """Parses a plain text file, respecting PAGE markers or splitting into manageable sections."""
-    content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    """Parses a plain text file, respecting PAGE markers (preserving preamble) and encodings."""
+    content = _read_text_with_encoding_fallback(file_path)
     clean = _clean_text(content)
     sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", clean)
     if len(sections) > 1:
-        total = (len(sections) - 1) // 2
+        preamble = sections[0].strip()
+        total = (len(sections) - 1) // 2 + (1 if preamble else 0)
+        if preamble:
+            yield {"page": 0, "text": preamble, "total": total}
         for i in range(1, len(sections), 2):
             pnum = int(sections[i])
             text = sections[i + 1].strip()
@@ -261,20 +362,21 @@ def parse_txt(file_path: str) -> Generator[dict, None, None]:
 
 def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None]:
     """
-    Unified parser. file_type: 'pdf', 'docx', 'epub', 'cbz', 'txt'
+    Unified parser. file_type: 'pdf', 'docx', 'epub', 'cbz', 'cbr', 'txt' (case-insensitive)
     Yields: {page: int, text: str, total: int}
     """
-    if file_type == "pdf":
+    ft = (file_type or "").strip().lower().lstrip(".")
+    if ft == "pdf":
         yield from parse_pdf(file_path)
-    elif file_type == "docx":
+    elif ft == "docx":
         yield from parse_docx(file_path)
-    elif file_type == "epub":
+    elif ft == "epub":
         yield from parse_epub(file_path)
-    elif file_type in ("cbz", "zip"):
+    elif ft in ("cbz", "cbr", "zip"):
         total = count_cbz_pages(file_path)
         for i in range(total):
             yield {"page": i + 1, "text": f"[Comic Page {i+1}]", "total": total}
-    elif file_type == "txt":
+    elif ft == "txt":
         yield from parse_txt(file_path)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
@@ -282,17 +384,18 @@ def parse_document(file_path: str, file_type: str) -> Generator[dict, None, None
 
 def count_pages(file_path: str, file_type: str) -> int:
     """Returns estimated page/chapter count for progress tracking."""
+    ft = (file_type or "").strip().lower().lstrip(".")
     try:
-        if file_type == "txt":
-            content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        if ft == "txt":
+            content = _read_text_with_encoding_fallback(file_path)
             return max(1, len(content) // 2000)
-        if file_type == "pdf":
+        if ft == "pdf":
             return count_pdf_pages(file_path)
-        elif file_type == "docx":
+        elif ft == "docx":
             return count_docx_pages(file_path)
-        elif file_type == "epub":
+        elif ft == "epub":
             return count_epub_chapters(file_path)
-        elif file_type in ("cbz", "zip"):
+        elif ft in ("cbz", "cbr", "zip"):
             return count_cbz_pages(file_path)
     except Exception:
         return 1
@@ -328,45 +431,41 @@ def detect_is_graphic_novel(file_path: str, file_type: str, file_name: str = "")
     if ft == "pdf":
         try:
             import pymupdf as fitz
-            doc = fitz.open(file_path)
-            total = len(doc)
-            if total == 0:
-                doc.close()
-                return {"is_comic": False, "is_scanned": False, "reason": ""}
+            with fitz.open(file_path) as doc:
+                total = len(doc)
+                if total == 0:
+                    return {"is_comic": False, "is_scanned": False, "reason": ""}
 
-            # Sample up to 8 representative pages (prefer interior pages when total > 2)
-            if total <= 8:
-                sample_indices = list(range(total))
-            else:
-                step = max(1, (total - 1) // 7)
-                sample_indices = [min(total - 1, 1 + i * step) for i in range(8)]
-                sample_indices = sorted(set(sample_indices))
+                # Sample up to 8 representative pages (prefer interior pages when total > 2)
+                if total <= 8:
+                    sample_indices = list(range(total))
+                else:
+                    step = max(1, (total - 1) // 7)
+                    sample_indices = [min(total - 1, 1 + i * step) for i in range(8)]
+                    sample_indices = sorted(set(sample_indices))
 
-            full_image_pages = 0
-            total_chars = 0
-            sampled_count = len(sample_indices)
+                full_image_pages = 0
+                total_chars = 0
+                sampled_count = len(sample_indices)
 
-            for idx in sample_indices:
-                page = doc[idx]
-                txt = (page.get_text("text") or "").strip()
-                total_chars += len(txt)
+                for idx in sample_indices:
+                    page = doc[idx]
+                    txt = (page.get_text("text") or "").strip()
+                    total_chars += len(txt)
 
-                page_area = max(1.0, page.rect.width * page.rect.height)
-                max_img_cov = 0.0
-                for img_info in page.get_images(full=True):
-                    xref = img_info[0]
-                    try:
-                        for rect in page.get_image_rects(xref):
-                            cov = (rect.width * rect.height) / page_area
-                            if cov > max_img_cov:
-                                max_img_cov = cov
-                    except Exception:
-                        pass
-                # Also detect vector-drawn comic panels/artwork (lots of drawings + short text)
-                if max_img_cov >= 0.60:
-                    full_image_pages += 1
-
-            doc.close()
+                    page_area = max(1.0, page.rect.width * page.rect.height)
+                    max_img_cov = 0.0
+                    for img_info in page.get_images(full=True):
+                        xref = img_info[0]
+                        try:
+                            for rect in page.get_image_rects(xref):
+                                cov = (rect.width * rect.height) / page_area
+                                if cov > max_img_cov:
+                                    max_img_cov = cov
+                        except Exception:
+                            pass
+                    if max_img_cov >= 0.60:
+                        full_image_pages += 1
 
             avg_chars = total_chars / max(1, sampled_count)
             full_img_ratio = full_image_pages / max(1, sampled_count)
@@ -457,6 +556,8 @@ def split_into_chunks(text: str, max_chars: int = 4500) -> list[str]:
     Splits text into chunks <= max_chars, splitting at sentence/paragraph
     or clause boundaries to preserve grammatical coherence and translation quality.
     """
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive.")
     if not text:
         return []
     if len(text) <= max_chars:

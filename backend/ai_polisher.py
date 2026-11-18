@@ -9,8 +9,10 @@ rolling narrative context, and smart disk checkpointing.
 import os
 import re
 import json
+import hashlib
 import logging
 import asyncio
+import threading
 from pathlib import Path
 from typing import Optional, Callable, Any
 
@@ -109,6 +111,8 @@ STYLE_TEMPERATURES = {
 # Cached discoveries to avoid querying Google ModelService on every single page
 _CACHED_WORKING_MODEL: Optional[str] = None
 _CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
+_CACHED_API_KEY_HASH: Optional[str] = None
+_CHECKPOINT_LOCK = threading.RLock()
 
 POLISH_STATUS: dict[str, dict[str, Any]] = {}
 
@@ -216,10 +220,12 @@ def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
     Extracts non-thought text and finishReason from a Gemini generateContent JSON payload.
     Strictly ignores Gemini 2.5/3.x 'thought: true' reasoning parts so chain-of-thought never leaks.
     """
-    cand_list = result.get("candidates") or []
-    if not cand_list:
+    if not isinstance(result, dict):
         return "", ""
-    cand = cand_list[0] or {}
+    cand_list = result.get("candidates") or []
+    if not cand_list or not isinstance(cand_list, list):
+        return "", ""
+    cand = cand_list[0] if isinstance(cand_list[0], dict) else {}
     finish_reason = str(cand.get("finishReason") or "")
     parts = (cand.get("content") or {}).get("parts") or []
     text_parts = []
@@ -266,8 +272,8 @@ def sanitize_ai_output(text: str) -> str:
             in_cot_tail = True
             continue
         if in_cot_tail:
-            # Stop skipping once a real Greek page marker or substantial Greek paragraph resumes
-            if re.match(r"^\s*={3,}\s*PAGE\s+\d+\s*={3,}\s*$", ln):
+            # Stop skipping once a real page marker (1-line or 3-line translator format) resumes
+            if re.match(r"^\s*={3,}\s*PAGE\s+\d+\s*={3,}\s*$", ln) or re.match(r"^\s*PAGE\s+\d+\s*$", ln) or re.match(r"^\s*={6,}\s*$", ln):
                 in_cot_tail = False
                 out_lines.append(ln)
             continue
@@ -307,11 +313,15 @@ def detect_greek_output_issues(
         return ["empty"]
 
     # 1. Mixed-script / exotic-script corruption check (classic Flash-Lite failure mode)
+    # Exempt standard SI / scientific units combining a Greek prefix with Latin unit letters (e.g. μm, μg, Δt, Ωm)
+    _sci_unit_re = re.compile(r"^[μµΔΩαβγλσπρ][A-Za-z]{1,2}\d*$")
     src_has_exotic = bool(_EXOTIC_SCRIPT_RE.search(source_text or ""))
     mixed_count = 0
     exotic_count = 0
     for m in re.finditer(r"[^\s,;.:!?«»\"'()\[\]—–\-/\\*<>]+", text):
         tok = m.group(0)
+        if _sci_unit_re.match(tok):
+            continue
         has_gr = bool(_GREEK_CHAR_RE.search(tok))
         has_lat = bool(_LATIN_LETTER_RE.search(tok))
         has_ex = bool(_EXOTIC_SCRIPT_RE.search(tok))
@@ -413,11 +423,16 @@ async def _get_available_models(api_key: str, session: aiohttp.ClientSession) ->
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         return ["gemini-flash-latest", "gemini-2.5-flash-lite"]
 
-    global _CACHED_AVAILABLE_MODELS
+    global _CACHED_AVAILABLE_MODELS, _CACHED_WORKING_MODEL, _CACHED_API_KEY_HASH
+    key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+    if _CACHED_API_KEY_HASH != key_hash:
+        _CACHED_WORKING_MODEL = None
+        _CACHED_AVAILABLE_MODELS = None
+        _CACHED_API_KEY_HASH = key_hash
     if _CACHED_AVAILABLE_MODELS:
         return _CACHED_AVAILABLE_MODELS
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
     headers = {"x-goog-api-key": api_key}
     try:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -453,12 +468,24 @@ async def polish_text_with_gemini(
     job_id: Optional[str] = None,
     use_source_anchoring: bool = True,
     progress_callback: Optional[Callable[[int, int], Any]] = None,
+    target_lang: str = "greek",
 ) -> str:
     """
     Polishes and proofreads translated text using Google's Gemini API.
     Supports multi-page smart batching, bilingual source-anchored verification,
     character consistency dossier, rolling narrative context, and disk checkpointing.
     """
+    if not text or not str(text).strip():
+        return text or ""
+
+    is_greek_target = (target_lang or "greek").strip().lower() in ("greek", "el")
+
+    def _postprocess(s: str) -> str:
+        if not is_greek_target:
+            return s
+        from backend.typography import format_greek_typography
+        return format_greek_typography(apply_glossary(s, "greek", style=style))
+
     from backend.settings_manager import get_setting
     key = api_key or os.environ.get("GEMINI_API_KEY") or get_setting("gemini_api_key")
     if not key:
@@ -468,32 +495,42 @@ async def polish_text_with_gemini(
     sem = asyncio.Semaphore(5)
     client_timeout = aiohttp.ClientTimeout(total=90)
 
-    # Disk Checkpoint setup
+    # Disk Checkpoint setup (with safe job_id validation and style/input fingerprint)
     checkpoint_file: Optional[Path] = None
-    checkpoint_data: dict[str, Any] = {"batches": {}, "chunks": {}}
-    if job_id:
-        out_dir = Path("temp/outputs") / job_id
+    input_sig = hashlib.sha256(f"{style}::{target_lang}::{text[:2000]}::{len(text)}".encode("utf-8")).hexdigest()[:16]
+    checkpoint_data: dict[str, Any] = {"sig": input_sig, "batches": {}, "chunks": {}}
+    if job_id and "/" not in job_id and "\\" not in job_id and ".." not in job_id:
+        out_dir = Path(__file__).resolve().parent.parent / "temp" / "outputs" / job_id
         if out_dir.exists():
             checkpoint_file = out_dir / ".polish_checkpoint.json"
             if checkpoint_file.is_file():
                 try:
                     loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
-                    if isinstance(loaded.get("batches"), dict):
-                        checkpoint_data["batches"] = loaded["batches"]
-                    if isinstance(loaded.get("chunks"), dict):
-                        checkpoint_data["chunks"] = loaded["chunks"]
-                    if isinstance(loaded.get("entity_dossier"), str):
-                        checkpoint_data["entity_dossier"] = loaded["entity_dossier"]
-                    logger.info(f"Loaded existing polish checkpoint with {len(checkpoint_data['batches'])} batches / {len(checkpoint_data['chunks'])} chunks")
+                    # Reuse checkpoint if no sig (legacy/tests) or matching sig
+                    if not loaded.get("sig") or loaded.get("sig") == input_sig:
+                        if isinstance(loaded.get("batches"), dict):
+                            checkpoint_data["batches"] = loaded["batches"]
+                        if isinstance(loaded.get("chunks"), dict):
+                            checkpoint_data["chunks"] = loaded["chunks"]
+                        if isinstance(loaded.get("entity_dossier"), str):
+                            checkpoint_data["entity_dossier"] = loaded["entity_dossier"]
+                        logger.info(f"Loaded existing polish checkpoint with {len(checkpoint_data['batches'])} batches / {len(checkpoint_data['chunks'])} chunks")
                 except Exception as ex:
                     logger.warning(f"Could not load polish checkpoint: {ex}")
 
     def _save_checkpoint():
         if checkpoint_file:
-            try:
-                checkpoint_file.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
-            except Exception as ex:
-                logger.warning(f"Could not write polish checkpoint: {ex}")
+            with _CHECKPOINT_LOCK:
+                tmp_cp = checkpoint_file.with_suffix(".json.tmp")
+                try:
+                    tmp_cp.write_text(json.dumps(checkpoint_data, ensure_ascii=False), encoding="utf-8")
+                    os.replace(tmp_cp, checkpoint_file)
+                except Exception as ex:
+                    logger.warning(f"Could not write polish checkpoint: {ex}")
+                    try:
+                        tmp_cp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
     async def _run_progress(done_count: int, total_count: int) -> None:
         if not progress_callback:
@@ -597,8 +634,12 @@ async def polish_text_with_gemini(
             if curr_b:
                 batches.append(curr_b)
 
-            total_batches = max(1, len(batches))
+            if not batches:
+                return _postprocess(text)
+
+            total_batches = len(batches)
             polished_batches = ["" for _ in batches]
+            batch_failed = [False for _ in batches]
             completed = 0
             first_error: Optional[Exception] = None
 
@@ -606,7 +647,7 @@ async def polish_text_with_gemini(
             cached_batches = checkpoint_data.get("batches", {})
             for b_idx in range(total_batches):
                 b_str = str(b_idx)
-                if b_str in cached_batches and cached_batches[b_str].strip():
+                if b_str in cached_batches and isinstance(cached_batches[b_str], str) and cached_batches[b_str].strip():
                     polished_batches[b_idx] = cached_batches[b_str]
                     completed += 1
 
@@ -743,6 +784,7 @@ async def polish_text_with_gemini(
                     except Exception as ex:
                         if first_error is None:
                             first_error = ex
+                        batch_failed[b_idx] = True
                         logger.warning(f"Batch {b_idx + 1}/{total_batches} polish failed (keeping original text): {ex}")
                         polished_batches[b_idx] = draft_batch_text
 
@@ -754,7 +796,7 @@ async def polish_text_with_gemini(
             if pending_batches:
                 await asyncio.gather(*(_polish_batch(i, b) for i, b in pending_batches))
 
-            if all(not p for p in polished_batches) and first_error is not None:
+            if (all(batch_failed) or all(not p for p in polished_batches)) and first_error is not None:
                 raise first_error
 
             final_batches = []
@@ -774,9 +816,7 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            final_res = apply_glossary("\n\n".join(final_batches), "greek", style=style)
-            from backend.typography import format_greek_typography
-            return format_greek_typography(final_res)
+            return _postprocess("\n\n".join(final_batches))
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
         if len(text) > 4000:
@@ -843,11 +883,8 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            final_res = apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek", style=style)
-            from backend.typography import format_greek_typography
-            return format_greek_typography(final_res)
+            return _postprocess("\n\n".join(p for p in polished_chunks if p))
 
-        await _run_progress(1, 1)
         single_input = text
         if original_text and use_source_anchoring:
             single_input = (
@@ -855,8 +892,8 @@ async def polish_text_with_gemini(
                 f"--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n{text}"
             )
         polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
-        from backend.typography import format_greek_typography
-        return format_greek_typography(apply_glossary(polished_single, "greek", style=style))
+        await _run_progress(1, 1)
+        return _postprocess(polished_single)
 
 
 # Alias for concise invocation
@@ -882,11 +919,13 @@ async def _call_gemini_api(
         return sanitize_ai_output(f"[Επιμελημένο AI]: {content_text}")
 
     # Check cache first (unless explicitly bypassed during a quality retry)
+    # Hash the FULL system_prompt so style, language, glossary, and entity dossier NEVER collide!
     cache_key = None
+    prompt_hash = hashlib.sha256((system_prompt or "").encode("utf-8")).hexdigest()[:24]
     if not bypass_cache:
         try:
             from backend.database import compute_cache_key, db_get_cached_translation
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v2", extra=f"{system_prompt[:50]}:{temperature}")
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v3", extra=f"{prompt_hash}:{temperature}")
             cached_result = db_get_cached_translation(cache_key)
             if cached_result is not None:
                 logger.info("Retrieved AI polished chunk directly from SQLite cache.")
@@ -896,7 +935,7 @@ async def _call_gemini_api(
     else:
         try:
             from backend.database import compute_cache_key
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v2", extra=f"{system_prompt[:50]}:{temperature}")
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v3", extra=f"{prompt_hash}:{temperature}")
         except Exception:
             pass
 
@@ -971,7 +1010,7 @@ async def _call_gemini_api(
             "x-goog-api-key": api_key,
         }
         for model in candidates:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             # Disable hidden thinking on Flash models (2.5 & 3.x) so output budget isn't eaten by chain-of-thought
             m_low = model.lower()
             use_no_thinking = (
@@ -992,7 +1031,7 @@ async def _call_gemini_api(
                 else dict(base_payload)
             )
 
-            max_attempts = 2
+            max_attempts = 3
             for attempt in range(max_attempts):
                 try:
                     req_timeout = aiohttp.ClientTimeout(total=60)
@@ -1017,10 +1056,10 @@ async def _call_gemini_api(
                                 meta_out["model"] = model
                                 meta_out["finish_reason"] = finish_reason
                             logger.info(f"Gemini API success using model: {model}")
-                            if cache_key and not detect_greek_output_issues(polished):
+                            if cache_key and not detect_greek_output_issues(polished, source_text=content_text):
                                 try:
                                     from backend.database import db_set_cached_translation
-                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v2")
+                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v3")
                                 except Exception:
                                     pass
                             return polished
@@ -1069,6 +1108,7 @@ async def _call_gemini_api(
                 except (PermissionError, _TruncatedOutputError):
                     raise
                 except asyncio.TimeoutError:
+                    last_error = f"Model {model} timed out after 60s."
                     logger.warning(f"Model {model} timed out after 60s. Switching immediately to next candidate...")
                     if _CACHED_WORKING_MODEL == model:
                         _CACHED_WORKING_MODEL = None

@@ -72,25 +72,19 @@ def api_post_file(path, filepath, filename):
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 # Test 6a: GET /voices
-try:
-    status, data = api_get("/voices")
-    assert status == 200
-    assert "english" in data
-    assert "greek" in data
-    assert len(data["greek"]) >= 2
-    assert len(data["english"]) >= 4
-    print(f"  GET /voices: OK (english: {len(data['english'])} voices, greek: {len(data['greek'])} voices)")
-except Exception as e:
-    print(f"  GET /voices: FAIL - {e}")
+status, data = api_get("/voices")
+assert status == 200
+assert "english" in data
+assert "greek" in data
+assert len(data["greek"]) >= 2
+assert len(data["english"]) >= 4
+print(f"  GET /voices: OK (english: {len(data['english'])} voices, greek: {len(data['greek'])} voices)")
 
 # Test 6b: GET /jobs
-try:
-    status, data = api_get("/jobs")
-    assert status == 200
-    assert isinstance(data, list)
-    print(f"  GET /jobs: OK ({len(data)} jobs listed)")
-except Exception as e:
-    print(f"  GET /jobs: FAIL - {e}")
+status, data = api_get("/jobs")
+assert status == 200
+assert isinstance(data, list)
+print(f"  GET /jobs: OK ({len(data)} jobs listed)")
 
 # Test 6c: Download old job from disk (recovered) and delete it
 recovered_id = "test-recovered-job"
@@ -118,7 +112,7 @@ finally:
 try:
     req = urllib.request.Request(f"{API}/download/nonexistent-id")
     urllib.request.urlopen(req)
-    print(f"  GET /download (missing): FAIL - should 404")
+    assert False, "GET /download (missing) should have returned 404"
 except urllib.error.HTTPError as e:
     assert e.code == 404
     print(f"  GET /download (missing job): OK (404 returned)")
@@ -127,7 +121,7 @@ except urllib.error.HTTPError as e:
 try:
     req = urllib.request.Request(f"{API}/status/nonexistent-id")
     urllib.request.urlopen(req)
-    print(f"  GET /status (missing): FAIL - should 404")
+    assert False, "GET /status (missing) should have returned 404"
 except urllib.error.HTTPError as e:
     assert e.code == 404
     print(f"  GET /status (missing job): OK (404 returned)")
@@ -136,7 +130,7 @@ except urllib.error.HTTPError as e:
 try:
     req = urllib.request.Request(f"{API}/jobs/nonexistent-id/cancel", data=b"", headers={"Content-Type": "application/json"})
     urllib.request.urlopen(req)
-    print("  POST /jobs/{id}/cancel (nonexistent): FAIL - should 404")
+    assert False, "POST /jobs/{id}/cancel (nonexistent) should have returned 404"
 except urllib.error.HTTPError as e:
     assert e.code == 404
     print("  POST /jobs/{id}/cancel (nonexistent): OK (404 returned)")
@@ -256,7 +250,7 @@ try:
     status, data = api_post_json("/audiobook", {
         "job_id": gr_job_id,
         "language": "english",
-        "voice_name": "Aria (Female, US)",
+        "voice_name": "Aria (Female)",
         "use_translated": True,
     })
     assert status == 200

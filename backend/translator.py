@@ -38,12 +38,29 @@ RATE_LIMIT_DELAY = 0.08
 _GTX_COOLDOWN_UNTIL = 0.0
 
 
+def _resolve_lang_code(lang: Optional[str], default: str) -> str:
+    if not lang:
+        return default
+    norm = lang.strip().lower()
+    if norm in ("en", "english"):
+        return "en"
+    if norm in ("el", "gr", "greek"):
+        return "el"
+    return LANG_CODES.get(norm, default)
+
+
+def _extract_gtx_text(data) -> str:
+    if not isinstance(data, list) or not data or not isinstance(data[0], list):
+        raise ValueError("Malformed GTX response payload")
+    return "".join(part[0] for part in data[0] if isinstance(part, list) and part and isinstance(part[0], str))
+
+
 def _translate_gtx(text: str, source_lang: str, target_lang: str) -> str:
     """Translates text using Google's direct GTX endpoint via POST (no URI length limits)."""
     if not text.strip():
         return text
-    src_code = LANG_CODES.get(source_lang, "en")
-    tgt_code = LANG_CODES.get(target_lang, "el")
+    src_code = _resolve_lang_code(source_lang, "en")
+    tgt_code = _resolve_lang_code(target_lang, "el")
 
     data = urllib.parse.urlencode({
         "client": "gtx",
@@ -64,8 +81,8 @@ def _translate_gtx(text: str, source_lang: str, target_lang: str) -> str:
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        return "".join(part[0] for part in data[0] if part and part[0])
+        parsed = json.loads(raw)
+        return _extract_gtx_text(parsed)
 
 
 async def _translate_gtx_async(
@@ -75,8 +92,8 @@ async def _translate_gtx_async(
     target_lang: str,
 ) -> str:
     """Async HTTP keep-alive Google GTX translation."""
-    src_code = LANG_CODES.get(source_lang, "en")
-    tgt_code = LANG_CODES.get(target_lang, "el")
+    src_code = _resolve_lang_code(source_lang, "en")
+    tgt_code = _resolve_lang_code(target_lang, "el")
     form = {
         "client": "gtx",
         "sl": src_code,
@@ -98,8 +115,18 @@ async def _translate_gtx_async(
             raise urllib.error.HTTPError(str(resp.url), 429, "Too Many Requests", {}, None)
         if resp.status != 200:
             raise RuntimeError(f"GTX HTTP {resp.status}")
-        data = await resp.json(content_type=None)
-        return "".join(part[0] for part in data[0] if part and part[0])
+        parsed = await resp.json(content_type=None)
+        return _extract_gtx_text(parsed)
+
+
+_MYMEMORY_ERROR_MARKERS = (
+    "MYMEMORY WARNING",
+    "QUERY LENGTH LIMIT EXCEEDED",
+    "PLEASE SELECT TWO DISTINCT LANGUAGES",
+    "INVALID TARGET LANGUAGE",
+    "INVALID SOURCE LANGUAGE",
+    "NO QUERY SPECIFIED",
+)
 
 
 async def _translate_mymemory_async(
@@ -111,8 +138,8 @@ async def _translate_mymemory_async(
     """Fast free fallback via MyMemory API when Google GTX rate-limits (max ~500 chars per call)."""
     if len(text) > 480:
         return None
-    src_code = LANG_CODES.get(source_lang, "en")
-    tgt_code = LANG_CODES.get(target_lang, "el")
+    src_code = _resolve_lang_code(source_lang, "en")
+    tgt_code = _resolve_lang_code(target_lang, "el")
     params = {"q": text, "langpair": f"{src_code}|{tgt_code}"}
     try:
         async with session.get(
@@ -122,9 +149,16 @@ async def _translate_mymemory_async(
         ) as resp:
             if resp.status == 200:
                 data = await resp.json(content_type=None)
+                if not isinstance(data, dict):
+                    return None
+                resp_status = data.get("responseStatus", 200)
+                if str(resp_status) != "200":
+                    return None
                 tr = (data.get("responseData") or {}).get("translatedText", "")
-                if tr and "MYMEMORY WARNING" not in tr.upper():
-                    return tr
+                if isinstance(tr, str) and tr.strip():
+                    tr_up = tr.upper()
+                    if not any(m in tr_up for m in _MYMEMORY_ERROR_MARKERS):
+                        return tr
     except Exception:
         pass
     return None
@@ -271,8 +305,8 @@ async def translate_document(
     Writes output as a UTF-8 text file with page markers.
     Returns the output path.
     """
-    src_code = LANG_CODES.get(source_lang, "en")
-    tgt_code = LANG_CODES.get(target_lang, "el")
+    src_code = _resolve_lang_code(source_lang, "en")
+    tgt_code = _resolve_lang_code(target_lang, "el")
     fallback_translator = GoogleTranslator(source=src_code, target=tgt_code)
 
     update_job(job_id,
@@ -280,8 +314,12 @@ async def translate_document(
                current_step="Reading document...",
                progress=0)
 
-    # Collect all pages
-    pages = list(parse_document(file_path, file_type))
+    # Collect all pages (mark job as error if parser fails)
+    try:
+        pages = list(parse_document(file_path, file_type))
+    except Exception as parse_err:
+        update_job(job_id, status="error", error=f"Failed to read document: {parse_err}")
+        raise
     total_pages = len(pages)
 
     if total_pages == 0:

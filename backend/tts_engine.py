@@ -5,6 +5,7 @@ Supports Greek (el-GR) and English (en-US) with multiple voice options.
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -65,7 +66,7 @@ def split_into_voice_segments(
     2. Automatic dialogue alternation: Dialogue lines (starting with '—' or enclosed in «...»)
        are routed to dialogue_voice_code, narration is routed to default_voice_code.
     """
-    if not text.strip():
+    if not text or not str(text).strip():
         return []
 
     alias_map = {
@@ -195,10 +196,14 @@ async def synthesize_voice_preview(
     voice_code: str,
     text: Optional[str] = None,
 ) -> str:
-    """Synthesizes a short 2-3 second voice preview MP3 and returns its path."""
+    """Synthesizes a short 2-3 second voice preview MP3 atomically with timeout and returns its path."""
+    import uuid
+    if not voice_code or not re.match(r"^[A-Za-z0-9_-]{3,80}$", voice_code):
+        raise ValueError(f"Invalid voice code: {voice_code!r}")
     base_temp = Path(__file__).resolve().parent.parent / "temp" / "previews"
     base_temp.mkdir(parents=True, exist_ok=True)
     out_file = base_temp / f"preview_{voice_code}.mp3"
+    tmp_file = base_temp / f"preview_{voice_code}_{uuid.uuid4().hex[:8]}.tmp"
 
     sample_text = text or (
         "Γεια σας! Αυτή είναι μια δοκιμή εκφώνησης για το BookApp."
@@ -207,7 +212,15 @@ async def synthesize_voice_preview(
     )
 
     communicate = edge_tts.Communicate(sample_text, voice_code, rate="-10%")
-    await communicate.save(str(out_file))
+    try:
+        await asyncio.wait_for(communicate.save(str(tmp_file)), timeout=30.0)
+        os.replace(tmp_file, out_file)
+    finally:
+        if tmp_file.exists():
+            try:
+                tmp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
     return str(out_file)
 
 
@@ -218,24 +231,27 @@ async def export_audiobook_m4b(
     author: str = "",
     cover_image_path: Optional[str] = None,
 ) -> str:
-    """Exports audio as .m4b with chapter metadata and cover art."""
+    """Exports audio as .m4b with chapter metadata, optional cover art, and subprocess timeout."""
     import shutil
     import subprocess
     ffmpeg_bin = shutil.which("ffmpeg")
     Path(m4b_path).parent.mkdir(parents=True, exist_ok=True)
 
     if ffmpeg_bin:
-        cmd = [
-            ffmpeg_bin, "-y", "-i", mp3_path,
+        cmd = [ffmpeg_bin, "-y", "-i", mp3_path]
+        has_cov = bool(cover_image_path and Path(cover_image_path).exists())
+        if has_cov:
+            cmd.extend(["-i", cover_image_path, "-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v", "attached_pic"])
+        cmd.extend([
             "-c:a", "aac", "-b:a", "64k",
             "-metadata", f"title={title or 'Audiobook'}",
             "-metadata", f"artist={author or 'BookApp'}",
             "-metadata", "genre=Audiobook",
-            m4b_path
-        ]
+            m4b_path,
+        ])
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True))
+            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True, timeout=300))
             return m4b_path
         except Exception as e:
             logger.warning(f"ffmpeg conversion failed: {e}. Falling back to tagged copy.")
@@ -243,6 +259,33 @@ async def export_audiobook_m4b(
     shutil.copyfile(mp3_path, m4b_path)
     tag_audiobook_file(m4b_path, title=title, author=author, cover_image_path=cover_image_path)
     return m4b_path
+
+
+def _resolve_voice_code(language: str, voice_name: Optional[str], fallback_default: bool = True) -> Optional[str]:
+    lang_norm = (language or "english").strip().lower()
+    if lang_norm in ("el", "gr"):
+        lang_norm = "greek"
+    elif lang_norm == "en":
+        lang_norm = "english"
+    lang_map = VOICES.get(lang_norm, {})
+    if voice_name:
+        # Exact display-name match
+        if voice_name in lang_map:
+            return lang_map[voice_name]
+        # Raw Edge-TTS voice code match (e.g. 'el-GR-AthinaNeural')
+        for code in lang_map.values():
+            if code.lower() == voice_name.strip().lower():
+                return code
+        # Case-insensitive display-name match
+        vn_low = voice_name.strip().lower()
+        for label, code in lang_map.items():
+            if label.lower() == vn_low:
+                return code
+    if not fallback_default:
+        return None
+    if lang_map:
+        return next(iter(lang_map.values()))
+    return "en-US-AriaNeural"
 
 
 async def generate_audiobook(
@@ -278,14 +321,14 @@ async def generate_audiobook(
     Returns:
         output_path of the generated audiobook
     """
-    # Resolve primary and dialogue voice codes
-    voice_code = VOICES.get(language, {}).get(voice_name)
-    if not voice_code:
-        voice_code = list(VOICES.get(language, {"": "en-US-AriaNeural"}).values())[0]
-
-    dialogue_voice_code = None
-    if dialogue_voice:
-        dialogue_voice_code = VOICES.get(language, {}).get(dialogue_voice)
+    # Resolve primary and dialogue voice codes (case-insensitive & supports raw Edge-TTS codes)
+    lang_norm = (language or "english").strip().lower()
+    if lang_norm in ("el", "gr"):
+        lang_norm = "greek"
+    elif lang_norm == "en":
+        lang_norm = "english"
+    voice_code = _resolve_voice_code(lang_norm, voice_name, fallback_default=True)
+    dialogue_voice_code = _resolve_voice_code(lang_norm, dialogue_voice, fallback_default=False) if dialogue_voice else None
 
     from backend.job_manager import is_job_cancelled
     if is_job_cancelled(job_id):
@@ -298,11 +341,11 @@ async def generate_audiobook(
 
     # Get text to convert
     if translated_text_path and Path(translated_text_path).exists():
-        # Read from pre-translated file (strip page markers for cleaner audio)
-        with open(translated_text_path, "r", encoding="utf-8") as f:
+        # Read from pre-translated file (strip standalone page markers without removing prose like 'PAGE 42')
+        with open(translated_text_path, "r", encoding="utf-8", errors="replace") as f:
             raw = f.read()
         raw = re.sub(r"={3,}[^\n\r]*?={3,}", "", raw)
-        raw = re.sub(r"\bPAGE \d+\b", "", raw)
+        raw = re.sub(r"(?m)^\s*PAGE\s+\d+\s*$", "", raw)
         raw_text = raw.strip()
         text_source = "translated_file"
     else:
@@ -325,7 +368,7 @@ async def generate_audiobook(
         from backend.ai_polisher import polish_text_with_gemini
         from backend.settings_manager import get_setting
 
-        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
         if not resolved_key:
             err_msg = "Gemini API key is required for AI Audiobook Polish."
             update_job(job_id, status="error", error=err_msg)
@@ -344,6 +387,7 @@ async def generate_audiobook(
             style=polish_style,
             job_id=job_id,
             progress_callback=_polish_prog,
+            target_lang=lang_norm,
         )
 
     voice_segments = split_into_voice_segments(
@@ -429,61 +473,64 @@ async def generate_audiobook(
         return str(chunk_path)
 
     try:
-        results = await asyncio.gather(*(_process_chunk(i, item) for i, item in enumerate(voice_segments)))
-    except asyncio.CancelledError:
-        logger.info(f"[{job_id}] Audiobook generation was cancelled.")
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
-        raise
+        try:
+            results = await asyncio.gather(*(_process_chunk(i, item) for i, item in enumerate(voice_segments)))
+        except asyncio.CancelledError:
+            logger.info(f"[{job_id}] Audiobook generation was cancelled.")
+            update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+            raise
+        finally:
+            ticker_stop.set()
+            ticker_task.cancel()
+            try:
+                await ticker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        chunk_files = [p for p in results if p]
+
+        from backend.job_manager import is_job_cancelled
+        if is_job_cancelled(job_id):
+            update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+            raise asyncio.CancelledError("Audiobook generation was cancelled by user.")
+
+        # Concatenate all chunks into final MP3 / M4B
+        update_job(job_id,
+                   current_step="Assembling final audiobook...",
+                   progress=92)
+
+        # Detect cover image if available
+        cover_img = None
+        out_parent = Path(output_path).parent
+        for cname in ("cover_image.jpg", "cover_image.png", "cover.jpg", "cover.png"):
+            cand_cov = out_parent / cname
+            if cand_cov.exists():
+                cover_img = str(cand_cov)
+                break
+        book_title = Path(file_path).stem if file_path else "Audiobook"
+
+        if output_path.lower().endswith(".m4b"):
+            temp_cat_mp3 = temp_dir / "full_concat.mp3"
+            await _concatenate_mp3s(chunk_files, str(temp_cat_mp3))
+            await export_audiobook_m4b(
+                str(temp_cat_mp3),
+                output_path,
+                title=book_title,
+                author="BookApp",
+                cover_image_path=cover_img,
+            )
+        else:
+            await _concatenate_mp3s(chunk_files, output_path)
+            tag_audiobook_file(
+                output_path,
+                title=book_title,
+                author="BookApp",
+                cover_image_path=cover_img,
+            )
     finally:
-        ticker_stop.set()
-        ticker_task.cancel()
-
-    chunk_files = [p for p in results if p]
-
-    from backend.job_manager import is_job_cancelled
-    if is_job_cancelled(job_id):
+        # Always clean up temp directory (even on concatenation/M4B/disk errors)
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
-        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
-        raise asyncio.CancelledError("Audiobook generation was cancelled by user.")
-
-    # Concatenate all chunks into final MP3 / M4B
-    update_job(job_id,
-               current_step="Assembling final audiobook...",
-               progress=92)
-
-    # Detect cover image if available
-    cover_img = None
-    out_parent = Path(output_path).parent
-    c_jpg = out_parent / "cover_image.jpg"
-    if c_jpg.exists():
-        cover_img = str(c_jpg)
-    book_title = Path(file_path).stem if file_path else "Audiobook"
-
-    if output_path.lower().endswith(".m4b"):
-        temp_cat_mp3 = temp_dir / "full_concat.mp3"
-        await _concatenate_mp3s(chunk_files, str(temp_cat_mp3))
-        await export_audiobook_m4b(
-            str(temp_cat_mp3),
-            output_path,
-            title=book_title,
-            author="BookApp",
-            cover_image_path=cover_img,
-        )
-    else:
-        await _concatenate_mp3s(chunk_files, output_path)
-        tag_audiobook_file(
-            output_path,
-            title=book_title,
-            author="BookApp",
-            cover_image_path=cover_img,
-        )
-
-    # Cleanup temp directory completely (including full_concat.mp3 created for M4B export)
-    import shutil
-    shutil.rmtree(temp_dir, ignore_errors=True)
 
     update_job(job_id,
                status="done",
@@ -525,7 +572,8 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
                 continue
             formatted_stanzas.append("\n".join(lines))
         text = "\n\n".join(formatted_stanzas)
-        text = re.sub(r"\s*[—–]\s*", ", ", text)
+        # Convert inline parenthetical dashes to pause commas without breaking numeric ranges (1990–2000) or line-opening dialogue dashes
+        text = re.sub(r"(?<=[^\d\n])[ \t]*[—–][ \t]*(?=[^\d])", ", ", text)
     elif style in ("literature", "slow_pauses"):
         # Preserve paragraph/chapter breaks as natural sentence pauses so narration doesn't rush or drag
         paragraphs = re.split(r"\n\s*\n+", text.strip())
@@ -534,13 +582,15 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
             p = re.sub(r"[\r\n]+", " ", para).strip()
             if not p:
                 continue
-            if p[-1] not in ".!?;:…":
+            # Do not append extra period after closing quote/paren that already follows sentence punctuation (e.g. '«Γεια σου!»')
+            tail_clean = p.rstrip('»"”\')]}')
+            if p[-1] not in ".!?;:…" and not (tail_clean and tail_clean[-1] in ".!?;:…"):
                 p += "."
             formatted.append(p)
         # For relaxed pauses, a single gentle ' ... ' gives a dignified break; for literature, standard sentence cadence
         sep = " ... " if style == "slow_pauses" else " "
         text = sep.join(formatted)
-        text = re.sub(r"\s*[—–]\s*", ", ", text)
+        text = re.sub(r"(?<=[^\d\n])[ \t]*[—–][ \t]*(?=[^\d])", ", ", text)
     else:
         text = re.sub(r"[\r\n]+", " ", text)
 
@@ -558,8 +608,9 @@ async def _tts_chunk_with_retry(
     pitch: str = "-1Hz",
     volume: str = "+0%",
     narration_style: str = "literature",
+    timeout_seconds: float = 60.0,
 ):
-    """Generates TTS for a text chunk with retry logic, maintaining consistent voice throughout."""
+    """Generates TTS for a text chunk with retry logic and timeout, maintaining consistent voice throughout."""
     clean_text = _clean_tts_text(text, narration_style=narration_style)
     if not clean_text:
         Path(output_path).write_bytes(b"")
@@ -568,16 +619,19 @@ async def _tts_chunk_with_retry(
     for attempt in range(retries):
         try:
             communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch, volume=volume)
-            await communicate.save(output_path)
-            if Path(output_path).stat().st_size > 0:
+            await asyncio.wait_for(communicate.save(output_path), timeout=timeout_seconds)
+            if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
                 return
+            await asyncio.sleep(0.5 * (attempt + 1))
         except Exception as e:
             wait = (attempt + 1) * 1.0
             logger.warning(f"TTS attempt {attempt+1} failed ({voice}): {e}. Retrying in {wait}s...")
             # On retry, aggressively clean any exotic punctuation while keeping text
             if attempt >= 0:
-                clean_text = re.sub(r"[^\w\s\.,;:!?\-«»'\"()–—]", " ", clean_text)
-                clean_text = re.sub(r"\s+", " ", clean_text).strip()
+                cleaned_retry = re.sub(r"[^\w\s\.,;:!?\-«»'\"()–—%$€]", " ", clean_text)
+                cleaned_retry = re.sub(r"\s+", " ", cleaned_retry).strip()
+                if cleaned_retry:
+                    clean_text = cleaned_retry
             await asyncio.sleep(wait)
 
     # If all retries fail, create a silent placeholder without mixing voices

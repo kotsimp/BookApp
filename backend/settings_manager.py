@@ -5,6 +5,8 @@ Stores and retrieves user settings such as API keys securely.
 
 import os
 import json
+import time
+import shutil
 import logging
 import threading
 from pathlib import Path
@@ -18,7 +20,7 @@ _settings_lock = threading.RLock()
 
 
 def load_settings() -> Dict[str, Any]:
-    """Loads settings from config/settings.json, falling back to empty dict."""
+    """Loads settings from config/settings.json, backing up corrupt files instead of silently losing them."""
     with _settings_lock:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         if not SETTINGS_FILE.exists():
@@ -28,18 +30,33 @@ def load_settings() -> Dict[str, Any]:
             if isinstance(data, dict):
                 return data
         except Exception as e:
-            logger.warning(f"Failed to read settings file: {e}")
+            logger.warning(f"Failed to read settings file (backing up corrupt copy): {e}")
+            try:
+                corrupt_backup = CONFIG_DIR / "settings.json.corrupt"
+                shutil.copy2(SETTINGS_FILE, corrupt_backup)
+            except Exception:
+                pass
         return {}
 
 
 def save_settings(settings: Dict[str, Any]) -> None:
-    """Atomically saves settings to config/settings.json using lock and atomic rename."""
+    """Atomically saves settings to config/settings.json using lock and atomic rename with Windows retry."""
     with _settings_lock:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         tmp_file = CONFIG_DIR / f"settings_{os.getpid()}_{threading.get_ident()}.tmp"
         try:
             tmp_file.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp_file, SETTINGS_FILE)
+            last_err = None
+            for attempt in range(4):
+                try:
+                    os.replace(tmp_file, SETTINGS_FILE)
+                    last_err = None
+                    break
+                except PermissionError as pe:
+                    last_err = pe
+                    time.sleep(0.05 * (attempt + 1))
+            if last_err is not None:
+                raise last_err
         except Exception as e:
             logger.error(f"Failed to write settings file: {e}")
             if tmp_file.exists():
@@ -47,6 +64,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
                     tmp_file.unlink(missing_ok=True)
                 except Exception:
                     pass
+            raise
 
 
 def get_setting(key: str, default: Optional[Any] = None) -> Optional[Any]:

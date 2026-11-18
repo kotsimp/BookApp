@@ -50,7 +50,9 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
     - confidence: float 0.0 to 1.0
     - reason: explanation of detected cues
     """
-    if file_type.lower() in ("cbz", "cbr", "zip") or "[Comic Page" in sample_text:
+    safe_text = sample_text or ""
+    safe_type = (file_type or "").strip().lower()
+    if safe_type in ("cbz", "cbr", "zip") or "[Comic Page" in safe_text:
         return {
             "genre": "comic",
             "suggested_style": "literature",
@@ -59,7 +61,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
             "reason": "Graphic novel / comic archive detected.",
         }
 
-    clean = sample_text.strip()
+    clean = safe_text.strip()
     if not clean:
         return {
             "genre": "literature",
@@ -69,13 +71,24 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
             "reason": "Default fallback for empty or minimal sample.",
         }
 
-    lines = [line.strip() for line in clean.split("\n") if line.strip()]
+    raw_lines = [line.strip() for line in clean.split("\n") if line.strip()]
+    # Filter structural markers (PAGE headers, === dividers, bullet lists, TOC lines ending in page numbers)
+    lines = [
+        l for l in raw_lines
+        if not l.startswith("=")
+        and not re.match(r"^PAGE\s+\d+$", l, re.IGNORECASE)
+    ]
     total_lines = len(lines)
 
-    # 1. Check for Poetry: High proportion of short lines (e.g. 10 - 55 chars) + stanzas
-    if total_lines >= 4:
-        short_lines = [l for l in lines if 5 <= len(l) <= 60 and not l.startswith("=")]
-        ratio_short = len(short_lines) / max(1, total_lines)
+    # 1. Check for Poetry: High proportion of short verse lines (excluding bullet lists & TOC entries)
+    non_list_lines = [
+        l for l in lines
+        if not re.match(r"^([-•*]\s+|\d+[.)]\s+)", l)
+        and not re.search(r"(\.{3,}\s*\d+|\s{2,}\d{1,4})$", l)
+    ]
+    if len(non_list_lines) >= 4 and len(non_list_lines) / max(1, total_lines) >= 0.7:
+        short_lines = [l for l in non_list_lines if 5 <= len(l) <= 60]
+        ratio_short = len(short_lines) / max(1, len(non_list_lines))
         # Check if line breaks are frequent without full-stop endings
         non_period_endings = [l for l in short_lines if not l.endswith((".", "!", "?", ";"))]
         ratio_enjambment = len(non_period_endings) / max(1, len(short_lines))
@@ -86,12 +99,12 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
                 "suggested_style": "poetry",
                 "glossary_category": "literary",
                 "confidence": round(min(0.95, ratio_short * 1.1), 2),
-                "reason": f"Detected poetic verse structure: {len(short_lines)}/{total_lines} short rhythmic lines.",
+                "reason": f"Detected poetic verse structure: {len(short_lines)}/{len(non_list_lines)} short rhythmic lines.",
             }
 
-    # 2. Tokenize lower-case words + support multi-word phrases for keyword density
+    # 2. Tokenize lower-case words (2+ chars so acronyms like 'ip', 'ai', 'os' match) + multi-word phrases
     clean_lower = clean.lower()
-    words = re.findall(r"\b[\wΆ-ώa-zA-Z]{3,}\b", clean_lower)
+    words = re.findall(r"\b[\wΆ-ώa-zA-Z]{2,}\b", clean_lower)
     total_words = max(1, len(words))
 
     def _count_keyword_hits(keywords: set[str]) -> int:
@@ -103,10 +116,10 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
     formal_matches = _count_keyword_hits(FORMAL_KEYWORDS)
     lit_matches = _count_keyword_hits(LITERATURE_KEYWORDS)
 
-    # Count dialogue cues (lines starting with dialogue dash —, -, or quotation marks «, ")
+    # Count dialogue cues (em-dash/guillemet/quote; avoid counting short Markdown bullet lists)
     dialogue_lines = [
         l for l in lines
-        if re.match(r"^([—–-]|«|\")", l)
+        if re.match(r"^([—–]|«|\")", l) or (re.match(r"^-\s+", l) and re.search(r"[.,;!?\u0370-\u03ff]", l))
     ]
     dialogue_ratio = len(dialogue_lines) / max(1, total_lines)
 
@@ -115,7 +128,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
     formal_score = (formal_matches / total_words) * 100
     lit_score = ((lit_matches / total_words) * 100) + (dialogue_ratio * 15)
 
-    if tech_score > formal_score and tech_score > 1.2:
+    if tech_score > formal_score and tech_score > lit_score and tech_score > 1.2:
         return {
             "genre": "technical",
             "suggested_style": "technical",
@@ -124,7 +137,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
             "reason": f"Detected technical keywords ({tech_matches} occurrences, tech score: {tech_score:.1f}).",
         }
 
-    if formal_score > 1.0:
+    if formal_score > lit_score and formal_score > 1.0:
         return {
             "genre": "formal",
             "suggested_style": "formal",

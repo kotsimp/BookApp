@@ -42,31 +42,30 @@ class TestMangaRTLAndBalloonFit(unittest.TestCase):
         print("   Reading order LTR vs RTL: OK")
 
     def test_balloon_fit_to_box_scaling(self):
-        print("-> 2. Testing Balloon Fit-to-Box Text Fitting...")
+        print("-> 2. Testing Balloon Fit-to-Box Text Fitting (backend._plan_balloon_layout)...")
+        from backend.comic_translator import _plan_balloon_layout, _get_comic_font_path
         doc = pymupdf.open()
-        page = doc.new_page(width=400, height=600)
-        box = pymupdf.Rect(50, 50, 150, 90)  # Compact balloon box: 100x40 pt
+        try:
+            page = doc.new_page(width=400, height=600)
+            box = pymupdf.Rect(50, 50, 150, 90)  # Compact balloon box: 100x40 pt
+            font_path = _get_comic_font_path()
 
-        short_text = "Γεια σου!"
-        long_text = "Αυτή είναι μια πολύ μεγάλη πρόταση διαλόγου που κανονικά δεν θα χωρούσε με μεγάλη γραμματοσειρά μέσα στο μικρό μπαλονάκι."
+            short_text = "ΓΕΙΑ ΣΟΥ!"
+            long_text = "ΑΥΤΗ ΕΙΝΑΙ ΜΙΑ ΠΟΛΥ ΜΕΓΑΛΗ ΠΡΟΤΑΣΗ ΔΙΑΛΟΓΟΥ ΠΟΥ ΚΑΝΟΝΙΚΑ ΔΕΝ ΘΑ ΧΩΡΟΥΣΕ ΜΕ ΜΕΓΑΛΗ ΓΡΑΜΜΑΤΟΣΕΙΡΑ ΜΕΣΑ ΣΤΟ ΜΙΚΡΟ ΜΠΑΛΟΝΑΚΙ."
 
-        # Short text fits at 12pt
-        rc_short = page.insert_textbox(box, short_text, fontsize=12)
-        self.assertGreaterEqual(rc_short, 0)
+            plan_short = _plan_balloon_layout(page, box, short_text, font_path)
+            plan_long = _plan_balloon_layout(page, box, long_text, font_path)
 
-        # Long text scales down
-        fitted = False
-        chosen_fs = None
-        for fs in [16, 14, 12, 10, 8, 7, 6, 5.5]:
-            rc = page.insert_textbox(box, long_text, fontsize=fs)
-            if rc >= 0:
-                fitted = True
-                chosen_fs = fs
-                break
-
-        self.assertTrue(fitted)
-        self.assertLessEqual(chosen_fs, 8)
-        print(f"   Fit-to-box scaling (scaled down to {chosen_fs}pt): OK")
+            self.assertIsNotNone(plan_short)
+            self.assertIsNotNone(plan_long)
+            fs_short = plan_short[4]
+            fs_long = plan_long[4]
+            lines_long = plan_long[5]
+            self.assertGreater(fs_short, fs_long)
+            self.assertGreater(len(lines_long), 1)
+            print(f"   Fit-to-box scaling (short={fs_short}pt -> long={fs_long}pt): OK")
+        finally:
+            doc.close()
 
     def test_comic_epub_rtl_export(self):
         print("-> 3. Testing Comic EPUB RTL Page Progression Export...")

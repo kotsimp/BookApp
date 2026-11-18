@@ -59,7 +59,7 @@ def _get_condensed_comic_font_path() -> str:
     return _get_comic_font_path()
 
 
-_GREEK_UPPER_TONOS_MAP = str.maketrans("ΆΈΉΊΌΎΏάέήίόύώ", "ΑΕΗΙΟΥΩΑΕΗΙΟΥΩ")
+_GREEK_UPPER_TONOS_MAP = str.maketrans("ΆΈΉΊΌΎΏάέήίόύώΐΰ", "ΑΕΗΙΟΥΩΑΕΗΙΟΥΩΪΫ")
 
 
 def sanitize_comic_dialogue(text: str, target_lang: str = "greek") -> str:
@@ -114,7 +114,9 @@ def sanitize_comic_dialogue(text: str, target_lang: str = "greek") -> str:
                     if tok in ("ή", "Ή"):
                         fixed_tokens.append("Ή")
                     else:
-                        up = tok.upper()
+                        # Map dialytika+tonos (ΐ/ΰ -> Ϊ/Ϋ) BEFORE .upper() to avoid NFD combining-accent decomposition
+                        pre_mapped = tok.replace("ΐ", "Ϊ").replace("ΰ", "Ϋ")
+                        up = pre_mapped.upper()
                         # Remove tonos on uppercase Greek letters except standalone 'Ή' and dialytika 'Ϊ'/'Ϋ'
                         fixed_tokens.append(up.translate(_GREEK_UPPER_TONOS_MAP))
                 s = " ".join(fixed_tokens)
@@ -391,22 +393,50 @@ def _cluster_text_into_balloons(text_blocks: List[Any], reading_direction: str =
     return clusters
 
 
+def _natural_sort_key(path_obj: Path):
+    """Natural sort key so page_2.jpg comes before page_10.jpg."""
+    parts = re.split(r"(\d+)", path_obj.name.lower())
+    return [int(p) if p.isdigit() else p for p in parts]
+
+
+def _safe_extract_zip(zf, extract_dir: Path) -> None:
+    """Safely extracts ZIP/CBZ archive preventing Zip Slip path traversal."""
+    root_resolved = extract_dir.resolve()
+    for member in zf.infolist():
+        if member.is_dir():
+            continue
+        target = (extract_dir / member.filename).resolve()
+        try:
+            target.relative_to(root_resolved)
+        except ValueError:
+            raise ValueError(f"Unsafe Zip Slip entry detected in CBZ archive: {member.filename}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(member, "r") as src, open(target, "wb") as dst:
+            dst.write(src.read())
+
+
 async def _ai_polish_comic_balloons(
     balloons: List[Dict[str, str]],
     api_key: str,
+    target_lang: str = "greek",
 ) -> List[str]:
     """
     Polishes speech balloon dialogue using Gemini API specifically for Graphic Novels / Comics.
-    Produces concise, natural, colloquial Greek dialogue tailored for comic balloons.
+    Produces concise, natural, colloquial dialogue in target_lang tailored for comic balloons.
     """
     if not balloons or not api_key:
         return [b["draft"] for b in balloons]
+
+    lang_norm = (target_lang or "greek").strip().lower()
+    is_greek = lang_norm in ("greek", "el")
 
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         results = []
         for b in balloons:
             draft = b.get("draft", "")
-            if any(c in draft for c in "αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"):
+            if not is_greek:
+                results.append(f"[AI Polish]: {draft}")
+            elif any(c in draft for c in "αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"):
                 results.append(f"[AI Polish]: {draft}")
             else:
                 results.append(f"[AI Polish]: Κοιτάξτε αυτό το παράξενο σήμα! ({draft[:25]})")
@@ -420,20 +450,28 @@ async def _ai_polish_comic_balloons(
         return [b["draft"] for b in balloons]
 
     import urllib.request
-    prompt = (
-        "Είσαι έμπειρος επιμελητής και μεταφραστής εκδόσεων Graphic Novels, Comics και Manga. "
-        "Βελτίωσε και επιμελήσου τους ακόλουθους διαλόγους μπαλονιών στα Ελληνικά ώστε να αποκτήσουν άψογη, φυσική και ζωντανή προφορική ροή: "
-        "1. ΣΥΝΤΟΜΙΑ: Κράτησε τις ατάκες περιεκτικές και κοφτές ώστε να χωρούν άνετα στα μπαλόνια διαλόγου χωρίς να ξεχειλίζουν. "
-        "2. ΖΩΝΤΑΝΙΑ & ΥΦΟΣ: Χρησιμοποίησε φυσικό, σύγχρονο προφορικό λόγο, διατηρώντας το χιούμορ, την ένταση, τα επιφωνήματα και τον ιδιαίτερο χαρακτήρα των ηρώων. "
-        "3. ΕΞΑΛΕΙΨΗ ΑΓΓΛΙΣΜΩΝ: Απόδωσε ιδιωματισμούς με ισοδύναμες ελληνικές εκφράσεις και απέφυγε κατά λέξη μεταφράσεις. "
-        "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ έναν έγκυρο πίνακα JSON με αντικείμενα: [{\"id\": 1, \"polished\": \"τελική ατάκα στα ελληνικά\"}]."
-    )
+    if is_greek:
+        prompt = (
+            "Είσαι έμπειρος επιμελητής και μεταφραστής εκδόσεων Graphic Novels, Comics και Manga. "
+            "Βελτίωσε και επιμελήσου τους ακόλουθους διαλόγους μπαλονιών στα Ελληνικά ώστε να αποκτήσουν άψογη, φυσική και ζωντανή προφορική ροή: "
+            "1. ΣΥΝΤΟΜΙΑ: Κράτησε τις ατάκες περιεκτικές και κοφτές ώστε να χωρούν άνετα στα μπαλόνια διαλόγου χωρίς να ξεχειλίζουν. "
+            "2. ΖΩΝΤΑΝΙΑ & ΥΦΟΣ: Χρησιμοποίησε φυσικό, σύγχρονο προφορικό λόγο, διατηρώντας το χιούμορ, την ένταση, τα επιφωνήματα και τον ιδιαίτερο χαρακτήρα των ηρώων. "
+            "3. ΕΞΑΛΕΙΨΗ ΑΓΓΛΙΣΜΩΝ: Απόδωσε ιδιωματισμούς με ισοδύναμες ελληνικές εκφράσεις και απέφυγε κατά λέξη μεταφράσεις. "
+            "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ έναν έγκυρο πίνακα JSON με αντικείμενα: [{\"id\": 1, \"polished\": \"τελική ατάκα στα ελληνικά\"}]."
+        )
+    else:
+        prompt = (
+            f"You are an expert Graphic Novel, Comic, and Manga dialogue editor. "
+            f"Polish the following speech balloon drafts in {target_lang.capitalize()} so they read naturally, idiomatically, and concisely inside speech bubbles. "
+            f"Keep lines punchy, preserve character voice and exclamations, and return ONLY a valid JSON array of objects: "
+            f'[{{"id": 1, "polished": "final dialogue line in {target_lang.capitalize()}"}}].'
+        )
 
     payload = {
         "contents": [{
             "role": "user",
             "parts": [
-                {"text": f"{prompt}\n\nΔΙΑΛΟΓΟΙ ΣΕΛΙΔΑΣ:\n{json.dumps(dialogue_inputs, ensure_ascii=False, indent=2)}"}
+                {"text": f"{prompt}\n\nDIALOGUES:\n{json.dumps(dialogue_inputs, ensure_ascii=False, indent=2)}"}
             ]
         }],
         "generationConfig": {
@@ -442,6 +480,10 @@ async def _ai_polish_comic_balloons(
             "maxOutputTokens": 2048,
         }
     }
+
+    def _fetch_sync(req_obj):
+        with urllib.request.urlopen(req_obj, timeout=15) as r:
+            return r.read().decode("utf-8")
 
     for model in [
         "gemini-3-flash-preview",
@@ -460,7 +502,7 @@ async def _ai_polish_comic_balloons(
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
             )
             loop = asyncio.get_running_loop()
-            resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+            resp_raw = await loop.run_in_executor(None, _fetch_sync, req)
             data = json.loads(resp_raw)
             from backend.ai_polisher import _extract_gemini_text_and_reason
             raw_text, _ = _extract_gemini_text_and_reason(data)
@@ -468,20 +510,20 @@ async def _ai_polish_comic_balloons(
                 continue
             res_list = json.loads(raw_text)
             polished_map = {
-                item["id"]: sanitize_comic_dialogue(item.get("polished", "").strip(), "greek")
-                for item in res_list if "id" in item
+                item["id"]: sanitize_comic_dialogue(str(item.get("polished", "")).strip(), target_lang)
+                for item in res_list if isinstance(item, dict) and "id" in item
             }
 
             results = []
             for i, b in enumerate(balloons):
                 item_id = i + 1
                 pol = polished_map.get(item_id)
-                results.append(pol if pol else sanitize_comic_dialogue(b["draft"], "greek"))
+                results.append(pol if pol else sanitize_comic_dialogue(b["draft"], target_lang))
             return results
         except Exception as ex:
             logger.debug(f"AI Polish attempt with {model} failed: {ex}")
 
-    return [sanitize_comic_dialogue(b["draft"], "greek") for b in balloons]
+    return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
 
 
 async def _translate_page_vector(
@@ -520,7 +562,7 @@ async def _translate_page_vector(
     if api_key and translated_balloons:
         try:
             balloons_data = [{"source": c["text"], "draft": translated_balloons[i]} for i, c in enumerate(clusters)]
-            polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key)
+            polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key, target_lang=target_lang)
             if polished_texts and len(polished_texts) == len(translated_balloons):
                 translated_balloons = polished_texts
                 page_dialogues = [t for t in translated_balloons if t.strip()]
@@ -594,13 +636,15 @@ VISION_MODELS_PRIORITY = [
 
 
 def _extract_box_2d(item: Dict[str, Any]) -> Optional[List[float]]:
-    """Normalizes box_2d / box / bbox / nested [[y1,x1,y2,x2]] into a clean 4-number list."""
+    """Normalizes box_2d / box / bbox / nested [[y1,x1,y2,x2]] into a clamped [0..1000] 4-number list."""
+    if not isinstance(item, dict):
+        return None
     raw = item.get("box_2d") or item.get("box") or item.get("bbox") or item.get("bounding_box")
     if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], list):
         raw = raw[0]
     if isinstance(raw, list) and len(raw) == 4:
         try:
-            vals = [float(v) for v in raw]
+            vals = [max(0.0, min(1000.0, float(v))) for v in raw]
             ymin, xmin, ymax, xmax = vals
             if ymin > ymax:
                 ymin, ymax = ymax, ymin
@@ -687,9 +731,9 @@ def _parse_vision_json(text_resp: str) -> Optional[List[Dict[str, Any]]]:
 
 
 def _encode_comic_page_jpeg(page: fitz.Page, max_dim: int = 1400, quality: int = 82) -> bytes:
-    """Renders a comic page to an optimized JPEG (capped at max_dim) for fast, crisp Vision OCR."""
+    """Renders a comic page to an optimized RGB JPEG (capped at max_dim) for fast, crisp Vision OCR."""
     import io
-    pix = page.get_pixmap(dpi=130)
+    pix = page.get_pixmap(dpi=130, colorspace=fitz.csRGB, alpha=False)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     if max(img.width, img.height) > max_dim:
         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -972,15 +1016,18 @@ def _render_vision_balloons_on_page(
 
     # Pass 1: Plan every balloon's layout and draw all opaque background rectangles first
     for item in detected_items:
+        if not isinstance(item, dict):
+            continue
         box = _extract_box_2d(item)
         if not box:
             continue
-        raw_greek_text = (
+        raw_val = (
             item.get("translated_text")
             or item.get("translation")
             or item.get("greek_text")
             or ""
-        ).strip()
+        )
+        raw_greek_text = str(raw_val).strip() if not isinstance(raw_val, (list, dict)) else ""
         greek_text = sanitize_comic_dialogue(raw_greek_text, target_lang)
         if not greek_text:
             continue
@@ -1048,189 +1095,216 @@ async def translate_comic_document(
     temp_extract_dir_to_clean: Optional[Path] = None
     actual_pdf_path = file_path
 
-    if file_type in ("cbz", "zip") or Path(file_path).suffix.lower() in (".cbz", ".zip"):
-        import zipfile
-        update_job(job_id, current_step="Extracting comic archive (CBZ)...", progress=5)
-        extract_dir = Path("temp") / f"cbz_{job_id}"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        temp_extract_dir_to_clean = extract_dir
+    doc: Optional[fitz.Document] = None
+    try:
+        if file_type in ("cbz", "zip") or Path(file_path).suffix.lower() in (".cbz", ".zip"):
+            import zipfile
+            update_job(job_id, current_step="Extracting comic archive (CBZ)...", progress=5)
+            extract_dir = Path("temp") / f"cbz_{job_id}"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            temp_extract_dir_to_clean = extract_dir
 
-        with zipfile.ZipFile(file_path, "r") as zf:
-            zf.extractall(extract_dir)
+            with zipfile.ZipFile(file_path, "r") as zf:
+                _safe_extract_zip(zf, extract_dir)
 
-        # Find image files in alphabetical order
-        img_extensions = {".jpg", ".jpeg", ".png", ".webp"}
-        image_files = sorted([
-            p for p in extract_dir.rglob("*")
-            if p.suffix.lower() in img_extensions and not p.name.startswith(".")
-        ])
-
-        if not image_files:
-            import shutil
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            raise ValueError("No comic page images found in uploaded CBZ archive.")
-
-        # Build PDF from extracted images (explicitly closing every PyMuPDF handle)
-        cbz_pdf = fitz.open()
-        try:
-            for img_p in image_files:
-                with fitz.open(str(img_p)) as img_doc:
-                    pdf_bytes = img_doc.convert_to_pdf()
-                with fitz.open("pdf", pdf_bytes) as page_pdf:
-                    page_rect = page_pdf[0].rect
-                    new_p = cbz_pdf.new_page(width=page_rect.width, height=page_rect.height)
-                    new_p.show_pdf_page(page_rect, page_pdf, 0)
-
-            temp_pdf_to_clean = Path("temp") / f"cbz_converted_{job_id}.pdf"
-            cbz_pdf.save(str(temp_pdf_to_clean))
-        finally:
-            cbz_pdf.close()
-        actual_pdf_path = str(temp_pdf_to_clean)
-
-    # Open document with PyMuPDF
-    doc = fitz.open(actual_pdf_path)
-    total_pages = len(doc)
-
-    # Check if this comic is primarily scanned/image-only
-    has_vector_text = any(
-        len([b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]]) > 0
-        for i in range(min(5, total_pages))
-    )
-    if not has_vector_text and not resolved_api_key:
-        logger.warning(f"[{job_id}] Graphic novel is image-only/scanned and no Gemini API key is configured.")
-
-    update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages (parallel Vision engine)...")
-
-    all_document_dialogues: List[Tuple[int, List[str]]] = [(i + 1, []) for i in range(total_pages)]
-    vision_pages_to_process: List[Tuple[int, bytes]] = []
-    completed_count = 0
-
-    # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
-    for page_idx in range(total_pages):
-        if is_job_cancelled(job_id):
-            doc.close()
-            raise asyncio.CancelledError("Comic translation cancelled by user.")
-
-        page = doc[page_idx]
-        raw_blocks = page.get_text("blocks")
-        text_blocks = [b for b in raw_blocks if len(b) >= 5 and b[4].strip() and b[1] != b[3]]
-
-        if text_blocks:
-            clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
-            logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
-            page_dialogues = await _translate_page_vector(
-                page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
+            # Find image files in natural numeric order (page_1, page_2, ..., page_10)
+            img_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+            image_files = sorted(
+                [
+                    p for p in extract_dir.rglob("*")
+                    if p.suffix.lower() in img_extensions
+                    and not p.name.startswith(".")
+                    and "__MACOSX" not in p.parts
+                ],
+                key=_natural_sort_key,
             )
-            all_document_dialogues[page_idx] = (page_idx + 1, page_dialogues)
-            completed_count += 1
-            update_job(
-                job_id,
-                current_step=f"Translating graphic novel page {completed_count} of {total_pages}...",
-                progress=int((completed_count / max(total_pages, 1)) * 92),
-                done_chunks=completed_count,
-                total_chunks=total_pages,
+
+            if not image_files:
+                raise ValueError("No comic page images found in uploaded CBZ archive.")
+
+            # Build PDF from extracted images (explicitly closing every PyMuPDF handle)
+            cbz_pdf = fitz.open()
+            try:
+                for img_p in image_files:
+                    with fitz.open(str(img_p)) as img_doc:
+                        pdf_bytes = img_doc.convert_to_pdf()
+                    with fitz.open("pdf", pdf_bytes) as page_pdf:
+                        page_rect = page_pdf[0].rect
+                        new_p = cbz_pdf.new_page(width=page_rect.width, height=page_rect.height)
+                        new_p.show_pdf_page(page_rect, page_pdf, 0)
+
+                temp_pdf_to_clean = Path("temp") / f"cbz_converted_{job_id}.pdf"
+                cbz_pdf.save(str(temp_pdf_to_clean))
+            finally:
+                cbz_pdf.close()
+            actual_pdf_path = str(temp_pdf_to_clean)
+
+        # Open document with PyMuPDF
+        doc = fitz.open(actual_pdf_path)
+        total_pages = len(doc)
+        if total_pages == 0:
+            raise ValueError("Comic PDF contains 0 pages and cannot be translated.")
+
+        # Check if this comic is primarily scanned/image-only
+        has_vector_text = any(
+            len([b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]]) > 0
+            for i in range(min(5, total_pages))
+        )
+        if not has_vector_text and not resolved_api_key:
+            raise ValueError(
+                "This graphic novel / scanned comic contains image-only pages and requires a Gemini API key "
+                "for Vision AI balloon detection and translation."
             )
-        else:
-            if resolved_api_key:
-                vision_pages_to_process.append((page_idx, _encode_comic_page_jpeg(page)))
-            else:
-                logger.warning(f"[{job_id}] Page {page_idx + 1} is image-only and no Gemini API key was provided.")
-                completed_count += 1
 
-    # Pass 2: Execute Gemini Vision balloon detection 3 pages in parallel over a shared HTTP session
-    # with real-time disk checkpointing and fail-loud protection if API fails across pages
-    if vision_pages_to_process and resolved_api_key:
-        import aiohttp
-        out_dir_cp = Path(output_path).parent
-        out_dir_cp.mkdir(parents=True, exist_ok=True)
-        cp_file = out_dir_cp / ".comic_vision_checkpoint.json"
-        cp_pages: Dict[str, List[Dict[str, Any]]] = {}
-        if cp_file.is_file():
-            try:
-                loaded_cp = json.loads(cp_file.read_text(encoding="utf-8"))
-                if isinstance(loaded_cp, dict):
-                    cp_pages = loaded_cp
-            except Exception:
-                pass
+        update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages (parallel Vision engine)...")
 
-        def _save_comic_cp():
-            try:
-                cp_file.write_text(json.dumps(cp_pages, ensure_ascii=False), encoding="utf-8")
-            except Exception:
-                pass
+        all_document_dialogues: List[Tuple[int, List[str]]] = [(i + 1, []) for i in range(total_pages)]
+        vision_pages_to_process: List[Tuple[int, bytes]] = []
+        completed_count = 0
 
-        vision_sem = asyncio.Semaphore(3)
-        connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
-        vision_results: Dict[int, List[Dict[str, Any]]] = {}
-        failed_vision_pages = 0
-        last_vision_error = ""
+        # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
+        for page_idx in range(total_pages):
+            if is_job_cancelled(job_id):
+                raise asyncio.CancelledError("Comic translation cancelled by user.")
 
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async def _vision_worker(p_idx: int, img_bytes: bytes):
-                nonlocal completed_count, failed_vision_pages, last_vision_error
-                if is_job_cancelled(job_id):
-                    raise asyncio.CancelledError("Comic translation cancelled by user.")
+            page = doc[page_idx]
+            raw_blocks = page.get_text("blocks")
+            text_blocks = [b for b in raw_blocks if len(b) >= 5 and b[4].strip() and b[1] != b[3]]
 
-                p_key = str(p_idx)
-                if p_key in cp_pages and isinstance(cp_pages[p_key], list):
-                    vision_results[p_idx] = cp_pages[p_key]
-                    completed_count += 1
-                    return
-
-                st_info: Dict[str, Any] = {}
-                async with vision_sem:
-                    if is_job_cancelled(job_id):
-                        raise asyncio.CancelledError("Comic translation cancelled by user.")
-                    items = await _detect_comic_balloons_vision_async(
-                        img_bytes, resolved_api_key, source_lang, target_lang, session=session, status_out=st_info
-                    )
-                    vision_results[p_idx] = items
-                    if st_info.get("succeeded"):
-                        cp_pages[p_key] = items
-                        _save_comic_cp()
-                    else:
-                        failed_vision_pages += 1
-                        if st_info.get("error"):
-                            last_vision_error = st_info["error"]
+            if text_blocks:
+                clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
+                logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
+                page_dialogues = await _translate_page_vector(
+                    page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
+                )
+                all_document_dialogues[page_idx] = (page_idx + 1, page_dialogues)
                 completed_count += 1
                 update_job(
                     job_id,
-                    current_step=f"AI Vision translated graphic novel page {completed_count} of {total_pages}...",
+                    current_step=f"Translating graphic novel page {completed_count} of {total_pages}...",
                     progress=int((completed_count / max(total_pages, 1)) * 92),
                     done_chunks=completed_count,
                     total_chunks=total_pages,
                 )
+            else:
+                if resolved_api_key:
+                    vision_pages_to_process.append((page_idx, _encode_comic_page_jpeg(page)))
+                else:
+                    logger.warning(f"[{job_id}] Page {page_idx + 1} is image-only and no Gemini API key was provided.")
+                    completed_count += 1
 
-            await asyncio.gather(*(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process))
+        # Pass 2: Execute Gemini Vision balloon detection 3 pages in parallel over a shared HTTP session
+        # with real-time disk checkpointing and fail-loud protection if API fails across pages
+        if vision_pages_to_process and resolved_api_key:
+            import aiohttp
+            out_dir_cp = Path(output_path).parent
+            out_dir_cp.mkdir(parents=True, exist_ok=True)
+            cp_file = out_dir_cp / ".comic_vision_checkpoint.json"
+            cp_pages: Dict[str, List[Dict[str, Any]]] = {}
+            if cp_file.is_file():
+                try:
+                    loaded_cp = json.loads(cp_file.read_text(encoding="utf-8"))
+                    if isinstance(loaded_cp, dict):
+                        cp_pages = loaded_cp
+                except Exception:
+                    pass
 
-        total_vision_pages = len(vision_pages_to_process)
-        total_detected_balloons = sum(len(v) for v in vision_results.values())
-        if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
-            doc.close()
-            raise RuntimeError(
-                f"Η μετάφραση Vision AI απέτυχε σε {failed_vision_pages}/{total_vision_pages} σελίδες "
-                f"({last_vision_error or 'όριο αιτημάτων API 429'}). "
-                f"Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Start Translation για συνέχιση!"
-            )
+            def _save_comic_cp():
+                tmp_cp = cp_file.with_suffix(".json.tmp")
+                try:
+                    tmp_cp.write_text(json.dumps(cp_pages, ensure_ascii=False), encoding="utf-8")
+                    os.replace(tmp_cp, cp_file)
+                except Exception:
+                    try:
+                        tmp_cp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
-        # Apply detected redactions and Greek text rendering cleanly on the PDF document
-        for p_idx, items in sorted(vision_results.items()):
-            if items:
-                rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path, target_lang=target_lang)
-                all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
+            vision_sem = asyncio.Semaphore(3)
+            connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
+            vision_results: Dict[int, List[Dict[str, Any]]] = {}
+            failed_vision_pages = 0
+            last_vision_error = ""
 
-        if failed_vision_pages == 0 and cp_file.exists():
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async def _vision_worker(p_idx: int, img_bytes: bytes):
+                    nonlocal completed_count, failed_vision_pages, last_vision_error
+                    if is_job_cancelled(job_id):
+                        raise asyncio.CancelledError("Comic translation cancelled by user.")
+
+                    p_key = str(p_idx)
+                    if p_key in cp_pages and isinstance(cp_pages[p_key], list):
+                        vision_results[p_idx] = cp_pages[p_key]
+                        completed_count += 1
+                        return
+
+                    st_info: Dict[str, Any] = {}
+                    async with vision_sem:
+                        if is_job_cancelled(job_id):
+                            raise asyncio.CancelledError("Comic translation cancelled by user.")
+                        items = await _detect_comic_balloons_vision_async(
+                            img_bytes, resolved_api_key, source_lang, target_lang, session=session, status_out=st_info
+                        )
+                        vision_results[p_idx] = items
+                        if st_info.get("succeeded"):
+                            cp_pages[p_key] = items
+                            _save_comic_cp()
+                        else:
+                            failed_vision_pages += 1
+                            if st_info.get("error"):
+                                last_vision_error = st_info["error"]
+                    completed_count += 1
+                    update_job(
+                        job_id,
+                        current_step=f"AI Vision translated graphic novel page {completed_count} of {total_pages}...",
+                        progress=int((completed_count / max(total_pages, 1)) * 92),
+                        done_chunks=completed_count,
+                        total_chunks=total_pages,
+                    )
+
+                await asyncio.gather(*(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process))
+
+            total_vision_pages = len(vision_pages_to_process)
+            total_detected_balloons = sum(len(v) for v in vision_results.values())
+            if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
+                raise RuntimeError(
+                    f"Η μετάφραση Vision AI απέτυχε σε {failed_vision_pages}/{total_vision_pages} σελίδες "
+                    f"({last_vision_error or 'όριο αιτημάτων API 429'}). "
+                    f"Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Start Translation για συνέχιση!"
+                )
+
+            # Apply detected redactions and Greek text rendering cleanly on the PDF document
+            for p_idx, items in sorted(vision_results.items()):
+                if items:
+                    rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path, target_lang=target_lang)
+                    all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
+
+            if failed_vision_pages == 0 and cp_file.exists():
+                try:
+                    cp_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Save translated graphic novel PDF (always ensure out_dir exists!)
+        stem = Path(file_path).stem
+        out_dir = Path(output_path).parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+        final_comic_pdf = out_dir / f"{stem}_translated_{target_lang}.pdf"
+        doc.save(str(final_comic_pdf))
+    finally:
+        if doc is not None:
             try:
-                cp_file.unlink(missing_ok=True)
+                doc.close()
             except Exception:
                 pass
-
-    # Save translated graphic novel PDF
-    stem = Path(file_path).stem
-    out_dir = Path(output_path).parent
-    final_comic_pdf = out_dir / f"{stem}_translated_{target_lang}.pdf"
-    doc.save(str(final_comic_pdf))
-    doc.close()
+        if temp_pdf_to_clean and temp_pdf_to_clean.exists():
+            try:
+                temp_pdf_to_clean.unlink(missing_ok=True)
+            except Exception:
+                pass
+        if temp_extract_dir_to_clean and temp_extract_dir_to_clean.exists():
+            import shutil
+            shutil.rmtree(temp_extract_dir_to_clean, ignore_errors=True)
 
     # Pre-generate CBZ archive as well for seamless instant download
     try:
@@ -1253,22 +1327,13 @@ async def translate_comic_document(
     full_dialogue_text = "\n".join(dialogue_script_lines)
     Path(output_path).write_text(full_dialogue_text, encoding="utf-8")
 
-    # Clean up temporary CBZ converted PDF and extracted image folder if created
-    if temp_pdf_to_clean and temp_pdf_to_clean.exists():
-        try:
-            temp_pdf_to_clean.unlink(missing_ok=True)
-        except Exception:
-            pass
-    if temp_extract_dir_to_clean and temp_extract_dir_to_clean.exists():
-        import shutil
-        shutil.rmtree(temp_extract_dir_to_clean, ignore_errors=True)
-
     update_job(
         job_id,
         status="done",
         progress=100,
         done_chunks=total_pages,
         total_chunks=total_pages,
+        output_path=str(final_comic_pdf),
         current_step="Graphic novel translation complete!",
     )
 

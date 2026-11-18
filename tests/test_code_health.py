@@ -189,8 +189,9 @@ def test_undefined_globals_and_missing_imports():
             elif isinstance(node, ast.ImportFrom):
                 for a in node.names:
                     defined.add(a.asname or a.name)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                defined.add(node.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                if hasattr(node, "name"):
+                    defined.add(node.name)
                 if hasattr(node, "args"):
                     for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
                         defined.add(arg.arg)
@@ -327,7 +328,9 @@ def test_all_backend_endpoints_covered_by_tests():
     import re
     main_src = Path("backend/main.py").read_text(encoding="utf-8")
     routes = re.findall(r'@app\.(get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
-    test_src = "\n".join(Path(f).read_text(encoding="utf-8") for f in glob.glob("tests/*.py"))
+    # Exclude test_code_health.py itself so static guards cannot count as coverage
+    test_files = [f for f in glob.glob("tests/*.py") if Path(f).name != "test_code_health.py"]
+    test_src = "\n".join(Path(f).read_text(encoding="utf-8") for f in test_files)
 
     uncovered = []
     for method, path in routes:

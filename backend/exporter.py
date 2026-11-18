@@ -85,11 +85,10 @@ _CHAPTER_RE = re.compile(
     r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
     r"|(?:κεφάλαιο|κεφ\.|μέρος|βιβλίο|πρόλογος|επίλογος|εισαγωγή|ευχαριστίες|σημειώσεις(?:\s*και\s*παραπομπές)?|άδεια)"
     r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
-    r"|(?:theseus|rorschach|charybdis|θησεύς|θησέας|ρορσαχ|χάρυβδις)"
-    r"|^(?:[IVXLCDM]{1,7})$"
     r")$",
     re.IGNORECASE,
 )
+_STRICT_ROMAN_CHAPTER_RE = re.compile(r"^(?:X{0,3})(?:IX|IV|V?I{0,3})$")
 
 _SCENE_BREAK_RE = re.compile(r"^(?:\*\s*\*\s*\*+|---\s*|~~~\s*|•\s*•\s*•+)$")
 
@@ -105,16 +104,21 @@ _EXPORT_SPECIAL_TOKEN_RE = re.compile(
 _EMPHASIS_TOKEN_RE = re.compile(
     r"(\*\*[^*\n]+?\*\*|(?<!\*)\*(?!\s)[^*\n]+?(?<!\s)\*(?!\*))"
 )
+_XML_ILLEGAL_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def _sanitize_pua(text: str) -> str:
     """
     Map Wingdings / Symbol Private Use Area (PUA) characters to standard Unicode,
-    and defensively strip any stray inline HTML tags, LLM special tokens, or broken Greek hyphens.
+    strip XML-illegal control characters, stray inline HTML tags, LLM special tokens,
+    and broken Greek hyphens.
     """
+    if not text:
+        return ""
     for pua, repl in _PUA_MAP.items():
         text = text.replace(pua, repl)
     text = re.sub(r"[\ue000-\uf8ff]", "• ", text)
+    text = _XML_ILLEGAL_CTRL_RE.sub("", text)
     text = _EXPORT_SPECIAL_TOKEN_RE.sub("", text)
     text = _EXPORT_HTML_TAG_RE.sub("", text)
     try:
@@ -168,7 +172,12 @@ def _is_chapter_heading(line: str) -> bool:
     s = line.strip()
     if not s or len(s) > 90:
         return False
-    return bool(_CHAPTER_RE.match(s))
+    if _CHAPTER_RE.match(s):
+        return True
+    # Match genuine uppercase Roman numerals II..XXXIX as chapter headings (never English words like 'I', 'Did', 'Civil')
+    if len(s) >= 2 and s.isupper() and _STRICT_ROMAN_CHAPTER_RE.match(s):
+        return True
+    return False
 
 
 def _is_scene_break(line: str) -> bool:
@@ -312,8 +321,9 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
 
 # TXT
 def export_txt(text: str, out_path: Path) -> Path:
-    out_path.write_text(text, encoding="utf-8")
-    return out_path
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).write_text(text or "", encoding="utf-8")
+    return Path(out_path)
 
 
 # DOCX (requires python-docx)
@@ -322,6 +332,7 @@ def export_docx(text: str, out_path: Path, layout: str = "standard", cover_image
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     text = _sanitize_pua(text)
     doc = Document()
 
@@ -339,18 +350,26 @@ def export_docx(text: str, out_path: Path, layout: str = "standard", cover_image
         normal_style.font.name = "Georgia"
         normal_style.font.size = Pt(11.5)
 
-        # Insert original cover image on the first page if present
+        # Validate cover image BEFORE inserting a cover page so corrupt bytes never leave a blank page
         if cover_image:
+            valid_cover = False
             try:
-                cp = doc.add_paragraph()
-                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                cp.paragraph_format.space_before = Pt(0)
-                cp.paragraph_format.space_after = Pt(0)
-                c_run = cp.add_run()
-                c_run.add_picture(io.BytesIO(cover_image), width=Inches(4.5))
-                doc.add_page_break()
+                import pymupdf
+                pix = pymupdf.Pixmap(cover_image)
+                valid_cover = pix.width > 0 and pix.height > 0
             except Exception:
-                pass
+                valid_cover = False
+            if valid_cover:
+                try:
+                    cp = doc.add_paragraph()
+                    cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cp.paragraph_format.space_before = Pt(0)
+                    cp.paragraph_format.space_after = Pt(0)
+                    c_run = cp.add_run()
+                    c_run.add_picture(io.BytesIO(cover_image), width=Inches(4.5))
+                    doc.add_page_break()
+                except Exception:
+                    pass
 
         chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
         for ch_idx, ch in enumerate(chapters):
@@ -477,13 +496,15 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
     content_bottom = height - 52.0
     max_line_w = width - 2 * margin_x
 
-    # Insert cover image as page 0 if present
+    # Insert cover image as page 0 if valid (validate before creating page to avoid blank page on corrupt bytes)
     has_cover_page = False
     if cover_image:
         try:
-            cov_page = doc.new_page(width=width, height=height)
-            cov_page.insert_image(pymupdf.Rect(0, 0, width, height), stream=cover_image)
-            has_cover_page = True
+            pix = pymupdf.Pixmap(cover_image)
+            if pix.width > 0 and pix.height > 0:
+                cov_page = doc.new_page(width=width, height=height)
+                cov_page.insert_image(pymupdf.Rect(0, 0, width, height), stream=cover_image)
+                has_cover_page = True
         except Exception:
             pass
 
@@ -604,6 +625,11 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
             y += 4.5
             is_first = False
 
+    if len(doc) == 0:
+        blank_pg = doc.new_page(width=width, height=height)
+        if font_path:
+            blank_pg.insert_font(fontname="book_serif", fontfile=font_path)
+
     # Centered book-style page numbers (skip cover page if present)
     for p_no, pg in enumerate(doc, 1):
         if has_cover_page and p_no == 1:
@@ -613,8 +639,11 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         fw = font_obj.text_length(footer, fontsize=9.0)
         pg.insert_text(pymupdf.Point((width - fw) / 2.0, height - 28.0), footer, fontsize=9.0, fontname=fname, color=(0.45, 0.45, 0.45))
 
-    doc.save(str(out_path))
-    doc.close()
+    try:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(out_path))
+    finally:
+        doc.close()
     return out_path
 
 
@@ -625,110 +654,118 @@ def export_pdf(text: str, out_path: Path, layout: str = "standard", cover_image:
     import pymupdf
 
     doc = pymupdf.open()
+    try:
+        candidate_fonts = [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/calibri.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
+        font_path = next((f for f in candidate_fonts if os.path.exists(f)), None)
 
-    candidate_fonts = [
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/calibri.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ]
-    font_path = next((f for f in candidate_fonts if os.path.exists(f)), None)
+        sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text or "")
+        pages_data = []
 
-    sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text)
-    pages_data = []
+        if len(sections) > 1:
+            i = 1
+            while i < len(sections):
+                pnum = sections[i]
+                pcontent = sections[i + 1] if i + 1 < len(sections) else ""
+                pages_data.append((f"Page {pnum}", pcontent.strip()))
+                i += 2
+        else:
+            pages_data.append(("", (text or "").strip()))
 
-    if len(sections) > 1:
-        i = 1
-        while i < len(sections):
-            pnum = sections[i]
-            pcontent = sections[i + 1] if i + 1 < len(sections) else ""
-            pages_data.append((f"Page {pnum}", pcontent.strip()))
-            i += 2
-    else:
-        pages_data.append(("", text.strip()))
+        margin = 48.0
+        width = 595.0   # A4 width
+        height = 842.0  # A4 height
+        content_bottom = height - margin - 20.0
 
-    margin = 48.0
-    width = 595.0   # A4 width
-    height = 842.0  # A4 height
-    content_bottom = height - margin - 20.0
-
-    def is_heading(line: str) -> bool:
-        s = line.strip()
-        if not s or len(s) > 85:
+        def is_heading(line: str) -> bool:
+            s = line.strip()
+            if not s or len(s) > 85:
+                return False
+            if s.isupper() and len(s) > 3:
+                return True
+            if s.startswith(("ΘΕΜΑ:", "ΠΡΟΣ:", "ΑΠΟ:", "SUBJECT:", "TO:", "FROM:", "Συνημμένο:", "Ημερομηνία:")):
+                return True
             return False
-        if s.isupper() and len(s) > 3:
-            return True
-        if s.startswith(("ΘΕΜΑ:", "ΠΡΟΣ:", "ΑΠΟ:", "SUBJECT:", "TO:", "FROM:", "Συνημμένο:", "Ημερομηνία:")):
-            return True
-        return False
 
-    fname = "unicode_font" if font_path else "helv"
-    font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
+        fname = "unicode_font" if font_path else "helv"
+        font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
 
-    for section_title, section_body in pages_data:
-        if not section_body:
-            continue
-
-        page = doc.new_page(width=width, height=height)
-        if font_path:
-            page.insert_font(fontname="unicode_font", fontfile=font_path)
-        y = margin
-
-        if section_title:
-            page.insert_text(pymupdf.Point(margin, y), section_title, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
-            y += 18.0
-
-        for raw_line in section_body.split("\n"):
-            line = _sanitize_pua(raw_line).strip()
-            if not line:
-                y += 7.0
+        for section_title, section_body in pages_data:
+            if not section_body:
                 continue
 
-            heading = is_heading(line)
-            font_size = 12.5 if heading else 10.5
-            line_height = 17.5 if heading else 14.5
-            color = (0.05, 0.05, 0.2) if heading else (0.1, 0.1, 0.1)
+            page = doc.new_page(width=width, height=height)
+            if font_path:
+                page.insert_font(fontname="unicode_font", fontfile=font_path)
+            y = margin
 
-            words = line.split()
-            line_words = []
-            max_w = width - 2 * margin
+            if section_title:
+                page.insert_text(pymupdf.Point(margin, y), section_title, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
+                y += 18.0
 
-            for w in words:
-                test_str = " ".join(line_words + [w])
-                if font_obj.text_length(test_str, fontsize=font_size) <= max_w:
-                    line_words.append(w)
-                else:
+            for raw_line in section_body.split("\n"):
+                line = _sanitize_pua(raw_line).strip()
+                if not line:
+                    y += 7.0
+                    continue
+
+                heading = is_heading(line)
+                font_size = 12.5 if heading else 10.5
+                line_height = 17.5 if heading else 14.5
+                color = (0.05, 0.05, 0.2) if heading else (0.1, 0.1, 0.1)
+
+                words = line.split()
+                line_words = []
+                max_w = width - 2 * margin
+
+                for w in words:
+                    test_str = " ".join(line_words + [w])
+                    if not line_words or font_obj.text_length(test_str, fontsize=font_size) <= max_w:
+                        line_words.append(w)
+                    else:
+                        if y + line_height > content_bottom:
+                            page = doc.new_page(width=width, height=height)
+                            if font_path:
+                                page.insert_font(fontname="unicode_font", fontfile=font_path)
+                            y = margin
+
+                        line_str = " ".join(line_words)
+                        page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
+                        y += line_height
+                        line_words = [w]
+
+                if line_words:
                     if y + line_height > content_bottom:
                         page = doc.new_page(width=width, height=height)
                         if font_path:
                             page.insert_font(fontname="unicode_font", fontfile=font_path)
                         y = margin
-
                     line_str = " ".join(line_words)
                     page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
                     y += line_height
-                    line_words = [w]
 
-            if line_words:
-                if y + line_height > content_bottom:
-                    page = doc.new_page(width=width, height=height)
-                    if font_path:
-                        page.insert_font(fontname="unicode_font", fontfile=font_path)
-                    y = margin
-                line_str = " ".join(line_words)
-                page.insert_text(pymupdf.Point(margin, y), line_str, fontsize=font_size, fontname=fname, color=color)
-                y += line_height
+                y += 4.0
 
-            y += 4.0
+        # Ensure PyMuPDF never crashes with "cannot save with zero pages" on empty inputs
+        if len(doc) == 0:
+            blank_pg = doc.new_page(width=width, height=height)
+            if font_path:
+                blank_pg.insert_font(fontname="unicode_font", fontfile=font_path)
 
-    total_pages = len(doc)
-    for p_no, pg in enumerate(doc, 1):
-        footer = f"{p_no} / {total_pages}"
-        pg.insert_text(pymupdf.Point(width - margin - 35, height - margin + 15), footer, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
+        total_pages = len(doc)
+        for p_no, pg in enumerate(doc, 1):
+            footer = f"{p_no} / {total_pages}"
+            pg.insert_text(pymupdf.Point(width - margin - 35, height - margin + 15), footer, fontsize=9.0, fontname=fname, color=(0.5, 0.5, 0.5))
 
-    doc.save(str(out_path))
-    doc.close()
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(out_path))
+    finally:
+        doc.close()
     return out_path
 
 
@@ -736,10 +773,13 @@ def export_pdf(text: str, out_path: Path, layout: str = "standard", cover_image:
 def export_epub(text: str, out_path: Path, title: str = "Translated Book", layout: str = "standard", cover_image: Optional[bytes] = None) -> Path:
     from ebooklib import epub
 
+    safe_text = text or ""
+    epub_lang = "el" if re.search(r"[\u0370-\u03ff]", safe_text) else "en"
+
     book = epub.EpubBook()
     book.set_identifier(str(out_path.stem))
     book.set_title(title)
-    book.set_language("el")
+    book.set_language(epub_lang)
 
     has_cover = False
     if cover_image:
@@ -808,10 +848,10 @@ p {
     chapters_items = []
 
     if layout == "literature":
-        chapters = _prepare_literature_chapters(text, default_title=title)
+        chapters = _prepare_literature_chapters(safe_text, default_title=title)
         for idx, ch in enumerate(chapters, 1):
             ch_title = ch["title"] or f"Chapter {idx}"
-            c = epub.EpubHtml(title=ch_title, file_name=f"chap_{idx:03d}.xhtml", lang="el")
+            c = epub.EpubHtml(title=ch_title, file_name=f"chap_{idx:03d}.xhtml", lang=epub_lang)
             c.add_item(css_item)
 
             parts = []
@@ -828,17 +868,24 @@ p {
                     parts.append(f"<p{cls}>{_emphasis_to_html(para)}</p>")
                     is_first = False
 
-            c.content = "\n".join(parts)
+            c.content = "\n".join(parts) or "<p>&#160;</p>"
             book.add_item(c)
             chapters_items.append(c)
     else:
-        sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", _sanitize_pua(text))
+        sections = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", _sanitize_pua(safe_text))
         if len(sections) > 1:
+            seen_fnames = set()
             i = 1
+            sec_idx = 0
             while i < len(sections):
+                sec_idx += 1
                 pnum = sections[i]
                 pcontent = sections[i + 1] if i + 1 < len(sections) else ""
-                c = epub.EpubHtml(title=f"Page {pnum}", file_name=f"page_{pnum}.xhtml", lang="el")
+                fname_xhtml = f"page_{pnum}.xhtml"
+                if fname_xhtml in seen_fnames:
+                    fname_xhtml = f"page_{pnum}_{sec_idx}.xhtml"
+                seen_fnames.add(fname_xhtml)
+                c = epub.EpubHtml(title=f"Page {pnum}", file_name=fname_xhtml, lang=epub_lang)
                 c.add_item(css_item)
                 body_html = f"<h2>Page {html.escape(pnum)}</h2>"
                 for p in pcontent.strip().split("\n\n"):
@@ -849,10 +896,10 @@ p {
                 chapters_items.append(c)
                 i += 2
         else:
-            c1 = epub.EpubHtml(title=title, file_name="chap_01.xhtml", lang="el")
+            c1 = epub.EpubHtml(title=title, file_name="chap_01.xhtml", lang=epub_lang)
             c1.add_item(css_item)
             body_html = f"<h1>{html.escape(title)}</h1>"
-            for para in _sanitize_pua(text).split("\n\n"):
+            for para in _sanitize_pua(safe_text).split("\n\n"):
                 if para.strip():
                     body_html += f"<p>{html.escape(para.strip())}</p>"
             c1.content = body_html
@@ -863,6 +910,7 @@ p {
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = (["cover"] if has_cover else []) + ["nav"] + chapters_items
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     epub.write_epub(str(out_path), book, {})
     return out_path
 

@@ -113,7 +113,7 @@ class TestTTSAudiobookDeep(unittest.TestCase):
 
     def test_audiobook_cancellation_resilience(self):
         print("-> 5. Testing In-Flight Audiobook Cancellation Resilience...")
-        job = create_job("test_cancel_book.txt", "txt", 100)
+        job = create_job("test_cancel_book.txt", "test_cancel_book.txt", "txt")
         job_id = job.job_id
 
         # Cancel job immediately before/during generation

@@ -28,51 +28,41 @@ out_dir = Path("temp/test_exports")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # Test TXT export
-try:
-    path = export_text(test_content, out_dir, "txt", "test_export")
-    assert Path(path).exists(), "TXT file not created"
-    content = Path(path).read_text(encoding="utf-8")
-    assert len(content) > 0, "TXT file empty"
-    print(f"  TXT export: OK ({Path(path).name}, {len(content)} chars)")
-except Exception as e:
-    print(f"  TXT export: FAIL - {e}")
+path = export_text(test_content, out_dir, "txt", "test_export")
+assert Path(path).exists(), "TXT file not created"
+content = Path(path).read_text(encoding="utf-8")
+assert len(content) > 0, "TXT file empty"
+print(f"  TXT export: OK ({Path(path).name}, {len(content)} chars)")
 
 # Test DOCX export
-try:
-    path = export_text(test_content, out_dir, "docx", "test_export")
-    assert Path(path).exists(), "DOCX file not created"
-    size = Path(path).stat().st_size
-    assert size > 0, "DOCX file empty"
-    print(f"  DOCX export: OK ({Path(path).name}, {size} bytes)")
-except Exception as e:
-    print(f"  DOCX export: FAIL - {e}")
+path = export_text(test_content, out_dir, "docx", "test_export")
+assert Path(path).exists(), "DOCX file not created"
+size = Path(path).stat().st_size
+assert size > 0 and Path(path).read_bytes().startswith(b"PK"), "DOCX file invalid"
+print(f"  DOCX export: OK ({Path(path).name}, {size} bytes)")
 
 # Test PDF export
-try:
-    path = export_text(test_content, out_dir, "pdf", "test_export")
-    assert Path(path).exists(), "PDF file not created"
-    size = Path(path).stat().st_size
-    assert size > 0, "PDF file empty"
-    print(f"  PDF export: OK ({Path(path).name}, {size} bytes)")
-except Exception as e:
-    print(f"  PDF export: FAIL - {e}")
+path = export_text(test_content, out_dir, "pdf", "test_export")
+assert Path(path).exists(), "PDF file not created"
+size = Path(path).stat().st_size
+assert size > 0 and Path(path).read_bytes().startswith(b"%PDF"), "PDF file invalid"
+print(f"  PDF export: OK ({Path(path).name}, {size} bytes)")
 
 # Test EPUB export
-try:
-    path = export_text(test_content, out_dir, "epub", "test_export")
-    assert Path(path).exists(), "EPUB file not created"
-    size = Path(path).stat().st_size
-    assert size > 0, "EPUB file empty"
-    print(f"  EPUB export: OK ({Path(path).name}, {size} bytes)")
-except Exception as e:
-    print(f"  EPUB export: FAIL - {e}")
+path = export_text(test_content, out_dir, "epub", "test_export")
+assert Path(path).exists(), "EPUB file not created"
+size = Path(path).stat().st_size
+assert size > 0 and Path(path).read_bytes().startswith(b"PK"), "EPUB file invalid"
+print(f"  EPUB export: OK ({Path(path).name}, {size} bytes)")
 
 # Test invalid format
+rejected = False
 try:
-    path = export_text(test_content, out_dir, "xyz", "test_export")
-    print(f"  Invalid format: FAIL - should have raised error")
-except (ValueError, Exception) as e:
+    export_text(test_content, out_dir, "xyz", "test_export")
+except ValueError as e:
+    rejected = True
     print(f"  Invalid format rejection: OK ({type(e).__name__})")
+assert rejected, "Invalid format 'xyz' should have raised ValueError"
 
 # Test with Greek content
 greek_content = """
@@ -87,11 +77,9 @@ PAGE 1
 """
 
 for fmt in ["txt", "docx", "pdf", "epub"]:
-    try:
-        path = export_text(greek_content, out_dir, fmt, "test_greek")
-        assert Path(path).exists()
-        print(f"  Greek {fmt.upper()}: OK ({Path(path).stat().st_size} bytes)")
-    except Exception as e:
-        print(f"  Greek {fmt.upper()}: FAIL - {e}")
+    path = export_text(greek_content, out_dir, fmt, "test_greek")
+    assert Path(path).exists(), f"Greek {fmt} file not created"
+    assert Path(path).stat().st_size > 0, f"Greek {fmt} file empty"
+    print(f"  Greek {fmt.upper()}: OK ({Path(path).stat().st_size} bytes)")
 
 print("  ALL EXPORTER TESTS PASSED")

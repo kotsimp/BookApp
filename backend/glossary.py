@@ -4,9 +4,12 @@ Provides regex-based boundary replacements for domain-specific terminology
 with distinct categorization (Technical, Literary, General).
 """
 
+import os
 import json
 import re
+import time
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -14,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 GLOSSARY_FILE = CONFIG_DIR / "glossary.json"
+_glossary_lock = threading.RLock()
 
 CATEGORIES_META: Dict[str, Dict[str, str]] = {
     "technical": {
@@ -111,9 +115,26 @@ def _read_raw_file() -> Dict[str, Any]:
 
 
 def _write_raw_file(data: Dict[str, Any]) -> None:
-    """Writes categorized glossary structure to JSON file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    GLOSSARY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    """Atomically writes categorized glossary structure to JSON file under lock."""
+    with _glossary_lock:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_file = CONFIG_DIR / f"glossary_{os.getpid()}_{threading.get_ident()}.tmp"
+        try:
+            tmp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            for attempt in range(4):
+                try:
+                    os.replace(tmp_file, GLOSSARY_FILE)
+                    break
+                except PermissionError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
+        finally:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
 
 # IT / infrastructure terms that must NEVER be auto-substituted into literary fiction, poetry, or comics
@@ -133,27 +154,32 @@ def load_glossary(category: Optional[str] = None, style: Optional[str] = None) -
     If neither is specified (or category is 'all'), merges all categories.
     """
     data = _read_raw_file()
-    terms_by_cat = data.get("terms", {})
+    raw_terms = data.get("terms")
+    terms_by_cat = raw_terms if isinstance(raw_terms, dict) else {}
+
+    def _safe_cat(name: str) -> Dict[str, str]:
+        val = terms_by_cat.get(name)
+        return val if isinstance(val, dict) else {}
 
     if category and category.lower() not in ("all", "*"):
         cat_key = category.lower()
         if cat_key == "literature":
             cat_key = "literary"
-        return dict(terms_by_cat.get(cat_key, {}))
+        return dict(_safe_cat(cat_key))
 
     style_low = (style or "").lower()
     if style_low in ("literature", "audiobook", "poetry", "comic", "graphic_novel"):
         merged: Dict[str, str] = {}
-        for k, v in terms_by_cat.get("general", {}).items():
+        for k, v in _safe_cat("general").items():
             if k.lower() not in _IT_GENERAL_BLOCKLIST:
                 merged[k] = v
-        merged.update(terms_by_cat.get("literary", {}))
+        merged.update(_safe_cat("literary"))
         return merged
 
-    # Merge all categories (general overrides literary, technical takes precedence for technical docs)
+    # Merge all categories (literary, general, technical)
     merged = {}
-    for cat_name in ("general", "literary", "technical"):
-        merged.update(terms_by_cat.get(cat_name, {}))
+    for cat_name in ("literary", "general", "technical"):
+        merged.update(_safe_cat(cat_name))
     return merged
 
 
@@ -163,11 +189,12 @@ def load_categorized_glossary() -> Dict[str, Any]:
     and a structured list of terms for the UI table.
     """
     data = _read_raw_file()
-    terms_by_cat = data.get("terms", {})
+    raw_terms = data.get("terms")
+    terms_by_cat = raw_terms if isinstance(raw_terms, dict) else {}
 
-    tech_terms = terms_by_cat.get("technical", {})
-    lit_terms = terms_by_cat.get("literary", {})
-    gen_terms = terms_by_cat.get("general", {})
+    tech_terms = terms_by_cat.get("technical") if isinstance(terms_by_cat.get("technical"), dict) else {}
+    lit_terms = terms_by_cat.get("literary") if isinstance(terms_by_cat.get("literary"), dict) else {}
+    gen_terms = terms_by_cat.get("general") if isinstance(terms_by_cat.get("general"), dict) else {}
 
     total_count = len(tech_terms) + len(lit_terms) + len(gen_terms)
 
@@ -208,26 +235,33 @@ def set_term(source: str, target: str, category: str = "general") -> Dict[str, s
     Removes the term from other categories to avoid conflicts.
     Returns the full updated flat glossary.
     """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("Source term cannot be empty.")
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("Target term cannot be empty.")
     source = source.strip()
     target = target.strip()
-    if not source:
-        raise ValueError("Source term cannot be empty.")
 
     cat = (category or "general").lower()
     if cat not in CATEGORIES_META:
         cat = "general"
 
-    data = _read_raw_file()
-    terms = data.setdefault("terms", {})
-    for c_name in ("technical", "literary", "general"):
-        terms.setdefault(c_name, {})
-        # If term existed elsewhere, remove it first
-        if source in terms[c_name] and c_name != cat:
-            del terms[c_name][source]
+    with _glossary_lock:
+        data = _read_raw_file()
+        terms = data.get("terms")
+        if not isinstance(terms, dict):
+            terms = {}
+            data["terms"] = terms
+        for c_name in ("technical", "literary", "general"):
+            if not isinstance(terms.get(c_name), dict):
+                terms[c_name] = {}
+            # If term existed elsewhere, remove it first
+            if source in terms[c_name] and c_name != cat:
+                del terms[c_name][source]
 
-    terms[cat][source] = target
-    _write_raw_file(data)
-    return load_glossary()
+        terms[cat][source] = target
+        _write_raw_file(data)
+        return load_glossary()
 
 
 def delete_term(source: str) -> Dict[str, str]:
@@ -235,31 +269,37 @@ def delete_term(source: str) -> Dict[str, str]:
     Deletes a glossary term from whichever category it belongs to.
     Returns the full updated flat glossary.
     """
+    if not isinstance(source, str) or not source.strip():
+        return load_glossary()
     source = source.strip()
-    data = _read_raw_file()
-    terms = data.get("terms", {})
-    modified = False
+    with _glossary_lock:
+        data = _read_raw_file()
+        terms = data.get("terms")
+        if not isinstance(terms, dict):
+            return load_glossary()
+        modified = False
 
-    for c_name in ("technical", "literary", "general"):
-        if c_name in terms and source in terms[c_name]:
-            del terms[c_name][source]
-            modified = True
+        for c_name in ("technical", "literary", "general"):
+            cat_dict = terms.get(c_name)
+            if isinstance(cat_dict, dict) and source in cat_dict:
+                del cat_dict[source]
+                modified = True
 
-    if modified:
-        _write_raw_file(data)
+        if modified:
+            _write_raw_file(data)
 
-    return load_glossary()
+        return load_glossary()
 
 
 def _build_term_regex(term: str) -> re.Pattern:
     """
     Builds regex pattern supporting terms with leading/trailing non-word symbols (e.g. C++, .NET)
-    while refusing to match fragments inside hyphenated compounds (e.g. 'pod' inside 'pod-man',
-    'royalty' inside 'royalty-free').
+    including inside parentheses/quotes like '(.NET)', while refusing to match fragments inside
+    hyphenated compounds (e.g. 'pod' inside 'pod-man', 'royalty' inside 'royalty-free').
     """
     escaped = re.escape(term)
-    prefix = r"(?<![\w-])" if bool(re.search(r"^\w", term)) else r"(?<!\S)"
-    suffix = r"(?![\w-])" if bool(re.search(r"\w$", term)) else r"(?!\S)"
+    prefix = r"(?<![\w-])" if bool(re.search(r"^\w", term)) else r"(?<![\w.-])"
+    suffix = r"(?![\w-])" if bool(re.search(r"\w$", term)) else r"(?![\w+#-])"
     flags = re.IGNORECASE if term.islower() else 0
     return re.compile(rf"{prefix}{escaped}{suffix}", flags)
 
@@ -277,6 +317,43 @@ def _is_english_citation_line(line: str) -> bool:
     return bool(re.search(r"\b(?:19\d{2}|20\d{2})\b|\bet al\.|\bJournal\b|\bpp\.\s*\d|\bdoi:|:\s*\d+\s*[-–]\s*\d+", s))
 
 
+def _apply_terms_single_pass(text: str, active_terms: list[tuple[str, str, re.Pattern]]) -> str:
+    """
+    Applies glossary terms idempotently without recursive double-substitution or regex-escape crashes:
+    1. Protects already-substituted target phrases (e.g. 'Αίθουσα Διακομιστών (Server Room)') so
+       repeated calls to apply_glossary() never nest parentheses.
+    2. Replaces each match with an inert placeholder token first, then expands placeholders once at the end.
+    3. Uses a lambda replacement so backslashes in target strings (e.g. 'C:\\temp', '\\1') never raise re.error.
+    """
+    placeholders: list[str] = []
+
+    def _stash(value: str) -> str:
+        idx = len(placeholders)
+        placeholders.append(value)
+        return f"\x00GLOSS_{idx}\x00"
+
+    # Protect already-present parenthetical target strings so re-applying glossary is 100% idempotent
+    for _, replacement, _ in active_terms:
+        if "(" in replacement and replacement in text:
+            text = text.replace(replacement, _stash(replacement))
+
+    text_lower = text.lower()
+    for term, replacement, pattern in active_terms:
+        if term.lower() not in text_lower:
+            continue
+        def _repl(_, _rep=replacement):
+            return _stash(_rep)
+        new_text = pattern.sub(_repl, text)
+        if new_text != text:
+            text = new_text
+            text_lower = text.lower()
+
+    if placeholders:
+        for idx in range(len(placeholders) - 1, -1, -1):
+            text = text.replace(f"\x00GLOSS_{idx}\x00", placeholders[idx])
+    return text
+
+
 def apply_glossary(
     text: str,
     target_lang: str = "greek",
@@ -290,7 +367,7 @@ def apply_glossary(
     When style is literary/comic/audiobook/poetry, excludes technical/IT categories and skips
     English-only bibliographic citation lines.
     """
-    if not text or target_lang.lower() not in ("greek", "el"):
+    if not text or not isinstance(target_lang, str) or target_lang.lower() not in ("greek", "el"):
         return text
 
     glossary = load_glossary(category=category, style=style)
@@ -299,34 +376,23 @@ def apply_glossary(
 
     # Sort terms by length descending to prevent sub-string overlap
     sorted_terms = sorted(glossary.keys(), key=len, reverse=True)
-    protect_citations = (style or "").lower() in ("literature", "audiobook", "poetry", "natural")
-
-    if not protect_citations:
-        text_lower = text.lower()
-        for term in sorted_terms:
-            if term.lower() not in text_lower:
-                continue
-            replacement = glossary[term]
-            pattern = _build_term_regex(term)
-            text = pattern.sub(replacement, text)
-            text_lower = text.lower()
-        return text
-
-    # Pre-filter active terms against the entire text once for speed
     full_lower = text.lower()
-    active_terms = [(t, glossary[t], _build_term_regex(t)) for t in sorted_terms if t.lower() in full_lower]
+    active_terms = [
+        (t, glossary[t], _build_term_regex(t))
+        for t in sorted_terms
+        if t and glossary.get(t) and t.lower() in full_lower
+    ]
     if not active_terms:
         return text
+
+    protect_citations = (style or "").lower() in ("literature", "audiobook", "poetry", "natural")
+    if not protect_citations:
+        return _apply_terms_single_pass(text, active_terms)
 
     out_lines = []
     for line in text.split("\n"):
         if _is_english_citation_line(line):
             out_lines.append(line)
             continue
-        line_lower = line.lower()
-        for term, replacement, pattern in active_terms:
-            if term.lower() in line_lower:
-                line = pattern.sub(replacement, line)
-                line_lower = line.lower()
-        out_lines.append(line)
+        out_lines.append(_apply_terms_single_pass(line, active_terms))
     return "\n".join(out_lines)

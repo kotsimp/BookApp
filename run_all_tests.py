@@ -1,7 +1,7 @@
 """
 run_all_tests.py - Bulletproof Unified Master Test Suite Runner.
 Features:
-1. Auto-discovers and executes all 28 test suites in tests/.
+1. Auto-discovers and executes all test suites in tests/.
 2. Snapshots & restores config/settings.json safely (NEVER overwrites or deletes user API keys).
 3. Auto-launches a temporary Uvicorn backend if localhost:8000 is not already running.
 4. Supports '--fast' flag to run all static, unit, regression, benchmark, and mock-API suites in seconds.

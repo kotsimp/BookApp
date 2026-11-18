@@ -36,7 +36,7 @@ def _should_keep_final_nu(next_word: str) -> bool:
     if not w:
         return True
     first_char = w[0]
-    if first_char in GREEK_VOWELS:
+    if first_char in GREEK_VOWELS or ("\u1f00" <= first_char <= "\u1fff"):
         return True
     # Check 2-letter digraphs first (e.g. μπ, ντ)
     if len(w) >= 2:
@@ -126,16 +126,34 @@ def _is_privative_me(prev_word: str, next_word: str) -> bool:
     return False
 
 
+# Words after which standalone 'δε' is the conjunction "however/moreover" (NOT negation 'δεν')
+_CONJUNCTIVE_DE_PRECEDING_WORDS = frozenset({
+    "εάν", "εαν", "αν", "όταν", "οταν", "ενώ", "ενω", "όπως", "οπως",
+    "επειδή", "επειδη", "καθώς", "καθως", "άλλωστε", "αλλωστε", "εξάλλου",
+    "ο", "η", "το", "οι", "τα", "του", "της", "των", "τον", "την", "τους", "τις",
+    "αυτός", "αυτή", "αυτό", "εκείνος", "εκείνη", "εκείνο", "εγώ", "εσύ", "εμείς",
+    "έτι", "ετι", "ου", "μήτε", "ούτε",
+})
+
+
 def apply_final_nu_rules(text: str) -> str:
     """
     Applies the modern Greek grammar rule for final 'ν' on:
-    - δε / δεν
+    - δε / δεν (preserving conjunctive 'δε' = "however/moreover" in formal/legal/literary Greek)
     - μη / μην (strictly respecting privative 'μη' before adjectives/participles/nouns/adverbs)
     """
     def _replace_de(m: re.Match) -> str:
         prefix = m.group(1)  # "δε" or "δεν" with casing
         space = m.group(2)
         next_word = m.group(3)
+        # Preserve conjunctive 'δε' ("however/moreover") e.g. "εάν δε προκύψει", "ο δε υπουργός", "δε και"
+        if prefix.lower() == "δε":
+            start_pos = m.start()
+            before = text[max(0, start_pos - 24):start_pos].rstrip()
+            prev_m = re.search(r"([\wΆ-ώ\u1f00-\u1fff]+)$", before)
+            prev_word = prev_m.group(1).lower() if prev_m else ""
+            if prev_word in _CONJUNCTIVE_DE_PRECEDING_WORDS or next_word.lower() == "και":
+                return m.group(0)
         keep = _should_keep_final_nu(next_word)
         is_upper = prefix.isupper()
         is_cap = prefix[0].isupper()
@@ -152,7 +170,7 @@ def apply_final_nu_rules(text: str) -> str:
         # Look behind up to 24 chars to inspect the immediately preceding word
         start_pos = m.start()
         before = text[max(0, start_pos - 24):start_pos].rstrip()
-        prev_m = re.search(r"([\wΆ-ώ]+)$", before)
+        prev_m = re.search(r"([\wΆ-ώ\u1f00-\u1fff]+)$", before)
         prev_word = prev_m.group(1) if prev_m else ""
 
         if _is_privative_me(prev_word, next_word):
@@ -168,10 +186,9 @@ def apply_final_nu_rules(text: str) -> str:
             corr = "ΜΗ" if is_upper else ("Μη" if is_cap else "μη")
         return f"{corr}{space}{next_word}"
 
-    # Match 'δε' or 'δεν' as standalone words before the next word
-    text = re.sub(r"\b(δε|δεν|ΔΕ|ΔΕΝ|Δε|Δεν)(\s+)([\wΆ-ώ]+)", _replace_de, text)
-    # Match 'μη' or 'μην' as standalone words before the next word
-    text = re.sub(r"\b(μη|μην|ΜΗ|ΜΗΝ|Μη|Μην)(\s+)([\wΆ-ώ]+)", _replace_me, text)
+    # Match within the same line only ([ \t]+) so paragraph/stanza breaks are never crossed
+    text = re.sub(r"\b(δε|δεν|ΔΕ|ΔΕΝ|Δε|Δεν)([ \t]+)([\wΆ-ώ\u1f00-\u1fff]+)", _replace_de, text)
+    text = re.sub(r"\b(μη|μην|ΜΗ|ΜΗΝ|Μη|Μην)([ \t]+)([\wΆ-ώ\u1f00-\u1fff]+)", _replace_me, text)
 
     return text
 
@@ -179,9 +196,8 @@ def apply_final_nu_rules(text: str) -> str:
 def format_greek_quotes(text: str) -> str:
     """
     Transforms straight double quotes ("...") into standard Greek publication guillemets («...»).
-    Preserves quotes inside code blocks or markers.
+    Preserves quotes inside fenced code blocks (``` ... ```) and PAGE markers.
     """
-    # Protect PAGE markers and markdown tags
     def _convert_quotes(s: str) -> str:
         parts = re.split(r'(".*?")', s)
         for i in range(1, len(parts), 2):
@@ -190,10 +206,13 @@ def format_greek_quotes(text: str) -> str:
         return "".join(parts)
 
     lines = []
+    in_code_fence = False
     for line in text.split("\n"):
-        if re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", line.strip()):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
             lines.append(line)
-        elif line.strip().startswith("```"):
+        elif in_code_fence or re.match(r"^={3,}\s*PAGE\s+\d+\s*={3,}$", stripped):
             lines.append(line)
         else:
             lines.append(_convert_quotes(line))
@@ -204,11 +223,16 @@ def format_dialogue_dashes(text: str) -> str:
     """
     Standardizes conversation lines starting with simple hyphens to em-dash (—).
     E.g. '- Γεια σου, είπε' -> '— Γεια σου, είπε'.
+    Preserves Markdown numeric/indented bullet items (e.g. '- 5', '  - subitem').
     """
     lines = []
     for line in text.split("\n"):
-        # Match lines starting with optional whitespace, then hyphen or en-dash followed by space and Greek/letter
-        m = re.match(r"^(\s*)([-–])\s+([«\wΆ-ώ\.\(\[\"'])", line)
+        # Skip indented Markdown sub-bullets (2+ leading spaces) and numeric bullet items ('- 5')
+        if re.match(r"^[ \t]{2,}[-–]\s+", line) or re.match(r"^\s*[-–]\s+\d+", line):
+            lines.append(line)
+            continue
+        # Match lines starting with optional single space, then hyphen or en-dash followed by dialogue start
+        m = re.match(r"^(\s*)([-–])\s+([«A-Za-zΆ-ώ\.\(\[\"'])", line)
         if m:
             indent, _, start_char = m.groups()
             line = f"{indent}— {start_char}" + line[m.end():]
@@ -216,19 +240,30 @@ def format_dialogue_dashes(text: str) -> str:
     return "\n".join(lines)
 
 
+# Standalone Greek function/dialogue words that must NOT be glued onto a preceding interrupted word ('Περίμενε- μην')
+_STANDALONE_NEXT_WORDS = frozenset({
+    "μην", "μη", "δεν", "δε", "τι", "να", "και", "μα", "ότι", "οτι", "που", "πού",
+    "αλλά", "αλλα", "για", "με", "σε", "από", "απο", "πώς", "πως", "όχι", "οχι",
+    "ναι", "έλα", "ελα", "πες", "ποιος", "ποια", "ποιο", "εγώ", "εσύ", "αυτός",
+})
+
+
 def fix_broken_hyphens(text: str) -> str:
     """
     Rejoins Greek words split by line-break hyphens (e.g. 'υποσχέ- θηκαν' -> 'υποσχέθηκαν',
     'εσωτερι-\\nκά' -> 'εσωτερικά', 'ΠΛΗΜ-\\nΜΥΡΙΣΕΙ' -> 'ΠΛΗΜΜΥΡΙΣΕΙ').
-    Avoids touching legitimate dialogue pauses or repeated-word emphasis ('εσύ-\\n\\nεσύ').
+    Avoids touching legitimate dialogue interruptions ('Περίμενε- μην φεύγεις!') or repeated words ('εσύ- εσύ').
     """
     if not text:
         return text
-    # Single-newline or single-space hyphenation inside a Greek word (not double newline)
+
     def _join_hyphen(m: re.Match) -> str:
-        left, right = m.group(1), m.group(2)
+        left, sep, right = m.group(1), m.group(2), m.group(3)
         # Skip repeated words like "εσύ- εσύ" or "όχι- όχι"
         if left.lower() == right.lower():
+            return m.group(0)
+        # For inline space (not newline), refuse to glue interrupted dialogue before standalone words
+        if "\n" not in sep and right.lower() in _STANDALONE_NEXT_WORDS:
             return m.group(0)
         # Join if both halves are lowercase-ending/starting OR both ALL CAPS
         if (left[-1].islower() and right[0].islower()) or (left.isupper() and right.isupper()):
@@ -236,7 +271,7 @@ def fix_broken_hyphens(text: str) -> str:
         return m.group(0)
 
     return re.sub(
-        r"([\u0370-\u03ff]{2,})-(?:[ \t]*\r?\n[ \t]*|[ \t]+)([\u0370-\u03ff]{2,})",
+        r"([\u0370-\u03ff]{2,})-([ \t]*\r?\n[ \t]*|[ \t]+)([\u0370-\u03ff]{2,})",
         _join_hyphen,
         text,
     )
@@ -270,14 +305,24 @@ def format_greek_punctuation(text: str) -> str:
     - Normalizes question marks (replaces English '?' with Greek ';' when in Greek sentence context,
       including '?!', '?!!', '??!!', and '...?').
     """
+    # Protect URLs so query strings (?id=1) and relative paths (../) are never mangled
+    url_stash: list[str] = []
+
+    def _stash_url(m: re.Match) -> str:
+        idx = len(url_stash)
+        url_stash.append(m.group(0))
+        return f"\x00URL_{idx}\x00"
+
+    text = re.sub(r"https?://[^\s<>\"'»]+", _stash_url, text)
+
     # Remove horizontal spaces/tabs before punctuation (never collapse newlines!)
     text = re.sub(r"[ \t]+([,.:;!?·»])", r"\1", text)
     # Remove horizontal space after opening guillemet / before closing guillemet
     text = re.sub(r"«[ \t]+", "«", text)
     text = re.sub(r"[ \t]+»", "»", text)
-    # Fix multiple commas or dots
+    # Fix multiple commas or accidental double periods (preserve ../ paths, 1..10 ranges, and ... ellipses)
     text = re.sub(r",,+", ",", text)
-    text = re.sub(r"(?<!\.)\.\.(?!\.)", ".", text)  # double dots to single, but leave ... intact
+    text = re.sub(r"(?<=[^\.\d/])\.\.(?![\./\d])", ".", text)
 
     # Replace English question mark ? (including ?!, ??!!, ...?) with Greek ; when in Greek context
     has_greek_in_doc = bool(re.search(r"[\u0370-\u03ff]", text))
@@ -287,9 +332,14 @@ def format_greek_punctuation(text: str) -> str:
         qmarks = m.group(2)
         if re.search(r"[\u0370-\u03ff]", token):
             return f"{token}{qmarks.replace('?', ';')}"
+        # Also convert '?' after Latin acronyms/closing parens inside a Greek line (e.g. "Τι είναι το API?")
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        line_prefix = text[line_start:m.start()]
+        if re.search(r"[\u0370-\u03ff]", line_prefix):
+            return f"{token}{qmarks.replace('?', ';')}"
         return m.group(0)
 
-    text = re.sub(r"([«»\"'\.\wΆ-ώ]+)([?!]+)", _to_greek_qm, text)
+    text = re.sub(r"([«»\"'\.\)\]\wΆ-ώ]+)([?!]+)", _to_greek_qm, text)
     # Also handle standalone comic interjections like "??!!" or "?!!" when document is Greek
     if has_greek_in_doc:
         text = re.sub(
@@ -298,6 +348,9 @@ def format_greek_punctuation(text: str) -> str:
             text,
             flags=re.MULTILINE,
         )
+
+    for idx, orig_url in enumerate(url_stash):
+        text = text.replace(f"\x00URL_{idx}\x00", orig_url)
 
     return text
 
