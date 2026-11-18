@@ -166,9 +166,141 @@ def test_no_unreachable_code_after_returns():
     print("   Unreachable code check: OK (no dead code blocks after return/raise)")
 
 
+def test_undefined_globals_and_missing_imports():
+    print("-> 5. Testing for undefined global/module names and missing submodule imports...")
+    import builtins
+    builtin_names = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__package__"}
+    py_files = sorted(glob.glob("backend/**/*.py", recursive=True))
+
+    for path in py_files:
+        src = Path(path).read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=path)
+
+        # Catch submodule usage without explicit import (e.g. urllib.error)
+        if "urllib.error" in src and "import urllib.error" not in src:
+            assert False, f"Missing 'import urllib.error' in {path}"
+
+        defined = set(builtin_names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    defined.add(a.asname or a.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    defined.add(a.asname or a.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                defined.add(node.name)
+                if hasattr(node, "args"):
+                    for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+                        defined.add(arg.arg)
+                    if node.args.vararg:
+                        defined.add(node.args.vararg.arg)
+                    if node.args.kwarg:
+                        defined.add(node.args.kwarg.arg)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                defined.add(node.id)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                defined.add(node.name)
+            elif isinstance(node, ast.alias):
+                defined.add(node.asname or node.name.split(".")[0])
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                assert node.id in defined, f"Undefined global/name '{node.id}' in {path} at line {node.lineno}"
+
+    print(f"   Undefined global & missing import check: OK ({len(py_files)} backend files clean)")
+
+
+def test_no_unused_imports_or_deprecated_apis():
+    print("-> 6. Testing for unused top-level imports and deprecated FastAPI APIs...")
+    py_files = sorted(glob.glob("backend/**/*.py", recursive=True))
+
+    for path in py_files:
+        src = Path(path).read_text(encoding="utf-8")
+        assert "@app.on_event(" not in src, f"Deprecated @app.on_event() found in {path} — use lifespan instead"
+        tree = ast.parse(src, filename=path)
+
+        used_names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                used_names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                cur = node
+                while isinstance(cur, ast.Attribute):
+                    cur = cur.value
+                if isinstance(cur, ast.Name):
+                    used_names.add(cur.id)
+
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    nm = a.asname or a.name.split(".")[0]
+                    assert nm in used_names, f"Unused import '{a.name}' in {path}:{node.lineno}"
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    nm = a.asname or a.name
+                    if nm != "*":
+                        assert nm in used_names, f"Unused import '{a.name}' from '{node.module}' in {path}:{node.lineno}"
+
+    print("   Unused imports & deprecated API check: OK")
+
+
+def test_frontend_html_js_integrity():
+    print("-> 7. Testing Frontend HTML <-> JS cross-integrity & UI contracts...")
+    import re
+    html = Path("frontend/index.html").read_text(encoding="utf-8")
+    js = Path("frontend/app.js").read_text(encoding="utf-8")
+
+    html_ids = set(re.findall(r'\bid=["\']([^"\']+)["\']', html))
+    js_dyn_ids = set(re.findall(r'id=["\']([^"\']+)["\']', js))
+    all_ids = html_ids | js_dyn_ids
+
+    # Every inline event handler in index.html must exist in app.js
+    handlers = set(re.findall(r'on(?:click|change|input|submit|dragover|dragleave|drop|keydown)=["\']([a-zA-Z0-9_]+)\(', html))
+    js_func_list = re.findall(r'(?:async\s+)?function\s+([a-zA-Z0-9_]+)\s*\(', js)
+    js_funcs = set(js_func_list)
+    for h in handlers:
+        if h not in ("document", "window"):
+            assert h in js_funcs, f"HTML event handler '{h}()' is not defined in frontend/app.js"
+
+    # No duplicate top-level JS function definitions
+    assert len(js_func_list) == len(js_funcs), "Duplicate function definitions detected in frontend/app.js"
+
+    # Every static getElementById in app.js must exist in index.html or dynamic templates
+    for gid in set(re.findall(r'getElementById\(["\']([^"\']+)["\']\)', js)):
+        if "$" not in gid:
+            assert gid in all_ids, f"JS queries missing HTML element #{gid}"
+
+    # Verify critical UX regression guards remain intact
+    assert "api_key: apiKey || null" in js, "app.js must always forward apiKey (not gate it behind aiPolish)"
+    assert "function setGraphicNovelLock(" in js, "app.js must expose setGraphicNovelLock() for comic auto-lock"
+    assert "function refreshPageApp(" in js, "app.js must expose refreshPageApp() for Refresh button"
+    assert "function saveGeminiKeyOnly(" in js, "app.js must expose saveGeminiKeyOnly() for Save Key button"
+    print("   Frontend HTML <-> JS cross-integrity: OK")
+
+
+def test_production_config_hygiene():
+    print("-> 8. Testing Production Config Hygiene (no leaked test keys)...")
+    import json
+    settings_path = Path("config/settings.json")
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        k = str(data.get("gemini_api_key", ""))
+        assert not k.startswith("AQ.Test") and not k.startswith("AIzaTest"), (
+            f"Leaked test API key found in config/settings.json: {k[:12]}..."
+        )
+        for key_name in data.keys():
+            assert not key_name.startswith("stress_key_"), f"Leaked stress test key '{key_name}' in config/settings.json"
+    print("   Production Config Hygiene: OK")
+
+
 if __name__ == "__main__":
     test_ast_and_syntax_validity()
     test_unbound_local_variables()
     test_import_integrity()
     test_no_unreachable_code_after_returns()
+    test_undefined_globals_and_missing_imports()
+    test_no_unused_imports_or_deprecated_apis()
+    test_frontend_html_js_integrity()
+    test_production_config_hygiene()
     print("\nALL CODE HEALTH AND STATIC INTEGRITY TESTS PASSED!")

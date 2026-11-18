@@ -312,8 +312,9 @@ python run_all_tests.py
 25. `test_translator.py`: Μηχανή μετάφρασης GTX POST, 429 circuit breaker, Gemini failover.
 26. `test_tts_audiobook_deep.py`: Κατάλογος φωνών, prosody, συνένωση chunks, ακύρωση in-flight.
 27. `test_typography_and_genre.py`: Ελληνική τυπογραφία, κανόνας τελικού «ν», αυτόματη ανίχνευση είδους.
+28. `test_e2e_regression_guard.py`: Ενδο-προς-τέλος (E2E) φύλακας παλινδρόμησης (Single-Job Delete & Clear All σε API + SQLite, DOCX + AI Polish Single-Pass, fail-fast σε άκυρο API key).
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`27/27 PASS (100% επιτυχία)`**.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`28/28 PASS (100% επιτυχία)`**.
 
 ---
 

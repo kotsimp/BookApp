@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-27%2F27%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-28%2F28%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **Single-Pass Direct AI Translation & Polish**, **in-place format preservation** (fonts, sizes, headings, tables, styles), **automatic Graphic Novel / Scanned Comic & Manga translation** with 100% artwork preservation, and **professional AI audiobooks** (including multi-voice dramatization and M4B export) using Microsoft Edge neural voices.
 
@@ -35,7 +35,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **M4B & Tagged Audiobooks** | Exports audiobooks in both `.mp3` and `.m4b` formats with full ID3v2/MP4 metadata tagging (Title, Artist, Album, Genre="Audiobook") and embedded cover art via `mutagen`. |
 | **Voice Preview Auditions** | Instant 2–3 second voice audition playback button (`🔊 Ακρόαση`, `GET /api/tts/preview`) next to each voice in the UI. |
 | **Modern UI Controls & One-Click Launcher** | Dark/Light theme toggle, dedicated **🔄 Refresh** button in header & navbar, dedicated **🔑 Gemini API Key** button with **💾 Save Key** and auto-sync to server, Split-Screen Editor with Sync Scroll, and Windows desktop launcher (`start_bookapp.bat`). |
-| **Automated Test Suite (27 Suites)** | Master test runner `run_all_tests.py` executing 27 comprehensive test suites (100% pass rate) covering code health/AST, SQLite & cache, performance benchmarks, HTTP endpoints, scanned comic auto-detection & Vision erasure, typography, manga RTL, multi-voice TTS, concurrency, encoding, and end-to-end APIs. |
+| **Automated Test Suite (28 Suites)** | Master test runner `run_all_tests.py` executing 28 comprehensive test suites (100% pass rate) covering code health/AST + undefined globals + HTML⇄JS cross-integrity + config hygiene, E2E regression guards (`test_e2e_regression_guard.py`), SQLite & cache, performance benchmarks, HTTP endpoints, scanned comic auto-detection & Vision erasure, typography, manga RTL, multi-voice TTS, concurrency, encoding, and end-to-end APIs. |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |

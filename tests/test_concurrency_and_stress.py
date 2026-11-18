@@ -116,6 +116,10 @@ class TestConcurrencyAndStress(unittest.TestCase):
         for t in threads:
             t.join()
 
+        from backend.settings_manager import delete_setting
+        for t in range(8):
+            delete_setting(f"stress_key_{t}")
+
         self.assertEqual(len(errors), 0, f"Thread errors: {errors}")
         print("   Concurrent settings read/write: OK")
 
