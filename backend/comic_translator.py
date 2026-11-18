@@ -146,8 +146,18 @@ def _comic_items_have_corruption(items: List[Dict[str, Any]], target_lang: str =
     return any(i.startswith("mixed_script") or i == "cot_leak" for i in issues)
 
 
-def _wrap_text_to_width(text: str, font_obj: fitz.Font, fontsize: float, max_width: float) -> List[str]:
-    """Wraps text cleanly into lines fitting within max_width, hyphenating only overlong single words."""
+def _wrap_text_to_width(
+    text: str,
+    font_obj: fitz.Font,
+    fontsize: float,
+    max_width: float,
+    allow_word_break: bool = True,
+) -> Optional[List[str]]:
+    """
+    Wraps text cleanly into lines fitting within max_width.
+    When allow_word_break=False, returns None if any single word exceeds max_width so the caller
+    can shrink the font slightly instead of hyphenating a word unnecessarily.
+    """
     words = text.split()
     if not words:
         return []
@@ -164,6 +174,8 @@ def _wrap_text_to_width(text: str, font_obj: fitz.Font, fontsize: float, max_wid
         # Check if single word fits on its own line
         if font_obj.text_length(w, fontsize=fontsize) <= max_width:
             curr = w
+        elif not allow_word_break:
+            return None
         else:
             # Break overlong single word cleanly so text NEVER overflows or disappears
             piece = ""
@@ -180,39 +192,37 @@ def _wrap_text_to_width(text: str, font_obj: fitz.Font, fontsize: float, max_wid
     return lines
 
 
-def _fit_and_draw_balloon_text(
+def _plan_balloon_layout(
     page: fitz.Page,
     rect: fitz.Rect,
     text: str,
     font_path: str,
-    bg_rgb: Tuple[float, float, float],
-    text_color: Tuple[float, float, float],
     max_fontsize: float = 13.0,
-    draw_bg: bool = True,
-) -> bool:
+) -> Optional[Tuple[str, str, fitz.Font, fitz.Rect, float, List[str], float]]:
     """
-    Deterministically fits, horizontally & vertically centers, and draws Greek comic dialogue
-    inside a speech balloon. Progressively shrinks font size, tightens line spacing, switches
-    to condensed font if needed, and gently expands the box so balloons NEVER render blank.
+    Computes the optimal (font_path, font_name, font_obj, final_box, fontsize, lines, line_h)
+    for a comic balloon. Prefers unbroken words first, then shrinks/condenses/expands so a
+    balloon NEVER renders blank.
     """
     if not text or not text.strip():
-        return False
+        return None
 
     page_w, page_h = page.rect.width, page.rect.height
     condensed_path = _get_condensed_comic_font_path()
     primary_font = fitz.Font(fontfile=font_path)
     condensed_font = fitz.Font(fontfile=condensed_path) if condensed_path != font_path else primary_font
 
-    # Candidate layout strategies: (font_path, font_name, font_obj, pad_expand_x, pad_expand_y, sizes, line_mult)
+    # Candidate layout strategies: (font_path, font_name, font_obj, ex_x, ex_y, sizes, line_mult, allow_break)
     strategies = [
-        (font_path, "comic", primary_font, 0.0, 0.0, [13, 12, 11, 10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5.0], 1.12),
-        (font_path, "comic", primary_font, 4.0, 3.0, [6.5, 6.0, 5.5, 5.0, 4.5], 1.08),
-        (condensed_path, "comic_narrow", condensed_font, 5.0, 4.0, [6.5, 6.0, 5.5, 5.0, 4.5, 4.0], 1.06),
-        (condensed_path, "comic_narrow", condensed_font, 10.0, 8.0, [5.0, 4.5, 4.0, 3.5, 3.0], 1.04),
+        (font_path, "comic", primary_font, 0.0, 0.0, [13, 12, 11, 10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5.0], 1.12, False),
+        (font_path, "comic", primary_font, 4.0, 3.0, [6.5, 6.0, 5.5, 5.0, 4.5], 1.08, False),
+        (condensed_path, "comic_narrow", condensed_font, 5.0, 4.0, [6.5, 6.0, 5.5, 5.0, 4.5, 4.0], 1.06, False),
+        (condensed_path, "comic_narrow", condensed_font, 10.0, 8.0, [5.0, 4.5, 4.0, 3.5, 3.0], 1.04, False),
+        # Allow hyphenated word breaks only if no unbroken-word layout fit
+        (condensed_path, "comic_narrow", condensed_font, 10.0, 8.0, [5.0, 4.5, 4.0, 3.5, 3.0], 1.04, True),
     ]
 
-    chosen = None
-    for fpath, fname, fobj, ex_x, ex_y, sizes, line_mult in strategies:
+    for fpath, fname, fobj, ex_x, ex_y, sizes, line_mult, allow_break in strategies:
         box = fitz.Rect(
             max(1.0, rect.x0 - ex_x),
             max(1.0, rect.y0 - ex_y),
@@ -224,49 +234,48 @@ def _fit_and_draw_balloon_text(
         for fs in sizes:
             if fs > max_fontsize:
                 continue
-            lines = _wrap_text_to_width(text, fobj, fs, inner_w)
+            lines = _wrap_text_to_width(text, fobj, fs, inner_w, allow_word_break=allow_break)
+            if lines is None:
+                continue
             line_h = fs * line_mult
             total_h = len(lines) * line_h
             if total_h <= inner_h:
-                chosen = (fpath, fname, fobj, box, fs, lines, line_h)
-                break
-        if chosen is not None:
-            break
+                return (fpath, fname, fobj, box, fs, lines, line_h)
 
     # Absolute last-resort guarantee: expand box height to hold 3.0pt condensed text so text NEVER vanishes
-    if chosen is None:
-        fpath, fname, fobj = condensed_path, "comic_narrow", condensed_font
-        fs = 3.0
-        line_mult = 1.04
-        line_h = fs * line_mult
+    fpath, fname, fobj = condensed_path, "comic_narrow", condensed_font
+    fs = 3.0
+    line_h = fs * 1.04
+    box = fitz.Rect(
+        max(1.0, rect.x0 - 10.0),
+        max(1.0, rect.y0 - 6.0),
+        min(page_w - 1.0, rect.x1 + 10.0),
+        min(page_h - 1.0, rect.y1 + 6.0),
+    )
+    inner_w = max(10.0, box.width - 3.0)
+    lines = _wrap_text_to_width(text, fobj, fs, inner_w, allow_word_break=True) or [text]
+    needed_h = len(lines) * line_h + 3.0
+    if needed_h > box.height:
+        extra = (needed_h - box.height) / 2.0
         box = fitz.Rect(
-            max(1.0, rect.x0 - 10.0),
-            max(1.0, rect.y0 - 6.0),
-            min(page_w - 1.0, rect.x1 + 10.0),
-            min(page_h - 1.0, rect.y1 + 6.0),
+            box.x0,
+            max(1.0, box.y0 - extra),
+            box.x1,
+            min(page_h - 1.0, box.y1 + extra),
         )
-        inner_w = max(10.0, box.width - 3.0)
-        lines = _wrap_text_to_width(text, fobj, fs, inner_w)
-        needed_h = len(lines) * line_h + 3.0
-        if needed_h > box.height:
-            extra = (needed_h - box.height) / 2.0
-            box = fitz.Rect(
-                box.x0,
-                max(1.0, box.y0 - extra),
-                box.x1,
-                min(page_h - 1.0, box.y1 + extra),
-            )
-        chosen = (fpath, fname, fobj, box, fs, lines, line_h)
+    return (fpath, fname, fobj, box, fs, lines, line_h)
 
-    fpath, fname, fobj, final_box, fs, lines, line_h = chosen
 
-    if draw_bg:
-        page.draw_rect(final_box, color=bg_rgb, fill=bg_rgb, overlay=True)
-
+def _draw_planned_balloon_text(
+    page: fitz.Page,
+    plan: Tuple[str, str, fitz.Font, fitz.Rect, float, List[str], float],
+    text_color: Tuple[float, float, float],
+) -> None:
+    """Draws horizontally & vertically centered Greek comic text for a precomputed balloon layout plan."""
+    fpath, fname, fobj, final_box, fs, lines, line_h = plan
     page.insert_font(fontname=fname, fontfile=fpath)
     total_h = len(lines) * line_h
     start_y = final_box.y0 + max(1.0, (final_box.height - total_h) / 2.0) + fs * 0.85
-
     for idx, ln in enumerate(lines):
         lw = fobj.text_length(ln, fontsize=fs)
         tx = final_box.x0 + max(1.0, (final_box.width - lw) / 2.0)
@@ -279,6 +288,25 @@ def _fit_and_draw_balloon_text(
             color=text_color,
             overlay=True,
         )
+
+
+def _fit_and_draw_balloon_text(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    font_path: str,
+    bg_rgb: Tuple[float, float, float],
+    text_color: Tuple[float, float, float],
+    max_fontsize: float = 13.0,
+    draw_bg: bool = True,
+) -> bool:
+    """Fits, centers, and draws Greek comic dialogue inside a single speech balloon."""
+    plan = _plan_balloon_layout(page, rect, text, font_path, max_fontsize=max_fontsize)
+    if plan is None:
+        return False
+    if draw_bg:
+        page.draw_rect(plan[3], color=bg_rgb, fill=bg_rgb, overlay=True)
+    _draw_planned_balloon_text(page, plan, text_color)
     return True
 
 
@@ -923,13 +951,19 @@ def _render_vision_balloons_on_page(
     font_path: str,
     target_lang: str = "greek",
 ) -> List[str]:
-    """Covers detected scanned balloon text with opaque matching background fill and renders centered Greek comic dialogue."""
+    """
+    Covers detected scanned balloon text with opaque matching background fill and renders centered
+    Greek comic dialogue using a two-pass renderer (all background fills first, all text on top)
+    so neighboring balloons can never paint over each other's text.
+    """
     if not detected_items:
         return []
 
     page_dialogues: List[str] = []
     w, h = page.rect.width, page.rect.height
+    planned_balloons = []
 
+    # Pass 1: Plan every balloon's layout and draw all opaque background rectangles first
     for item in detected_items:
         box = _extract_box_2d(item)
         if not box:
@@ -960,20 +994,19 @@ def _render_vision_balloons_on_page(
         luminance = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
         text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
 
-        # Ensure original box is always covered even if _fit_and_draw_balloon_text draws an expanded rect
-        page.draw_rect(rect, color=bg_rgb, fill=bg_rgb, overlay=True)
+        plan = _plan_balloon_layout(page, rect, greek_text, font_path, max_fontsize=13.0)
+        if plan is None:
+            continue
 
-        _fit_and_draw_balloon_text(
-            page,
-            rect,
-            greek_text,
-            font_path=font_path,
-            bg_rgb=bg_rgb,
-            text_color=text_color,
-            max_fontsize=13.0,
-            draw_bg=True,
-        )
+        # Cover both original text rect and planned text box
+        cover_rect = rect | plan[3]
+        page.draw_rect(cover_rect, color=bg_rgb, fill=bg_rgb, overlay=True)
+        planned_balloons.append((plan, text_color))
         page_dialogues.append(greek_text)
+
+    # Pass 2: Draw all balloon texts on top of all background fills
+    for plan, text_color in planned_balloons:
+        _draw_planned_balloon_text(page, plan, text_color)
 
     return page_dialogues
 

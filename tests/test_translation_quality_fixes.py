@@ -273,14 +273,21 @@ class TestTranslationQualityFixes(unittest.TestCase):
                 "translated_text": "...ΤΟ ΕΣΩΤΕΡΙΚΟ ΤΟΥ ΑΔΥΤΟΥ.",
                 "bg_color": "#ffffff",
             },
+            {
+                # Page 7 narrow balloon with long Greek word — must fit unbroken without hyphenation
+                "box_2d": [600, 770, 622, 855],
+                "translated_text": "ΣΤΟ ΘΗΣΑΥΡΟΦΥΛΑΚΙΟ.",
+                "bg_color": "#ffffff",
+            },
         ]
         rendered = _render_vision_balloons_on_page(page, items, _get_comic_font_path(), target_lang="greek")
-        self.assertEqual(len(rendered), 2)
+        self.assertEqual(len(rendered), 3)
         page_text = page.get_text()
         doc.close()
         self.assertIn("ΤΡΙΑΚΟΣΙΟΥΣ", page_text, "Dense Page 7 comic balloon must NOT render blank!")
         self.assertIn("ΣΥΝΤΑΓΜΑΤΑΡΧΗ", page_text, "Dense Page 7 comic balloon must render completely!")
         self.assertIn("ΑΔΥΤΟΥ", page_text, "Tiny Page 61 comic balloon must NOT render blank!")
+        self.assertIn("ΘΗΣΑΥΡΟΦΥΛΑΚΙΟ", page_text, "Long Greek word should fit unbroken by shrinking font!")
 
 
 if __name__ == "__main__":
