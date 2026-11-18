@@ -915,6 +915,8 @@ async def clear_all_jobs():
                 pass
     _jobs.clear()
     POLISH_STATUS.clear()
+    from backend.database import db_clear_all_jobs
+    db_clear_all_jobs()
     return {"status": "cleared", "count": 0}
 
 
@@ -942,8 +944,10 @@ async def delete_job(job_id: str):
             shutil.rmtree(str(d), ignore_errors=True)
 
     from backend.job_manager import _jobs
+    from backend.database import db_delete_job
     _jobs.pop(job_id, None)
     POLISH_STATUS.pop(job_id, None)
+    db_delete_job(job_id)
     return {"deleted": job_id}
 
 

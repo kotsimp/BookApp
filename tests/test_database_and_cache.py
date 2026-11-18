@@ -142,6 +142,11 @@ class TestDatabaseAndCache(unittest.TestCase):
         self.assertEqual(restored.status, "running")
         self.assertEqual(restored.progress, 50)
         self.assertEqual(restored.current_step, "Polishing...")
+
+        # Clean up test job from memory and SQLite
+        _jobs.pop(job_id, None)
+        db_delete_job(job_id)
+        self.assertIsNone(db_get_job(job_id))
         print("   JobManager SQLite Sync & Restart Recovery: OK")
 
     def test_storage_cleaner_routine(self):
