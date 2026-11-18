@@ -1103,7 +1103,7 @@ async def polish_translation(req: PolishRequest):
     out_dir.mkdir(parents=True, exist_ok=True)
     text_to_polish = req.text
 
-    if req.api_key and req.api_key.strip():
+    if req.api_key and req.api_key.strip() and not req.api_key.strip().startswith(("AQ.Test", "AIzaTest")):
         from backend.settings_manager import save_setting
         save_setting("gemini_api_key", req.api_key.strip())
 
