@@ -1748,10 +1748,21 @@ async def toggle_batch_queue_auto_start(req: QueueAutoStartRequest):
 
 @app.get("/api/queue/download-all")
 async def download_batch_queue_zip():
-    """Bundles all completed translated files in the queue into a single ZIP archive."""
+    """Bundles all completed translated files in the queue into a single ZIP archive.
+    Requires all translations in the queue to be completed first.
+    """
     import io
     import zipfile
-    from backend.queue_manager import get_completed_queue_job_ids
+    from backend.queue_manager import get_queue_state, get_completed_queue_job_ids
+
+    q_state = get_queue_state()
+    if q_state["total_count"] == 0:
+        raise HTTPException(404, "No completed documents in the queue to download.")
+    if q_state["is_running"] or q_state["queued_count"] > 0 or q_state["done_count"] < q_state["total_count"]:
+        raise HTTPException(
+            409,
+            f"All translations must be completed before downloading ({q_state['done_count']}/{q_state['total_count']} completed).",
+        )
 
     done_ids = get_completed_queue_job_ids()
     if not done_ids:

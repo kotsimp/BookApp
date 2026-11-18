@@ -1141,6 +1141,11 @@ function showResult(prefix, data) {
     const dlBtn = document.getElementById('tr-download-btn');
     if (dlBtn && state.tr.jobId) {
       dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
+      dlBtn.setAttribute('aria-disabled', 'false');
+      dlBtn.setAttribute('tabindex', '0');
+      dlBtn.style.opacity = '';
+      dlBtn.style.pointerEvents = '';
+      dlBtn.style.cursor = 'pointer';
     }
     const audioLangSelect = document.getElementById('tr-audio-lang');
     const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
@@ -1168,6 +1173,10 @@ function setStatusBadge(prefix, status) {
 async function downloadOutput(prefix) {
   const jobId = state[prefix].jobId;
   if (!jobId) return;
+  if (prefix === 'tr' && state.tr.status === 'running') {
+    toast('⏳ Please wait until this translation is completed before downloading.', 'info');
+    return;
+  }
   if (prefix === 'tr') {
     const fmt = document.getElementById('tr-output-format')?.value || 'txt';
     const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
@@ -2425,6 +2434,16 @@ function renderBatchQueue(q) {
   if (!_batchQueueState.items || _batchQueueState.items.length === 0) {
     card.style.display = 'none';
     if (counter) counter.style.display = 'none';
+    if (dlAllBtn) {
+      dlAllBtn.style.display = 'none';
+      dlAllBtn.href = '#';
+      dlAllBtn.removeAttribute('download');
+      dlAllBtn.setAttribute('aria-disabled', 'true');
+      dlAllBtn.setAttribute('tabindex', '-1');
+      dlAllBtn.style.opacity = '0.45';
+      dlAllBtn.style.pointerEvents = 'none';
+      dlAllBtn.style.cursor = 'not-allowed';
+    }
     if (upZone && !state.tr.jobId) upZone.style.display = '';
     syncPrimaryStartButtonWithQueue(_batchQueueState);
     return;
@@ -2463,9 +2482,34 @@ function renderBatchQueue(q) {
       ? `⚠️ Limit Reached (${q.total_count}/${maxItems})`
       : `➕ Add More Files (${q.total_count}/${maxItems})`;
   }
+  const allCompleted = (
+    q.total_count > 0
+    && q.done_count === q.total_count
+    && !q.is_running
+    && q.queued_count === 0
+  );
+
   if (dlAllBtn) {
-    dlAllBtn.style.display = q.done_count > 0 ? 'inline-flex' : 'none';
-    dlAllBtn.href = `${API}/queue/download-all`;
+    dlAllBtn.style.display = q.total_count > 0 ? 'inline-flex' : 'none';
+    if (allCompleted) {
+      dlAllBtn.href = `${API}/queue/download-all`;
+      dlAllBtn.setAttribute('download', 'BookApp_Batch_Translated.zip');
+      dlAllBtn.setAttribute('aria-disabled', 'false');
+      dlAllBtn.setAttribute('tabindex', '0');
+      dlAllBtn.style.opacity = '';
+      dlAllBtn.style.pointerEvents = '';
+      dlAllBtn.style.cursor = 'pointer';
+      dlAllBtn.title = 'Download all completed translations as ZIP';
+    } else {
+      dlAllBtn.href = '#';
+      dlAllBtn.removeAttribute('download');
+      dlAllBtn.setAttribute('aria-disabled', 'true');
+      dlAllBtn.setAttribute('tabindex', '-1');
+      dlAllBtn.style.opacity = '0.45';
+      dlAllBtn.style.pointerEvents = 'none';
+      dlAllBtn.style.cursor = 'not-allowed';
+      dlAllBtn.title = `Download All will be enabled once all translations are completed (${q.done_count} / ${q.total_count} done)`;
+    }
   }
 
   syncPrimaryStartButtonWithQueue(q);

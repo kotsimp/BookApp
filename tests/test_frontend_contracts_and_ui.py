@@ -178,7 +178,11 @@ function makeEl(id) {
       remove: (c) => classes.delete(c),
       contains: (c) => classes.has(c),
     },
-    setAttribute: () => {},
+    attrs: {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return this.attrs[k]; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    closest: () => null,
     addEventListener: () => {},
     focus: () => {},
     querySelector: () => null,
@@ -311,6 +315,81 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
   appState.tr.sse.onmessage({ data: '{broken-json' });
   ctx.stopJobTracking('tr');
 
+  // 10. Batch "Download All (ZIP)" stays disabled until ALL translations are completed,
+  //     while any individually finished item remains immediately downloadable.
+  ctx.renderBatchQueue({
+    items: [
+      { job_id: 'j1', file_name: 'a.pdf', output_format: 'pdf', layout_mode: 'standard', status: 'done', progress: 100, has_output: true },
+      { job_id: 'j2', file_name: 'b.pdf', output_format: 'pdf', layout_mode: 'standard', status: 'running', progress: 40, has_output: false },
+    ],
+    is_running: true,
+    paused: false,
+    auto_start: false,
+    is_mixed: false,
+    done_count: 1,
+    queued_count: 0,
+    total_count: 2,
+    max_items: 20,
+  });
+  const dlAll = getEl('btn-queue-download-all');
+  assert.strictEqual(dlAll.getAttribute('aria-disabled'), 'true', 'Download All must be disabled while batch is still running!');
+  assert.strictEqual(dlAll.href, '#', 'Download All href must be # while incomplete!');
+  assert.strictEqual(dlAll.getAttribute('download'), undefined, 'Download attribute must be removed while incomplete!');
+  assert.strictEqual(dlAll.style.pointerEvents, 'none');
+  // Finished item j1 MUST remain downloadable even while j2 is still running/queued
+  assert(getEl('tr-queue-list').innerHTML.includes('/download/j1'), 'Finished item must remain downloadable while other items are still in queue!');
+  assert(!getEl('tr-queue-list').innerHTML.includes('/download/j2'), 'Unfinished item must NOT have a download link!');
+
+  // Single-file downloadOutput('tr') blocks only when THAT translation is still running
+  appState.tr.jobId = 'j1';
+  appState.tr.status = 'running';
+  ctx.window.location.href = '';
+  toasts.length = 0;
+  await ctx.downloadOutput('tr');
+  assert.strictEqual(ctx.window.location.href, '', 'downloadOutput must NOT navigate while that translation is running!');
+  assert(toasts.some(t => t.type === 'info' && t.msg.includes('completed')));
+
+  appState.tr.status = 'done';
+  await ctx.downloadOutput('tr');
+  assert(ctx.window.location.href.includes('/download/j1'), 'Finished single translation must be downloadable even if batch has queued items!');
+
+  // Once ALL items are done (2/2, not running, 0 queued), Download All (ZIP) MUST be enabled
+  ctx.renderBatchQueue({
+    items: [
+      { job_id: 'j1', file_name: 'a.pdf', output_format: 'pdf', layout_mode: 'standard', status: 'done', progress: 100, has_output: true },
+      { job_id: 'j2', file_name: 'b.pdf', output_format: 'pdf', layout_mode: 'standard', status: 'done', progress: 100, has_output: true },
+    ],
+    is_running: false,
+    paused: false,
+    auto_start: false,
+    is_mixed: false,
+    done_count: 2,
+    queued_count: 0,
+    total_count: 2,
+    max_items: 20,
+  });
+  assert.strictEqual(dlAll.getAttribute('aria-disabled'), 'false', 'Download All must be enabled once all translations are completed!');
+  assert(dlAll.href.endsWith('/queue/download-all'));
+  assert.strictEqual(dlAll.getAttribute('download'), 'BookApp_Batch_Translated.zip');
+  assert.strictEqual(dlAll.style.pointerEvents, '');
+  assert(getEl('tr-queue-list').innerHTML.includes('/download/j1'));
+  assert(getEl('tr-queue-list').innerHTML.includes('/download/j2'));
+
+  // Clearing queue hides & disables Download All cleanly
+  ctx.renderBatchQueue({
+    items: [],
+    is_running: false,
+    paused: false,
+    auto_start: false,
+    is_mixed: false,
+    done_count: 0,
+    queued_count: 0,
+    total_count: 0,
+    max_items: 20,
+  });
+  assert.strictEqual(dlAll.style.display, 'none');
+  assert.strictEqual(dlAll.getAttribute('aria-disabled'), 'true');
+
   console.log('NODE_UI_HARNESS_OK');
 })().catch((err) => {
   console.error(err);
@@ -320,7 +399,7 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
         res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"Node UI harness failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
         self.assertIn("NODE_UI_HARNESS_OK", res.stdout)
-        print("   Node.js runtime DOM & state tests (9 assertions): OK")
+        print("   Node.js runtime DOM & state tests (10 assertions): OK")
 
 
 if __name__ == "__main__":

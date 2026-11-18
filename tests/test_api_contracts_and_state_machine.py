@@ -261,6 +261,65 @@ class TestAPIContractsAndStateMachine(unittest.TestCase):
             http_req("DELETE", f"/jobs/{jid}")
         print("   Cover delete export refresh: OK")
 
+    def test_9_queue_download_all_requires_all_translations_completed(self):
+        print("-> 9. Testing GET /api/queue/download-all blocks until ALL translations are completed...")
+        import asyncio
+        import tempfile
+        import zipfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        from backend.main import download_batch_queue_zip
+
+        # 1. Empty queue -> 404
+        with patch("backend.queue_manager.get_queue_state", return_value={
+            "total_count": 0, "done_count": 0, "queued_count": 0, "is_running": False
+        }):
+            with self.assertRaises(HTTPException) as ctx_empty:
+                asyncio.run(download_batch_queue_zip())
+            self.assertEqual(ctx_empty.exception.status_code, 404)
+
+        # 2. Partially completed / running queue -> 409 Conflict
+        for incomplete_state in [
+            {"total_count": 2, "done_count": 1, "queued_count": 0, "is_running": True},
+            {"total_count": 2, "done_count": 1, "queued_count": 1, "is_running": False},
+            {"total_count": 2, "done_count": 1, "queued_count": 0, "is_running": False},
+        ]:
+            with patch("backend.queue_manager.get_queue_state", return_value=incomplete_state):
+                with self.assertRaises(HTTPException) as ctx_inc:
+                    asyncio.run(download_batch_queue_zip())
+                self.assertEqual(ctx_inc.exception.status_code, 409)
+
+        # 3. All translations completed -> 200 ZIP containing all completed outputs
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f1 = Path(tmpdir) / "book1_translated_greek.txt"
+            f2 = Path(tmpdir) / "book2_translated_greek.txt"
+            f1.write_text("Book 1 Greek", encoding="utf-8")
+            f2.write_text("Book 2 Greek", encoding="utf-8")
+            fake_jobs = {
+                "jid-1": SimpleNamespace(output_path=str(f1)),
+                "jid-2": SimpleNamespace(output_path=str(f2)),
+            }
+            with patch("backend.queue_manager.get_queue_state", return_value={
+                "total_count": 2, "done_count": 2, "queued_count": 0, "is_running": False
+            }), patch("backend.queue_manager.get_completed_queue_job_ids", return_value=["jid-1", "jid-2"]), \
+                 patch("backend.main.get_job", side_effect=lambda jid: fake_jobs.get(jid)):
+                resp = asyncio.run(download_batch_queue_zip())
+                self.assertEqual(resp.media_type, "application/zip")
+
+                async def _collect():
+                    chunks = []
+                    async for chunk in resp.body_iterator:
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+
+                raw_zip = asyncio.run(_collect())
+                with zipfile.ZipFile(io.BytesIO(raw_zip), "r") as zf:
+                    names = set(zf.namelist())
+                    self.assertIn("book1_translated_greek.txt", names)
+                    self.assertIn("book2_translated_greek.txt", names)
+        print("   Batch ZIP download completion gate (404/409/200): OK")
+
 
 if __name__ == "__main__":
     unittest.main()
