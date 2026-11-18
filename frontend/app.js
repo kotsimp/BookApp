@@ -910,7 +910,10 @@ function updateProgress(prefix, data) {
   const detailEl = document.getElementById(`${prefix}-progress-detail`);
   if (data.total_chunks > 0 && data.status !== 'done') {
     if (prefix === 'tr') {
-      detailEl.textContent = `Translated ${data.done_chunks} of ${data.total_chunks} pages`;
+      const isBatchMode = (data.current_step || '').toLowerCase().includes('batch');
+      detailEl.textContent = isBatchMode
+        ? `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (~4–5 pages each)`
+        : `Translated ${data.done_chunks} of ${data.total_chunks} pages`;
     } else {
       detailEl.textContent = `Generated audio part ${data.done_chunks} of ${data.total_chunks}`;
     }
