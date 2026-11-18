@@ -316,8 +316,9 @@ BookApp/
 26. `test_translator.py`: Μηχανή μετάφρασης GTX POST, 429 circuit breaker, Gemini failover.
 27. `test_tts_audiobook_deep.py`: Κατάλογος φωνών, prosody, συνένωση chunks, ακύρωση in-flight.
 28. `test_typography_and_genre.py`: Ελληνική τυπογραφία, κανόνας τελικού «ν», αυτόματη ανίχνευση είδους.
+29. `test_smart_batch_queue.py`: Πλήρης κύκλος ζωής Smart Batch Queue (`/api/queue/*`), σειριακή εκτέλεση πολλαπλών αρχείων, λήψη ενιαίου ZIP (`/api/queue/download-all`) και ανθεκτική ανάκτηση κακοσχηματισμένου Vision JSON (`_parse_vision_json`).
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`28/28 PASS (100% επιτυχία)`**.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`29/29 PASS (100% επιτυχία · 39/39 FastAPI endpoints)`**.
 
 ---
 

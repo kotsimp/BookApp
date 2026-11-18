@@ -135,6 +135,7 @@ def test_import_integrity():
         "backend.tts_engine",
         "backend.ai_polisher",
         "backend.comic_translator",
+        "backend.queue_manager",
         "backend.main",
     ]
     for mod_name in modules:

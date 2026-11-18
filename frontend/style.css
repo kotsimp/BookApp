@@ -1273,3 +1273,102 @@ body::after {
   display: flex;
   gap: 6px;
 }
+
+/* ══════════════════════════════════════════
+   SMART BATCH QUEUE STYLES
+   ══════════════════════════════════════════ */
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.queue-item {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: var(--transition);
+}
+
+.queue-item.running {
+  border-color: var(--violet);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.queue-item.done {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.queue-item.error {
+  border-color: rgba(244, 63, 94, 0.45);
+}
+
+.queue-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.queue-item-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.queue-item-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-item-meta {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.queue-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.14);
+  color: var(--violet-light);
+}
+
+.queue-badge.done {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--emerald);
+}
+
+.queue-badge.error {
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--rose);
+}
+
+.queue-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.queue-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--violet), var(--cyan));
+  transition: width 0.35s ease;
+}

@@ -77,15 +77,15 @@
            role="button" tabindex="0"
            aria-label="Upload document for translation">
         <span class="upload-icon">📂</span>
-        <h3>Drop your document here</h3>
-        <p>or click to browse your files</p>
+        <h3>Drop your document(s) here</h3>
+        <p>Click to browse 1 file or drop multiple files for Smart Batch Queue</p>
         <div class="file-types">
           <span class="file-badge">PDF</span>
           <span class="file-badge">DOCX</span>
           <span class="file-badge">EPUB</span>
           <span class="file-badge" style="border-color:var(--violet, #7c3aed); color:var(--violet-light, #a78bfa)">CBZ / COMIC</span>
         </div>
-        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.zip" hidden onchange="handleFileSelect(event, 'tr')" />
+        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.zip" multiple hidden onchange="handleFileSelect(event, 'tr')" />
       </div>
 
       <div class="selected-file" id="tr-selected-file">
@@ -239,16 +239,54 @@
       </div>
 
       <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
-        <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled style="flex:1; min-width:200px">
+        <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled style="flex:1; min-width:190px">
           🌐 Start Translation
         </button>
-        <button class="btn btn-secondary" id="tr-direct-polish-btn" onclick="openDirectPolishModal()" disabled style="flex:1; min-width:200px; border-color:var(--violet); color:var(--violet); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px">
+        <button class="btn btn-secondary" id="tr-add-queue-btn" onclick="addCurrentFileToQueue()" disabled style="min-width:165px; border-color:var(--emerald); color:var(--emerald); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:6px" title="Προσθήκη στην Ουρά (Smart Batch Queue)">
+          ➕ Add to Queue
+        </button>
+        <button class="btn btn-secondary" id="tr-direct-polish-btn" onclick="openDirectPolishModal()" disabled style="flex:1; min-width:190px; border-color:var(--violet); color:var(--violet); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px">
           ✨ AI Polish (Χωρίς Μετάφραση)
         </button>
       </div>
       <div style="text-align:center; margin-top:12px">
         <button type="button" id="tr-direct-editor-btn" class="btn-text" onclick="openDirectEditor()" style="color:var(--text-secondary); font-size:0.85rem; text-decoration:underline; background:none; border:none; cursor:pointer">
           ✏️ Ή ανοίξτε τον Editor για επικόλληση / απευθείας έλεγχο κειμένου (Paste / Write Directly)
+        </button>
+      </div>
+    </div>
+
+    <!-- Smart Batch Queue Card (shown automatically when 1+ files are queued or multiple files dropped) -->
+    <div class="card animate-in" id="tr-queue-card" style="display:none; border:1px solid rgba(124,58,237,0.35)">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+        <div class="card-title" style="margin:0">
+          <span class="card-title-icon">📋</span>
+          Smart Batch Queue
+          <span id="tr-queue-counter" style="font-size:0.78rem; font-weight:600; padding:3px 10px; border-radius:20px; background:rgba(124,58,237,0.15); color:var(--violet-light); margin-left:8px">0 / 0</span>
+        </div>
+        <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:0.84rem; color:var(--text-secondary)">
+          <input type="checkbox" id="queue-auto-start-toggle" onchange="toggleQueueAutoStart()" style="width:16px; height:16px; accent-color:var(--emerald)" />
+          <span>⚡ Auto-Start Queue (Αυτόματη Σειριακή Εκτέλεση)</span>
+        </label>
+      </div>
+
+      <div id="tr-queue-list" class="queue-list"></div>
+
+      <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center">
+        <button type="button" class="btn btn-primary" id="btn-queue-start" onclick="startBatchQueue()" style="padding:10px 18px; font-size:0.9rem">
+          ▶️ Start Queue
+        </button>
+        <button type="button" class="btn btn-secondary" id="btn-queue-pause" onclick="pauseBatchQueue()" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--amber); color:var(--amber)">
+          ⏸️ Pause Queue
+        </button>
+        <button type="button" class="btn btn-secondary" id="btn-queue-add-more" onclick="document.getElementById('tr-file-input').click()" style="padding:10px 16px; font-size:0.88rem">
+          ➕ Add More Files
+        </button>
+        <a class="btn btn-secondary" id="btn-queue-download-all" href="#" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--emerald); color:var(--emerald); text-decoration:none" download="BookApp_Batch_Translated.zip">
+          📦 Download All (ZIP)
+        </a>
+        <button type="button" class="btn btn-secondary" id="btn-queue-clear" onclick="clearBatchQueue()" style="margin-left:auto; padding:10px 14px; font-size:0.85rem; color:var(--rose); border-color:rgba(244,63,94,0.35)">
+          🗑️ Clear Queue
         </button>
       </div>
     </div>

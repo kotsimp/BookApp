@@ -115,6 +115,23 @@ class AdminCleanupRequest(BaseModel):
     dry_run: bool = False
 
 
+class QueueAddRequest(BaseModel):
+    job_id: str
+    source_lang: str = "english"
+    target_lang: str = "greek"
+    output_format: str = "pdf"
+    layout_mode: str = "standard"
+    reading_direction: str = "ltr"
+    ai_polish: bool = False
+    api_key: Optional[str] = None
+    is_comic: bool = False
+    is_scanned: bool = False
+
+
+class QueueAutoStartRequest(BaseModel):
+    auto_start: bool = False
+
+
 class UpdateTextRequest(BaseModel):
     translated_text: str
 
@@ -1326,6 +1343,160 @@ async def admin_storage_cleanup(req: Optional[AdminCleanupRequest] = None):
     hours = req.max_age_hours if req else 48
     dry = req.dry_run if req else False
     return clean_temp_storage(max_age_hours=hours, dry_run=dry)
+
+
+# ---------------------------------------------------------------------------
+# Smart Batch Queue Endpoints
+# ---------------------------------------------------------------------------
+
+async def _execute_queue_item(q_item):
+    """Executes a single QueueItem via the existing _run_translation pipeline."""
+    job = get_job(q_item.job_id)
+    if not job:
+        raise ValueError(f"Job '{q_item.job_id}' not found.")
+
+    out_dir = _job_output_dir(q_item.job_id)
+    stem = Path(job.file_name).stem
+    output_path = str(out_dir / f"{stem}_translated_{q_item.target_lang}.txt")
+
+    update_job(
+        q_item.job_id,
+        mode="translate",
+        status="running",
+        output_format=q_item.output_format,
+        layout_mode=q_item.layout_mode,
+        reading_direction=q_item.reading_direction,
+        ai_polish=q_item.ai_polish,
+        api_key=q_item.api_key,
+    )
+    await _run_translation(
+        q_item.job_id,
+        job.file_path,
+        job.file_type,
+        q_item.source_lang,
+        q_item.target_lang,
+        output_path,
+        q_item.ai_polish,
+        q_item.api_key,
+    )
+
+
+@app.get("/api/queue")
+async def get_batch_queue():
+    """Returns live Smart Batch Queue state."""
+    from backend.queue_manager import get_queue_state
+    return get_queue_state()
+
+
+@app.post("/api/queue/add")
+async def add_batch_queue_item(req: QueueAddRequest):
+    """Adds an uploaded job to the Smart Batch Queue. Auto-starts if auto_start is enabled."""
+    from backend.queue_manager import add_to_queue, get_queue_state, start_queue
+    try:
+        add_to_queue(
+            job_id=req.job_id,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang,
+            output_format=req.output_format,
+            layout_mode=req.layout_mode,
+            reading_direction=req.reading_direction,
+            ai_polish=req.ai_polish,
+            api_key=req.api_key,
+            is_comic=req.is_comic,
+            is_scanned=req.is_scanned,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+    state_data = get_queue_state()
+    if state_data["auto_start"] and not state_data["paused"]:
+        state_data = start_queue(_execute_queue_item)
+    return state_data
+
+
+@app.post("/api/queue/start")
+async def start_batch_queue():
+    """Starts or resumes serial execution of the Smart Batch Queue."""
+    from backend.queue_manager import start_queue
+    return start_queue(_execute_queue_item)
+
+
+@app.post("/api/queue/pause")
+async def pause_batch_queue():
+    """Pauses the Smart Batch Queue after the current active document finishes."""
+    from backend.queue_manager import pause_queue, get_queue_state
+    pause_queue()
+    return get_queue_state()
+
+
+@app.post("/api/queue/auto-start")
+async def toggle_batch_queue_auto_start(req: QueueAutoStartRequest):
+    """Toggles automatic queue execution when new documents are added."""
+    from backend.queue_manager import set_queue_auto_start, get_queue_state, start_queue
+    set_queue_auto_start(req.auto_start)
+    state_data = get_queue_state()
+    if req.auto_start and state_data["queued_count"] > 0 and not state_data["is_running"]:
+        state_data = start_queue(_execute_queue_item)
+    return state_data
+
+
+@app.get("/api/queue/download-all")
+async def download_batch_queue_zip():
+    """Bundles all completed translated files in the queue into a single ZIP archive."""
+    import io
+    import zipfile
+    from backend.queue_manager import get_completed_queue_job_ids
+
+    done_ids = get_completed_queue_job_ids()
+    if not done_ids:
+        raise HTTPException(404, "No completed documents in the queue to download.")
+
+    buf = io.BytesIO()
+    added_files = 0
+    used_names = set()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for jid in done_ids:
+            job = get_job(jid)
+            if not job or not job.output_path:
+                continue
+            out_p = Path(job.output_path)
+            if not out_p.exists():
+                continue
+            arc_name = out_p.name
+            if arc_name in used_names:
+                arc_name = f"{out_p.stem}_{jid[:6]}{out_p.suffix}"
+            used_names.add(arc_name)
+            zf.write(str(out_p), arcname=arc_name)
+            added_files += 1
+
+    if added_files == 0:
+        raise HTTPException(404, "No downloadable output files found for completed queue jobs.")
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="BookApp_Batch_Translated.zip"'},
+    )
+
+
+@app.delete("/api/queue/{job_id}")
+async def remove_batch_queue_item(job_id: str):
+    """Removes a single job from the Smart Batch Queue."""
+    from backend.queue_manager import remove_from_queue, get_queue_state
+    removed = remove_from_queue(job_id)
+    if not removed:
+        raise HTTPException(404, f"Job '{job_id}' not found in queue.")
+    return get_queue_state()
+
+
+@app.delete("/api/queue")
+async def clear_batch_queue():
+    """Clears all non-running items from the Smart Batch Queue."""
+    from backend.queue_manager import clear_queue, get_queue_state
+    clear_queue()
+    return get_queue_state()
 
 
 # ---------------------------------------------------------------------------

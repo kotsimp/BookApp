@@ -315,6 +315,63 @@ def _hex_to_rgb01(hex_color: Optional[str]) -> Tuple[float, float, float]:
         return (1.0, 1.0, 1.0)
 
 
+def _parse_vision_json(text_resp: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Resilient JSON parser for Gemini Vision comic balloon responses.
+    Handles markdown code fences, trailing commas, unescaped quotes, and partial/truncated arrays
+    without ever crashing the comic translation pipeline.
+    """
+    if not text_resp or not text_resp.strip():
+        return None
+    cleaned = text_resp.strip()
+    # Strip markdown ```json ... ``` fences if present
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+    # 1. Direct parse
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and isinstance(parsed.get("balloons"), list):
+            return parsed["balloons"]
+    except Exception:
+        pass
+
+    # 2. Extract [...] slice and remove trailing commas
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start != -1 and end > start:
+        sub = cleaned[start : end + 1]
+        sub_fixed = re.sub(r",\s*([}\]])", r"\1", sub)
+        try:
+            parsed = json.loads(sub_fixed)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+    # 3. Object-by-object recovery for partially malformed/truncated JSON lists
+    recovered: List[Dict[str, Any]] = []
+    for m in re.finditer(r"\{[^{}]*\"box_2d\"\s*:\s*\[[^\]]+\][^{}]*\}", cleaned, flags=re.DOTALL):
+        obj_str = re.sub(r",\s*\}", "}", m.group(0))
+        try:
+            obj = json.loads(obj_str)
+            if isinstance(obj, dict) and isinstance(obj.get("box_2d"), list) and len(obj["box_2d"]) == 4:
+                recovered.append(obj)
+        except Exception:
+            # Regex fallback for box_2d + translated_text even if quotes inside string were unescaped
+            bm = re.search(r'"box_2d"\s*:\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]', obj_str)
+            tm = re.search(r'"translated_text"\s*:\s*"(.*?)"\s*(?:,|\})', obj_str, flags=re.DOTALL)
+            if bm and tm:
+                recovered.append({
+                    "box_2d": [int(bm.group(i)) for i in range(1, 5)],
+                    "translated_text": tm.group(1).replace('\\"', '"').replace("\\n", "\n"),
+                    "bg_color": "#ffffff",
+                })
+    return recovered if recovered else None
+
+
 def _encode_comic_page_jpeg(page: fitz.Page, max_dim: int = 1400, quality: int = 82) -> bytes:
     """Renders a comic page to an optimized JPEG (capped at max_dim) for fast, crisp Vision OCR."""
     import io
@@ -423,8 +480,8 @@ async def _detect_comic_balloons_vision_async(
                         if not parts:
                             continue
                         text_resp = parts[0].get("text", "")
-                        parsed = json.loads(text_resp)
-                        if isinstance(parsed, list):
+                        parsed = _parse_vision_json(text_resp)
+                        if parsed is not None:
                             _CACHED_VISION_MODEL = model
                             detected_items = parsed
                             if cache_key:
@@ -434,25 +491,27 @@ async def _detect_comic_balloons_vision_async(
                                 except Exception:
                                     pass
                             break
+                        else:
+                            logger.warning(f"Vision model {model} returned unparseable JSON; trying next model...")
                     elif resp.status in (400, 401, 403):
                         err_detail = await resp.text()
                         if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
                             logger.error(f"Gemini API key is invalid: {err_detail}")
-                            raise ValueError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
+                            raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
                         if resp.status == 400 and "thinking" in err_detail.lower() and req_payload is not base_payload:
                             async with session.post(url, json=base_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=35)) as retry_resp:
                                 if retry_resp.status == 200:
                                     data = await retry_resp.json()
                                     text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
-                                    parsed = json.loads(text_resp)
-                                    if isinstance(parsed, list):
+                                    parsed = _parse_vision_json(text_resp)
+                                    if parsed is not None:
                                         _CACHED_VISION_MODEL = model
                                         detected_items = parsed
                                         break
                     elif resp.status == 429:
                         await asyncio.sleep(1.5)
                         continue
-            except ValueError:
+            except PermissionError:
                 raise
             except Exception as ex:
                 logger.debug(f"Vision model {model} attempt failed: {ex}")

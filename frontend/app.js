@@ -42,13 +42,26 @@ function handleDrop(e, inputId, prefix) {
   e.preventDefault();
   const zoneId = prefix + '-upload-zone';
   document.getElementById(zoneId).classList.remove('dragover');
-  const file = e.dataTransfer.files[0];
-  if (file) processFile(file, prefix);
+  const files = Array.from(e.dataTransfer.files || []);
+  if (files.length === 0) return;
+  const queueOpen = prefix === 'tr' && document.getElementById('tr-queue-card')?.style.display === 'block';
+  if (prefix === 'tr' && (files.length > 1 || queueOpen)) {
+    enqueueMultipleFiles(files);
+  } else {
+    processFile(files[0], prefix);
+  }
 }
 
 function handleFileSelect(e, prefix) {
-  const file = e.target.files[0];
-  if (file) processFile(file, prefix);
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+  const queueOpen = prefix === 'tr' && document.getElementById('tr-queue-card')?.style.display === 'block';
+  if (prefix === 'tr' && (files.length > 1 || queueOpen)) {
+    enqueueMultipleFiles(files);
+    e.target.value = '';
+  } else {
+    processFile(files[0], prefix);
+  }
 }
 
 async function processFile(file, prefix) {
@@ -90,6 +103,8 @@ function removeFile(prefix) {
   document.getElementById(`${prefix}-selected-file`).classList.remove('visible');
   document.getElementById(`${prefix}-upload-zone`).style.display = '';
   document.getElementById(`${prefix}-start-btn`).disabled = true;
+  const addQBtn = document.getElementById('tr-add-queue-btn');
+  if (prefix === 'tr' && addQBtn) addQBtn.disabled = true;
   const directBtn = document.getElementById('tr-direct-polish-btn');
   if (directBtn) directBtn.disabled = true;
   resetProgress(prefix);
@@ -208,6 +223,8 @@ async function uploadFile(prefix, file) {
       `${(file.size / 1024 / 1024).toFixed(1)} MB · ${pages}${data.file_type.toUpperCase()} · Ready`;
 
     document.getElementById(`${prefix}-start-btn`).disabled = false;
+    const addQBtn = document.getElementById('tr-add-queue-btn');
+    if (prefix === 'tr' && addQBtn) addQBtn.disabled = false;
     const directBtn = document.getElementById('tr-direct-polish-btn');
     if (directBtn) directBtn.disabled = false;
     toast(`✅ "${file.name}" uploaded successfully.`, 'success');
@@ -1944,6 +1961,262 @@ function setupSyncScroll() {
   });
 }
 
+// ── Smart Batch Queue ──────────────────────────────────────
+let _queuePollTimer = null;
+
+async function enqueueMultipleFiles(files) {
+  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+  const srcLang = document.getElementById('tr-source-lang')?.value || 'english';
+  const tgtLang = document.getElementById('tr-target-lang')?.value || 'greek';
+  const chosenFmt = document.getElementById('tr-output-format')?.value || 'pdf';
+  const chosenLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
+  const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
+  const apiKey = localStorage.getItem('gemini_api_key') || null;
+  const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
+  const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
+
+  let added = 0;
+  for (const file of files) {
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+      toast(`⚠️ Παράλειψη "${file.name}" (μη υποστηριζόμενο format).`, 'error');
+      continue;
+    }
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const upRes = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+      if (!upRes.ok) continue;
+      const upData = await upRes.json();
+
+      const isComic = Boolean(upData.is_comic) || ['.cbz', '.cbr', '.zip'].includes(ext);
+      const itemLayout = isComic ? 'comic' : chosenLayout;
+      let itemFmt = chosenFmt;
+      if (isComic && ['txt', 'docx', 'doc'].includes(itemFmt)) {
+        itemFmt = 'pdf';
+      }
+
+      await fetch(`${API}/queue/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: upData.job_id,
+          source_lang: srcLang,
+          target_lang: tgtLang,
+          output_format: itemFmt,
+          layout_mode: itemLayout,
+          reading_direction: readingDirection,
+          ai_polish: isComic ? true : aiPolish,
+          api_key: apiKey || null,
+          is_comic: isComic,
+          is_scanned: Boolean(upData.is_scanned),
+        }),
+      });
+      added++;
+    } catch (err) {
+      toast(`❌ Σφάλμα φόρτωσης "${file.name}": ${err.message}`, 'error');
+    }
+  }
+
+  if (added > 0) {
+    toast(`📋 Προστέθηκαν ${added} αρχεία στην Smart Batch Queue!`, 'success');
+    await refreshBatchQueue();
+    refreshHistory();
+  }
+}
+
+async function addCurrentFileToQueue() {
+  if (!state.tr.jobId) {
+    toast('Ανεβάστε πρώτα ένα αρχείο για να προστεθεί στην ουρά.', 'error');
+    return;
+  }
+  const srcLang = document.getElementById('tr-source-lang')?.value || 'english';
+  const tgtLang = document.getElementById('tr-target-lang')?.value || 'greek';
+  let outputFormat = document.getElementById('tr-output-format')?.value || 'pdf';
+  const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
+  const isComic = Boolean(state.tr.isComic) || layoutMode === 'comic';
+  if (isComic && ['txt', 'docx', 'doc'].includes(outputFormat)) outputFormat = 'pdf';
+  const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
+  const apiKey = localStorage.getItem('gemini_api_key') || null;
+  const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
+  const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
+
+  try {
+    const res = await fetch(`${API}/queue/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: state.tr.jobId,
+        source_lang: srcLang,
+        target_lang: tgtLang,
+        output_format: outputFormat,
+        layout_mode: isComic ? 'comic' : layoutMode,
+        reading_direction: readingDirection,
+        ai_polish: aiPolish,
+        api_key: apiKey || null,
+        is_comic: isComic,
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to add file to queue');
+    toast('📋 Προστέθηκε στην Smart Batch Queue!', 'success');
+    removeFile('tr');
+    await refreshBatchQueue();
+  } catch (err) {
+    toast(`❌ ${err.message}`, 'error');
+  }
+}
+
+async function refreshBatchQueue() {
+  try {
+    const res = await fetch(`${API}/queue`);
+    if (!res.ok) return;
+    const q = await res.json();
+    renderBatchQueue(q);
+
+    if (q.is_running) {
+      if (!_queuePollTimer) {
+        _queuePollTimer = setInterval(refreshBatchQueue, 1500);
+      }
+    } else if (_queuePollTimer) {
+      clearInterval(_queuePollTimer);
+      _queuePollTimer = null;
+      refreshHistory();
+    }
+  } catch (_) {}
+}
+
+function renderBatchQueue(q) {
+  const card = document.getElementById('tr-queue-card');
+  const list = document.getElementById('tr-queue-list');
+  const counter = document.getElementById('tr-queue-counter');
+  const autoToggle = document.getElementById('queue-auto-start-toggle');
+  const startBtn = document.getElementById('btn-queue-start');
+  const pauseBtn = document.getElementById('btn-queue-pause');
+  const dlAllBtn = document.getElementById('btn-queue-download-all');
+
+  if (!card || !list) return;
+  if (!q.items || q.items.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+  if (counter) counter.textContent = `${q.done_count} / ${q.total_count} completed`;
+  if (autoToggle) autoToggle.checked = Boolean(q.auto_start);
+
+  if (startBtn) {
+    startBtn.style.display = (!q.is_running && q.queued_count > 0) ? 'inline-flex' : 'none';
+    startBtn.textContent = q.paused ? '▶️ Resume Queue' : '▶️ Start Queue';
+  }
+  if (pauseBtn) {
+    pauseBtn.style.display = (q.is_running && !q.paused) ? 'inline-flex' : 'none';
+  }
+  if (dlAllBtn) {
+    dlAllBtn.style.display = q.done_count > 0 ? 'inline-flex' : 'none';
+    dlAllBtn.href = `${API}/queue/download-all`;
+  }
+
+  const statusLabels = {
+    queued: '⏳ Queued',
+    running: '🔄 Running',
+    done: '✅ Done',
+    error: '❌ Error',
+    cancelled: '🛑 Cancelled',
+  };
+
+  list.innerHTML = q.items.map((it) => {
+    const modeTag = it.is_comic
+      ? `🎨 Comic (${it.reading_direction.toUpperCase()})`
+      : (it.layout_mode === 'literature' ? '📚 Literature' : '📄 Standard');
+    const aiTag = it.ai_polish ? ' · ✨ AI Polish' : '';
+    const dlLink = it.has_output
+      ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
+      : '';
+    const progressBar = (it.status === 'running' || it.status === 'done')
+      ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`
+      : '';
+    const errLine = it.error
+      ? `<div style="font-size:0.75rem; color:var(--rose)">${escapeHtml(it.error)}</div>`
+      : '';
+    return `
+      <div class="queue-item ${it.status}">
+        <div class="queue-item-top">
+          <div class="queue-item-info">
+            <span style="font-size:1.2rem">${it.is_comic ? '🎨' : '📄'}</span>
+            <div style="min-width:0; flex:1">
+              <div class="queue-item-name" title="${escapeHtml(it.file_name)}">${escapeHtml(it.file_name)}</div>
+              <div class="queue-item-meta">
+                <span>${modeTag}${aiTag}</span>
+                <span>→ ${it.output_format.toUpperCase()}</span>
+                <span>${escapeHtml(it.current_step || '')}</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
+            <span class="queue-badge ${it.status}">${statusLabels[it.status] || it.status}${it.status === 'running' ? ` ${it.progress}%` : ''}</span>
+            ${dlLink}
+            <button type="button" class="btn-icon" onclick="removeQueueItem('${it.job_id}')" title="Αφαίρεση από την ουρά">✕</button>
+          </div>
+        </div>
+        ${progressBar}
+        ${errLine}
+      </div>
+    `;
+  }).join('');
+}
+
+async function startBatchQueue() {
+  try {
+    const res = await fetch(`${API}/queue/start`, { method: 'POST' });
+    if (res.ok) {
+      toast('▶️ Η Smart Batch Queue ξεκίνησε (σειριακή εκτέλεση).', 'info');
+      await refreshBatchQueue();
+    }
+  } catch (err) {
+    toast(`❌ ${err.message}`, 'error');
+  }
+}
+
+async function pauseBatchQueue() {
+  try {
+    const res = await fetch(`${API}/queue/pause`, { method: 'POST' });
+    if (res.ok) {
+      toast('⏸️ Η ουρά θα παύσει μόλις ολοκληρωθεί το τρέχον έγγραφο.', 'info');
+      await refreshBatchQueue();
+    }
+  } catch (err) {
+    toast(`❌ ${err.message}`, 'error');
+  }
+}
+
+async function toggleQueueAutoStart() {
+  const enabled = document.getElementById('queue-auto-start-toggle')?.checked || false;
+  try {
+    await fetch(`${API}/queue/auto-start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_start: enabled }),
+    });
+    toast(enabled ? '⚡ Auto-Start Queue ενεργοποιήθηκε.' : '⏸️ Manual Queue mode ενεργό.', 'info');
+    await refreshBatchQueue();
+  } catch (_) {}
+}
+
+async function removeQueueItem(jobId) {
+  try {
+    await fetch(`${API}/queue/${jobId}`, { method: 'DELETE' });
+    await refreshBatchQueue();
+  } catch (_) {}
+}
+
+async function clearBatchQueue() {
+  try {
+    await fetch(`${API}/queue`, { method: 'DELETE' });
+    await refreshBatchQueue();
+    toast('🗑️ Η ουρά καθαρίστηκε.', 'info');
+  } catch (_) {}
+}
+
 // ── Init ───────────────────────────────────────────────────
 async function init() {
   // Initialize Theme and Editor Sync Scroll
@@ -1970,8 +2243,9 @@ async function init() {
   // Load voices
   await loadVoices();
 
-  // Load history
+  // Load history & any active batch queue
   await refreshHistory();
+  await refreshBatchQueue();
 
   // Initialize format selector rules
   updateFormatAvailability('standard', '');
