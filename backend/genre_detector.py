@@ -11,7 +11,7 @@ Auto-selects optimal Polish Style and Glossary Category for one-click setup.
 
 import re
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 

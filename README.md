@@ -3,18 +3,18 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-24%2F24%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-27%2F27%20Passed-brightgreen.svg)](tests/)
 
-A modern, high-performance local web application to **translate documents** between English and Greek with **in-place format preservation** (fonts, sizes, headings, tables, styles), **Graphic Novel & Manga translation** with 100% artwork preservation, and **generate professional AI audiobooks** (including multi-voice dramatization and M4B export) using Microsoft Edge neural voices.
+A modern, high-performance local web application to **translate documents** between English and Greek with **Single-Pass Direct AI Translation & Polish**, **in-place format preservation** (fonts, sizes, headings, tables, styles), **automatic Graphic Novel / Scanned Comic & Manga translation** with 100% artwork preservation, and **professional AI audiobooks** (including multi-voice dramatization and M4B export) using Microsoft Edge neural voices.
 
 ---
 
 ## 📑 Documentation & Manuals (Εγχειρίδια)
 
 * 📖 **[Εγχειρίδιο Χρήστη / User Manual (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**  
-  *Αναλυτικός οδηγός βήμα-βήμα για τον χρήστη: μετάφραση εγγράφων, Graphic Novels & Manga (RTL), επιλογή φορμάτ (PDF, CBZ, CBR, EPUB), ελληνική τυπογραφική επιμέλεια, αυτόματη ανίχνευση είδους (Auto-Genre), πολυφωνικά audiobooks, ακρόαση δειγμάτων φωνής και Dark/Light Mode.*
+  *Αναλυτικός οδηγός βήμα-βήμα για τον χρήστη: Single-Pass AI Translation & Polish, αυτόματη ανίχνευση Graphic Novels & Scanned PDFs (με κλείδωμα συμβατών επιλογών), Manga (RTL), επιλογή φορμάτ (PDF, CBZ, CBR, EPUB), ελληνική τυπογραφική επιμέλεια, αυτόματη ανίχνευση είδους, πολυφωνικά audiobooks, ακρόαση δειγμάτων φωνής, κουμπί Refresh και Dark/Light Mode.*
 * 🛠️ **[Εγχειρίδιο Διαχειριστή / Admin Manual (docs/ADMIN_MANUAL.md)](docs/ADMIN_MANUAL.md)**  
-  *Τεχνικός οδηγός για διαχειριστές: SQLite database persistence (`data/bookapp.db`), σημασιολογική προσωρινή μνήμη μεταφράσεων (Semantic Cache), Storage Auto-Cleanup Garbage Collector, εκτέλεση ως Windows/Linux Service, Nginx reverse proxy με SSE, API endpoints και 24 αυτοματοποιημένα test suites.*
+  *Τεχνικός οδηγός για διαχειριστές: SQLite database persistence (`data/bookapp.db`), σημασιολογική προσωρινή μνήμη μεταφράσεων & Vision AI (Semantic Cache), Single-Pass Gemini Flash (`thinkingBudget: 0`), 429 Circuit Breaker με αυτόματο Gemini failover, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy με SSE, API endpoints και 27 αυτοματοποιημένα test suites.*
 
 ---
 
@@ -22,20 +22,20 @@ A modern, high-performance local web application to **translate documents** betw
 
 | Feature | Details |
 |---|---|
-| **English ⇄ Greek Translation** | High-speed, robust translation using Google's direct GTX client API via HTTP POST with Greek character validation and exponential backoff on 429 (zero bot-blocking, no URL length limits). |
+| **Single-Pass Direct AI Translation & Polish** | When **AI Polish** is enabled with a Gemini API key, books and documents (PDF, EPUB, DOCX, TXT) translate & polish in **one single parallel pass** (5 concurrent workers, `thinkingBudget: 0` on Gemini 2.5 Flash) — 4x–8x faster with Entity Consistency Dossier, Glossary injection, Rolling Context, Disk Checkpointing, and higher literary quality. |
+| **Parallel English ⇄ Greek Translation + 429 Failover** | High-speed parallel translation (`Semaphore(4)`, `CHUNK_SIZE=4000`, HTTP keep-alive) via Google's GTX POST API with a 20s `429` circuit breaker, fast MyMemory fallback, and **automatic Gemini Flash failover** so documents never come out untranslated in English. |
+| **Automatic Graphic Novel & Scanned PDF Detection** | On upload (`POST /api/upload`), `detect_is_graphic_novel()` inspects CBZ/CBR archives and PDF pages (image coverage, vector text density, artwork cues) to automatically detect digital & scanned Graphic Novels and **lock the UI strictly to Graphic Novel options** (`PDF/CBZ/CBR/EPUB`, `Graphic Novel` layout, `LTR/RTL` reading direction) while disabling incompatible text options. |
+| **Parallel Scanned Comic Vision AI & Manga (RTL)** | Translates both digital and **scanned/image-only** comics & Manga preserving 100% of surrounding artwork. Runs **4 parallel Gemini Vision workers** (`thinkingBudget: 0`, optimized JPEG encoding, SHA-256 Vision cache), draws opaque background-matched fills over original raster balloon text, auto-selects contrasting text color, scales Greek comic fonts (`fit-to-box` down to 5pt), and exports to **PDF, CBZ, CBR, and Fixed-Layout EPUB** (including `page-progression-direction="rtl"`). |
 | **Persistent SQLite Database** | Full job state persistence across server restarts (`data/bookapp.db`) in WAL mode with connection locking, preventing data loss and allowing resumption of long tasks. |
-| **Semantic Translation & Polish Cache** | SHA-256 content-hash based caching for translated paragraphs and AI-polished batches. Identical phrases return in 0ms with zero API/quota consumption and live hit statistics (`/api/cache/stats`). |
-| **Storage Auto-Cleanup Garbage Collector** | Automated disk management (`backend/storage_cleaner.py`) that safely purges orphaned temporary audio chunks and extractions older than 48 hours while protecting user exports. |
-| **Greek Editorial Typography Engine** | Built-in publishing typography standards (`backend/typography.py`): auto-conversion of straight quotes `"..."` to Greek guillemets `«...»`, standardization of dialogue hyphens to em-dash (`—`), automatic application of the modern Greek grammar rule for final "ν" (`δε/δεν`, `μη/μην`), and punctuation spacing normalization. |
-| **Auto-Genre & Style Detection** | Real-time text analysis (`backend/genre_detector.py`) detecting Poetry, Literature, Technical, Formal, or Comic documents upon upload, auto-suggesting matching AI polish style and glossary category. |
-| **Graphic Novel & Manga (RTL) Mode** | In-place comic translation preserving 100% original artwork. Translates balloon text, redacts original text with sampled background color, and auto-scales Greek font sizes (`fit-to-box` down to 5.5pt). Supports **Japanese Manga Right-to-Left (RTL)** balloon reading order and exports to **PDF, CBZ, CBR, and Fixed-Layout EPUB** with `page-progression-direction="rtl"`. |
-| **Multi-Voice Audiobook Dramatization** | Next-generation audiobooks featuring distinct narrator and dialogue voices (e.g. Nestoras for narration + Athina for character speech), explicit speaker tags (`[Nestoras]: ...`, `[Athina]: ...`), and automatic quote dialogue routing. |
+| **Semantic Translation, Polish & Vision Cache** | SHA-256 content-hash caching for translated chunks, AI-polished batches, and scanned comic Vision detections. Cached items return in ~3ms with zero API/quota consumption and live statistics (`GET /api/cache/stats`). |
+| **Storage Auto-Cleanup Garbage Collector** | Automated disk management (`backend/storage_cleaner.py`) that safely purges orphaned temporary audio chunks and extractions older than 48 hours while protecting user exports (`POST /api/admin/cleanup`). |
+| **Greek Editorial Typography Engine** | Built-in publishing typography (`backend/typography.py`, 1.25M words/sec): converts straight quotes `"..."` to Greek guillemets `«...»`, standardizes dialogue dashes (`—`), applies modern Greek final "ν" rules (`δε/δεν`, `μη/μην`), and normalizes punctuation spacing & Greek question marks (`;`). |
+| **Auto-Genre & Style Detection** | Real-time text analysis (`backend/genre_detector.py`, `POST /api/detect-genre`) detecting Poetry, Literature, Technical, Formal, or Comic documents upon upload, auto-suggesting matching AI polish style and glossary category. |
+| **Multi-Voice Audiobook Dramatization** | Distinct narrator and dialogue voices (e.g. Nestoras for narration + Athina for character speech), explicit speaker tags (`[Nestoras]: ...`, `[Athina]: ...`), and automatic quote dialogue routing. |
 | **M4B & Tagged Audiobooks** | Exports audiobooks in both `.mp3` and `.m4b` formats with full ID3v2/MP4 metadata tagging (Title, Artist, Album, Genre="Audiobook") and embedded cover art via `mutagen`. |
-| **Voice Preview Auditions** | Instant 2-3 second voice audition playback button (`🔊 Ακρόαση`) next to each voice in the UI without needing to generate full audio. |
-| **Dark / Light Theme Toggle** | Sleek theme switcher in the UI header with instant switching and persistent memory in `localStorage`. |
-| **Split-Screen Editor with Sync Scroll** | Side-by-side bilingual review editor with synchronized scrolling, find & replace, and live re-export. |
-| **Desktop One-Click Launcher** | Standalone Windows script `start_bookapp.bat` to launch the virtual environment, start Uvicorn, and open the browser automatically. |
-| **Automated Test Suite (24 Suites)** | Master test runner `run_all_tests.py` running 24 comprehensive test suites (100% pass rate) covering databases, caches, typography, comics, manga RTL, multi-voice TTS, concurrency, encoding, and APIs. |
+| **Voice Preview Auditions** | Instant 2–3 second voice audition playback button (`🔊 Ακρόαση`, `GET /api/tts/preview`) next to each voice in the UI. |
+| **Modern UI Controls & One-Click Launcher** | Dark/Light theme toggle, dedicated **🔄 Refresh** button in header & navbar, dedicated **🔑 Gemini API Key** button with **💾 Save Key** and auto-sync to server, Split-Screen Editor with Sync Scroll, and Windows desktop launcher (`start_bookapp.bat`). |
+| **Automated Test Suite (27 Suites)** | Master test runner `run_all_tests.py` executing 27 comprehensive test suites (100% pass rate) covering code health/AST, SQLite & cache, performance benchmarks, HTTP endpoints, scanned comic auto-detection & Vision erasure, typography, manga RTL, multi-voice TTS, concurrency, encoding, and end-to-end APIs. |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
@@ -51,8 +51,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **Greek Audio Support** | Native Greek neural voices: **Nestoras (Male)** with 100% dictionary coverage & **Athina (Female)** with automatic fallback. |
 | **One-Click Direct Audio** | Convert any completed translation directly into a Greek Audiobook with a single click. |
 | **Live Progress Streaming** | Real-time progress updates via Server-Sent Events (SSE) distinguishing between document pages and audio parts. |
-| **Disk Recovery & Auto-Cleanup** | Completed jobs survive server restarts via disk recovery, while startup housekeeping (`cleanup_old_jobs`) prunes stale temp directories older than 24 hours. |
-| **Automated Test Suite** | Comprehensive 11-part test suite verifying parsers, translator, exporters, format preservation, literature/e-reader formatting, dynamic download, editor/glossary/AI polish, front matter preservation, advanced bilingual polish, and end-to-end APIs. |
+| **Disk Recovery & Auto-Cleanup** | Completed jobs survive server restarts via SQLite & disk recovery, while startup housekeeping (`cleanup_old_jobs` & `clean_temp_storage`) prunes stale temp directories. |
 
 ---
 
@@ -123,7 +122,7 @@ BookApp/
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide in Greek
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 24 Automated Test Suites (100% PASS)
+├── tests/                   # 27 Automated Test Suites (100% PASS)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt
@@ -155,10 +154,17 @@ BookApp/
 
 ## 🧪 Running Tests (Αυτοματοποιημένοι Έλεγχοι)
 
-To run the automated verification test suite:
+To run the complete 27-suite automated verification & benchmark test runner:
 
 ```bash
-python -c "import sys; sys.path.insert(0, '.'); import tests.test_parsers, tests.test_exporter, tests.test_translator, tests.test_format_preservation, tests.test_literature_formatting, tests.test_dynamic_download, tests.test_editor_glossary_ai, tests.test_standalone_ai_polish, tests.test_pdf_initial_pages_preservation, tests.test_ai_polish_advanced, tests.test_api"
+.\.venv\Scripts\python run_all_tests.py
+```
+
+Or run individual focused suites directly, e.g.:
+```bash
+.\.venv\Scripts\python tests/test_code_health.py
+.\.venv\Scripts\python tests/test_scanned_comic_and_autodetect.py
+.\.venv\Scripts\python tests/test_performance_and_benchmarks.py
 ```
 
 ---

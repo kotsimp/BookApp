@@ -5,7 +5,9 @@ Main FastAPI application for the Document Translator & Audiobook Generator.
 import asyncio
 import json
 import logging
+import os
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -32,10 +34,18 @@ from backend.format_preserver import translate_docx_in_place, translate_epub_in_
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    logger.info("DocTranslate & AudioBook Generator started.")
+    cleanup_old_jobs()
+    yield
+
+
 app = FastAPI(
     title="DocTranslate & AudioBook",
     description="Translate documents and generate audiobooks powered by neural AI",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -1292,13 +1302,3 @@ async def admin_storage_cleanup(req: Optional[AdminCleanupRequest] = None):
 FRONTEND_DIR = BASE_DIR / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
-
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
-@app.on_event("startup")
-async def startup():
-    logger.info("DocTranslate & AudioBook Generator started.")
-    cleanup_old_jobs()

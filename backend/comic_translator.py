@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List, Tuple
 
 import pymupdf as fitz
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from backend.job_manager import update_job, is_job_cancelled
 from backend.translator import _translate_with_retry
@@ -536,28 +536,6 @@ def _render_vision_balloons_on_page(
             )
 
     return page_dialogues
-
-
-async def _translate_page_image_vision(
-    page: fitz.Page,
-    api_key: str,
-    source_lang: str,
-    target_lang: str,
-    font_path: str,
-    session=None,
-) -> List[str]:
-    """
-    Multimodal Gemini Vision fallback for scanned/image-only comic pages.
-    Detects speech balloons, in-paints balloon backgrounds, and renders Greek text.
-    """
-    img_bytes = _encode_comic_page_jpeg(page)
-    detected_items = await _detect_comic_balloons_vision_async(
-        img_bytes, api_key, source_lang, target_lang, session=session
-    )
-    if not detected_items:
-        logger.info("No text detected via Vision on scanned page.")
-        return []
-    return _render_vision_balloons_on_page(page, detected_items, font_path)
 
 
 async def translate_comic_document(

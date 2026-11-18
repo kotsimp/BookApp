@@ -6,7 +6,6 @@ Provides:
 3. Thread-safe operations using SQLite WAL (Write-Ahead-Logging) mode and thread-locking.
 """
 
-import os
 import json
 import time
 import hashlib

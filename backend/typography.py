@@ -12,7 +12,6 @@ Implements standard Greek publishing conventions:
 """
 
 import re
-from typing import Optional
 
 
 # Greek vowels with and without accents/tonos/dialytika
