@@ -218,6 +218,27 @@ async def upload_file(file: UploadFile = File(...)):
         ))
 
     file_type = _get_file_type(file.filename)
+    content = await file.read()
+
+    if not content:
+        raise HTTPException(
+            400,
+            f"Το αρχείο '{file.filename}' είναι κενό (0 bytes) και δεν περιέχει δεδομένα.",
+        )
+
+    if ext in (".docx", ".epub", ".cbz", ".zip") and not content[:2] == b"PK":
+        raise HTTPException(
+            400,
+            f"Το αρχείο '{file.filename}' δεν είναι έγκυρο αρχείο {ext.upper()} "
+            f"(ενδέχεται να είναι κατεστραμμένο ή παλιό .doc που μετονομάστηκε). "
+            f"Ανοίξτε το και αποθηκεύστε το ξανά ως {ext}.",
+        )
+
+    if ext == ".pdf" and b"%PDF" not in content[:1024]:
+        raise HTTPException(
+            400,
+            f"Το αρχείο '{file.filename}' δεν είναι έγκυρο αρχείο PDF (κατεστραμμένη επικεφαλίδα).",
+        )
 
     # Save upload (unique prefix avoids filename collisions during multi-file drops)
     job_dir = UPLOAD_DIR / "tmp"
@@ -225,7 +246,6 @@ async def upload_file(file: UploadFile = File(...)):
     tmp_path = job_dir / f"{uuid.uuid4().hex}_{file.filename}"
 
     async with aiofiles.open(tmp_path, "wb") as out:
-        content = await file.read()
         await out.write(content)
 
     # Create job

@@ -274,6 +274,16 @@ class TestSmartBatchQueueAndVisionJson(unittest.TestCase):
         d.save(str(p1))
         jid = None
         try:
+            # 0) Empty 0-byte DOCX must be rejected cleanly with HTTP 400 (instead of cryptic 'Package not found')
+            empty_p = Path("temp/test_empty_zero_bytes.docx")
+            empty_p.write_bytes(b"")
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as ctx_empty:
+                    api_post_file("/upload", empty_p, "test_empty_zero_bytes.docx")
+                self.assertEqual(ctx_empty.exception.code, 400)
+            finally:
+                empty_p.unlink(missing_ok=True)
+
             _, u1 = api_post_file("/upload", p1, "test_queue_val_1.docx")
             jid = u1["job_id"]
 
