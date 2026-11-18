@@ -197,6 +197,53 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         epub_path.unlink(missing_ok=True)
         print("   EPUB Novel + AI Polish Single-Pass routing: OK")
 
+    def test_4_vision_box_normalization_and_cache_status(self):
+        print("-> 4. Testing Vision box_2d normalization, JSON recovery & SQLite cache hit status...")
+        import asyncio
+        from backend.comic_translator import (
+            _extract_box_2d,
+            _parse_vision_json,
+            _detect_comic_balloons_vision_async,
+        )
+        from backend.database import compute_cache_key, db_set_cached_translation
+        import hashlib
+
+        # _extract_box_2d variants
+        self.assertEqual(_extract_box_2d({"box_2d": [10, 20, 100, 200]}), [10.0, 20.0, 100.0, 200.0])
+        self.assertEqual(_extract_box_2d({"bbox": [[200, 300, 50, 100]]}), [50.0, 100.0, 200.0, 300.0])
+        self.assertIsNone(_extract_box_2d({"box": [10, 10, 10, 10]}))
+
+        # _parse_vision_json recovery with nested bbox
+        raw_truncated = '[{"bbox": [[10, 20, 120, 220]], "translated_text": "ΕΜΠΡΟΣ!"}, {"broken":'
+        parsed = _parse_vision_json(raw_truncated)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["translated_text"], "ΕΜΠΡΟΣ!")
+
+        # Cache hit MUST mark status_out["succeeded"] = True
+        fake_img = b"fake-comic-page-vision-cache-test-bytes-12345"
+        img_hash = hashlib.sha256(fake_img).hexdigest()
+        cache_key = compute_cache_key(img_hash, "english", "greek", engine="gemini_comic_vision")
+        cached_payload = [{"box_2d": [10, 20, 100, 200], "translated_text": "Γεια!"}]
+        db_set_cached_translation(
+            cache_key,
+            img_hash,
+            json.dumps(cached_payload, ensure_ascii=False),
+            "english",
+            "greek",
+            engine="gemini_comic_vision",
+        )
+        st_info = {}
+        res = asyncio.run(
+            _detect_comic_balloons_vision_async(
+                fake_img, "dummy-key", "english", "greek", status_out=st_info
+            )
+        )
+        self.assertEqual(res, cached_payload)
+        self.assertTrue(st_info.get("succeeded"), f"Expected succeeded=True on cache hit, got {st_info}")
+        self.assertEqual(st_info.get("error"), "")
+        print("   Vision box normalization, JSON recovery & cache-hit status: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

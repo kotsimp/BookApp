@@ -178,7 +178,7 @@ async def _ai_polish_comic_balloons(
         }
     }
 
-    for model in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-1.5-flash"]:
+    for model in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             req = urllib.request.Request(
@@ -298,6 +298,42 @@ async def _translate_page_vector(
 
 
 _CACHED_VISION_MODEL: Optional[str] = None
+_DEAD_VISION_MODELS: set[str] = set()
+
+VISION_MODELS_PRIORITY = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+]
+
+
+def _extract_box_2d(item: Dict[str, Any]) -> Optional[List[float]]:
+    """Normalizes box_2d / box / bbox / nested [[y1,x1,y2,x2]] into a clean 4-number list."""
+    raw = item.get("box_2d") or item.get("box") or item.get("bbox") or item.get("bounding_box")
+    if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], list):
+        raw = raw[0]
+    if isinstance(raw, list) and len(raw) == 4:
+        try:
+            vals = [float(v) for v in raw]
+            ymin, xmin, ymax, xmax = vals
+            if ymin > ymax:
+                ymin, ymax = ymax, ymin
+            if xmin > xmax:
+                xmin, xmax = xmax, xmin
+            if ymax - ymin < 2 or xmax - xmin < 2:
+                return None
+            return [ymin, xmin, ymax, xmax]
+        except Exception:
+            return None
+    return None
 
 
 def _hex_to_rgb01(hex_color: Optional[str]) -> Tuple[float, float, float]:
@@ -353,15 +389,15 @@ def _parse_vision_json(text_resp: str) -> Optional[List[Dict[str, Any]]]:
 
     # 3. Object-by-object recovery for partially malformed/truncated JSON lists
     recovered: List[Dict[str, Any]] = []
-    for m in re.finditer(r"\{[^{}]*\"box_2d\"\s*:\s*\[[^\]]+\][^{}]*\}", cleaned, flags=re.DOTALL):
+    for m in re.finditer(r"\{[^{}]*\"(?:box_2d|box|bbox)\"\s*:\s*\[[^\]]+\][^{}]*\}", cleaned, flags=re.DOTALL):
         obj_str = re.sub(r",\s*\}", "}", m.group(0))
         try:
             obj = json.loads(obj_str)
-            if isinstance(obj, dict) and isinstance(obj.get("box_2d"), list) and len(obj["box_2d"]) == 4:
+            if isinstance(obj, dict) and _extract_box_2d(obj) is not None:
                 recovered.append(obj)
         except Exception:
             # Regex fallback for box_2d + translated_text even if quotes inside string were unescaped
-            bm = re.search(r'"box_2d"\s*:\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]', obj_str)
+            bm = re.search(r'"(?:box_2d|box|bbox)"\s*:\s*\[?\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]', obj_str)
             tm = re.search(r'"translated_text"\s*:\s*"(.*?)"\s*(?:,|\})', obj_str, flags=re.DOTALL)
             if bm and tm:
                 recovered.append({
@@ -390,9 +426,11 @@ async def _detect_comic_balloons_vision_async(
     source_lang: str,
     target_lang: str,
     session=None,
+    status_out: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Calls Gemini Vision Flash asynchronously (with thinkingBudget=0 and SQLite SHA-256 cache)
+    Calls Gemini Vision Flash asynchronously (rotating across live Gemini 3.x / Flash-Lite models,
+    skipping 404 retired models, retrying 429/503 with backoff, and using SQLite SHA-256 cache)
     to detect & translate all speech balloons on a scanned comic page.
     """
     import base64
@@ -402,12 +440,15 @@ async def _detect_comic_balloons_vision_async(
     img_hash = hashlib.sha256(img_bytes).hexdigest()
     cache_key = None
     try:
-        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        from backend.database import compute_cache_key, db_get_cached_translation
         cache_key = compute_cache_key(img_hash, source_lang, target_lang, engine="gemini_comic_vision")
         cached = db_get_cached_translation(cache_key)
         if cached:
             parsed = json.loads(cached)
-            if isinstance(parsed, list):
+            if isinstance(parsed, list) and len(parsed) > 0:
+                if status_out is not None:
+                    status_out["succeeded"] = True
+                    status_out["error"] = ""
                 return parsed
     except Exception:
         pass
@@ -416,17 +457,18 @@ async def _detect_comic_balloons_vision_async(
     tgt_name = "Greek" if target_lang.lower().startswith(("gr", "el")) else target_lang
     prompt = (
         "You are an expert graphic novel and comic book localization engine. "
-        "Detect all dialogue text, speech balloons, thought bubbles, and narration boxes on this comic page. "
+        "Detect ALL dialogue text, speech balloons, thought bubbles, and narration caption boxes on this comic page. "
         "Return a STRICT JSON list of objects:\n"
         "[\n"
         "  {\n"
         "    \"box_2d\": [ymin, xmin, ymax, xmax],\n"
         "    \"original_text\": \"original dialogue\",\n"
-        f"    \"translated_text\": \"natural {tgt_name} translation for comic\",\n"
+        f"    \"translated_text\": \"natural, vivid {tgt_name} comic dialogue translation\",\n"
         "    \"bg_color\": \"#ffffff\"\n"
         "  }\n"
         "]\n"
-        "Coordinates must be normalized integers 0 to 1000 representing the exact bounding box of the text inside the balloon."
+        "Coordinates MUST be normalized integers 0 to 1000 representing the exact bounding box of the text inside each balloon. "
+        "If the page has ONLY artwork and NO text at all, return []."
     )
 
     base_payload = {
@@ -448,77 +490,138 @@ async def _detect_comic_balloons_vision_async(
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
 
     global _CACHED_VISION_MODEL
-    vision_models = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
+    vision_models = [m for m in VISION_MODELS_PRIORITY if m not in _DEAD_VISION_MODELS]
+    if not vision_models:
+        _DEAD_VISION_MODELS.clear()
+        vision_models = list(VISION_MODELS_PRIORITY)
     if _CACHED_VISION_MODEL and _CACHED_VISION_MODEL in vision_models:
         vision_models = [_CACHED_VISION_MODEL] + [m for m in vision_models if m != _CACHED_VISION_MODEL]
 
     detected_items: List[Dict[str, Any]] = []
+    succeeded = False
+    last_error = ""
     try:
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-        for model in vision_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            use_no_thinking = "2.5-flash" in model or "flash-latest" in model
-            req_payload = (
-                {
-                    "contents": base_payload["contents"],
-                    "generationConfig": {
-                        **base_payload["generationConfig"],
-                        "thinkingConfig": {"thinkingBudget": 0},
-                    },
-                }
-                if use_no_thinking
-                else base_payload
-            )
-            try:
-                async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=35)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        cand_list = data.get("candidates", [])
-                        if not cand_list:
+        # Up to 2 rounds so transient 429/503 spikes can recover cleanly
+        for attempt_round in range(2):
+            if succeeded:
+                break
+            rate_limited_round = False
+            for model in list(vision_models):
+                if model in _DEAD_VISION_MODELS:
+                    continue
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                # Only attach thinkingBudget=0 to 2.5-flash models (3.x models handle latency natively)
+                use_no_thinking = "2.5-flash" in model
+                req_payload = (
+                    {
+                        "contents": base_payload["contents"],
+                        "generationConfig": {
+                            **base_payload["generationConfig"],
+                            "thinkingConfig": {"thinkingBudget": 0},
+                        },
+                    }
+                    if use_no_thinking
+                    else base_payload
+                )
+                try:
+                    async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            cand_list = data.get("candidates", [])
+                            if not cand_list:
+                                last_error = f"{model}: empty candidates"
+                                continue
+                            parts = cand_list[0].get("content", {}).get("parts", [])
+                            if not parts:
+                                last_error = f"{model}: empty parts"
+                                continue
+                            text_resp = parts[0].get("text", "")
+                            parsed = _parse_vision_json(text_resp)
+                            if parsed is not None:
+                                _CACHED_VISION_MODEL = model
+                                detected_items = parsed
+                                succeeded = True
+                                if cache_key and len(detected_items) > 0:
+                                    try:
+                                        from backend.database import db_set_cached_translation
+                                        db_set_cached_translation(
+                                            cache_key,
+                                            img_hash,
+                                            json.dumps(detected_items, ensure_ascii=False),
+                                            source_lang,
+                                            target_lang,
+                                            engine="gemini_comic_vision",
+                                        )
+                                    except Exception:
+                                        pass
+                                break
+                            else:
+                                last_error = f"{model}: unparseable JSON"
+                                logger.warning(f"Vision model {model} returned unparseable JSON; trying next model...")
+                        elif resp.status == 404:
+                            _DEAD_VISION_MODELS.add(model)
+                            if _CACHED_VISION_MODEL == model:
+                                _CACHED_VISION_MODEL = None
+                            logger.info(f"Vision model {model} unavailable (404) — skipping for remaining pages.")
+                        elif resp.status in (400, 401, 403):
+                            err_detail = await resp.text()
+                            if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
+                                logger.error(f"Gemini API key is invalid: {err_detail}")
+                                raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
+                            if resp.status == 400 and "thinking" in err_detail.lower() and req_payload is not base_payload:
+                                async with session.post(url, json=base_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as retry_resp:
+                                    if retry_resp.status == 200:
+                                        data = await retry_resp.json()
+                                        text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
+                                        parsed = _parse_vision_json(text_resp)
+                                        if parsed is not None:
+                                            _CACHED_VISION_MODEL = model
+                                            detected_items = parsed
+                                            succeeded = True
+                                            if cache_key and len(detected_items) > 0:
+                                                try:
+                                                    from backend.database import db_set_cached_translation
+                                                    db_set_cached_translation(
+                                                        cache_key,
+                                                        img_hash,
+                                                        json.dumps(detected_items, ensure_ascii=False),
+                                                        source_lang,
+                                                        target_lang,
+                                                        engine="gemini_comic_vision",
+                                                    )
+                                                except Exception:
+                                                    pass
+                                            break
+                            last_error = f"{model}: HTTP {resp.status}"
+                        elif resp.status in (429, 503):
+                            rate_limited_round = True
+                            last_error = f"{model}: HTTP {resp.status} (quota/demand limit)"
+                            if _CACHED_VISION_MODEL == model:
+                                _CACHED_VISION_MODEL = None
+                            await asyncio.sleep(1.0)
                             continue
-                        parts = cand_list[0].get("content", {}).get("parts", [])
-                        if not parts:
-                            continue
-                        text_resp = parts[0].get("text", "")
-                        parsed = _parse_vision_json(text_resp)
-                        if parsed is not None:
-                            _CACHED_VISION_MODEL = model
-                            detected_items = parsed
-                            if cache_key:
-                                try:
-                                    from backend.database import db_set_cached_translation
-                                    db_set_cached_translation(cache_key, img_hash, json.dumps(detected_items, ensure_ascii=False), source_lang, target_lang, engine="gemini_comic_vision")
-                                except Exception:
-                                    pass
-                            break
                         else:
-                            logger.warning(f"Vision model {model} returned unparseable JSON; trying next model...")
-                    elif resp.status in (400, 401, 403):
-                        err_detail = await resp.text()
-                        if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
-                            logger.error(f"Gemini API key is invalid: {err_detail}")
-                            raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
-                        if resp.status == 400 and "thinking" in err_detail.lower() and req_payload is not base_payload:
-                            async with session.post(url, json=base_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=35)) as retry_resp:
-                                if retry_resp.status == 200:
-                                    data = await retry_resp.json()
-                                    text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
-                                    parsed = _parse_vision_json(text_resp)
-                                    if parsed is not None:
-                                        _CACHED_VISION_MODEL = model
-                                        detected_items = parsed
-                                        break
-                    elif resp.status == 429:
-                        await asyncio.sleep(1.5)
-                        continue
-            except PermissionError:
-                raise
-            except Exception as ex:
-                logger.debug(f"Vision model {model} attempt failed: {ex}")
-                await asyncio.sleep(0.3)
+                            last_error = f"{model}: HTTP {resp.status}"
+                except PermissionError:
+                    raise
+                except Exception as ex:
+                    last_error = f"{model}: {ex}"
+                    logger.debug(f"Vision model {model} attempt failed: {ex}")
+                    await asyncio.sleep(0.3)
+
+            if not succeeded and rate_limited_round and attempt_round == 0:
+                await asyncio.sleep(4.0)
     finally:
         if owns_session:
             await session.close()
+
+    if status_out is not None:
+        status_out["succeeded"] = succeeded
+        status_out["error"] = last_error if not succeeded else ""
+
+    if not succeeded and last_error:
+        logger.warning(f"Gemini Vision failed on page after trying all models: {last_error}")
 
     return detected_items
 
@@ -536,10 +639,15 @@ def _render_vision_balloons_on_page(
     w, h = page.rect.width, page.rect.height
 
     for item in detected_items:
-        box = item.get("box_2d")
-        if not box or len(box) != 4:
+        box = _extract_box_2d(item)
+        if not box:
             continue
-        greek_text = (item.get("translated_text") or "").strip()
+        greek_text = (
+            item.get("translated_text")
+            or item.get("translation")
+            or item.get("greek_text")
+            or ""
+        ).strip()
         if not greek_text:
             continue
         ymin, xmin, ymax, xmax = box
@@ -709,25 +817,61 @@ async def translate_comic_document(
                 logger.warning(f"[{job_id}] Page {page_idx + 1} is image-only and no Gemini API key was provided.")
                 completed_count += 1
 
-    # Pass 2: Execute Gemini Vision balloon detection 4 pages in parallel over a shared HTTP session
+    # Pass 2: Execute Gemini Vision balloon detection 3 pages in parallel over a shared HTTP session
+    # with real-time disk checkpointing and fail-loud protection if API fails across pages
     if vision_pages_to_process and resolved_api_key:
         import aiohttp
-        vision_sem = asyncio.Semaphore(4)
+        out_dir_cp = Path(output_path).parent
+        out_dir_cp.mkdir(parents=True, exist_ok=True)
+        cp_file = out_dir_cp / ".comic_vision_checkpoint.json"
+        cp_pages: Dict[str, List[Dict[str, Any]]] = {}
+        if cp_file.is_file():
+            try:
+                loaded_cp = json.loads(cp_file.read_text(encoding="utf-8"))
+                if isinstance(loaded_cp, dict):
+                    cp_pages = loaded_cp
+            except Exception:
+                pass
+
+        def _save_comic_cp():
+            try:
+                cp_file.write_text(json.dumps(cp_pages, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+        vision_sem = asyncio.Semaphore(3)
         connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
         vision_results: Dict[int, List[Dict[str, Any]]] = {}
+        failed_vision_pages = 0
+        last_vision_error = ""
 
         async with aiohttp.ClientSession(connector=connector) as session:
             async def _vision_worker(p_idx: int, img_bytes: bytes):
-                nonlocal completed_count
+                nonlocal completed_count, failed_vision_pages, last_vision_error
                 if is_job_cancelled(job_id):
                     raise asyncio.CancelledError("Comic translation cancelled by user.")
+
+                p_key = str(p_idx)
+                if p_key in cp_pages and isinstance(cp_pages[p_key], list):
+                    vision_results[p_idx] = cp_pages[p_key]
+                    completed_count += 1
+                    return
+
+                st_info: Dict[str, Any] = {}
                 async with vision_sem:
                     if is_job_cancelled(job_id):
                         raise asyncio.CancelledError("Comic translation cancelled by user.")
                     items = await _detect_comic_balloons_vision_async(
-                        img_bytes, resolved_api_key, source_lang, target_lang, session=session
+                        img_bytes, resolved_api_key, source_lang, target_lang, session=session, status_out=st_info
                     )
                     vision_results[p_idx] = items
+                    if st_info.get("succeeded"):
+                        cp_pages[p_key] = items
+                        _save_comic_cp()
+                    else:
+                        failed_vision_pages += 1
+                        if st_info.get("error"):
+                            last_vision_error = st_info["error"]
                 completed_count += 1
                 update_job(
                     job_id,
@@ -739,11 +883,27 @@ async def translate_comic_document(
 
             await asyncio.gather(*(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process))
 
+        total_vision_pages = len(vision_pages_to_process)
+        total_detected_balloons = sum(len(v) for v in vision_results.values())
+        if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
+            doc.close()
+            raise RuntimeError(
+                f"Η μετάφραση Vision AI απέτυχε σε {failed_vision_pages}/{total_vision_pages} σελίδες "
+                f"({last_vision_error or 'όριο αιτημάτων API 429'}). "
+                f"Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Start Translation για συνέχιση!"
+            )
+
         # Apply detected redactions and Greek text rendering cleanly on the PDF document
         for p_idx, items in sorted(vision_results.items()):
             if items:
                 rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path)
                 all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
+
+        if failed_vision_pages == 0 and cp_file.exists():
+            try:
+                cp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # Save translated graphic novel PDF
     stem = Path(file_path).stem
