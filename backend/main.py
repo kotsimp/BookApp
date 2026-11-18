@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
-    cancel_job, register_task, unregister_task, is_job_cancelled
+    cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
@@ -300,10 +300,12 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     output_format = getattr(req, "output_format", "txt") or "txt"
     layout_mode = getattr(req, "layout_mode", "standard") or "standard"
     reading_direction = getattr(req, "reading_direction", "ltr") or "ltr"
+    clear_job_cancellation(req.job_id)
     update_job(
         req.job_id,
         mode="translate",
         status="running",
+        error=None,
         output_format=output_format,
         layout_mode=layout_mode,
         reading_direction=reading_direction,
@@ -523,7 +525,8 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         if not resolved_key:
             raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Please save your key in AI Polish first.")
 
-    update_job(req.job_id, mode="audiobook", status="running", dialogue_voice=req.dialogue_voice)
+    clear_job_cancellation(req.job_id)
+    update_job(req.job_id, mode="audiobook", status="running", error=None, dialogue_voice=req.dialogue_voice)
 
     background_tasks.add_task(
         _run_audiobook,
@@ -610,7 +613,7 @@ async def progress_stream(job_id: str):
                     yield f"data: {json.dumps(data)}\n\n"
 
                     # Stop streaming when terminal state reached
-                    if data.get("status") in ("done", "error"):
+                    if data.get("status") in ("done", "error", "cancelled"):
                         break
                 except asyncio.TimeoutError:
                     # Send heartbeat
@@ -641,6 +644,8 @@ async def job_status(job_id: str):
     return {
         "job_id": job.job_id,
         "file_name": job.file_name,
+        "file_type": job.file_type,
+        "layout_mode": job.layout_mode,
         "status": job.status,
         "mode": job.mode,
         "progress": job.progress,
@@ -1359,10 +1364,12 @@ async def _execute_queue_item(q_item):
     stem = Path(job.file_name).stem
     output_path = str(out_dir / f"{stem}_translated_{q_item.target_lang}.txt")
 
+    clear_job_cancellation(q_item.job_id)
     update_job(
         q_item.job_id,
         mode="translate",
         status="running",
+        error=None,
         output_format=q_item.output_format,
         layout_mode=q_item.layout_mode,
         reading_direction=q_item.reading_direction,

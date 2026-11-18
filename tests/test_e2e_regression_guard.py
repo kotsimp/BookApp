@@ -379,6 +379,40 @@ class TestE2ERegressionGuard(unittest.TestCase):
         finally:
             tr_mod._GTX_COOLDOWN_UNTIL = orig_cooldown
 
+    def test_8_restart_cancelled_job_and_recover_orphaned_running_job(self):
+        print("-> 8. Testing Cancelled Job Restart & Orphaned Running Job Startup Recovery...")
+        from backend.job_manager import create_job, cancel_job, clear_job_cancellation, is_job_cancelled, _jobs
+        from backend.database import db_save_job, db_get_job, db_reset_orphaned_running_jobs, db_delete_job
+
+        # 8a. Cancelled job can be cleanly restarted
+        j = create_job("temp/reg_cancel_restart.txt", "reg_cancel_restart.txt", "txt")
+        jid = j.job_id
+        try:
+            cancel_job(jid)
+            self.assertTrue(is_job_cancelled(jid))
+            self.assertEqual(j.status, "cancelled")
+
+            clear_job_cancellation(jid)
+            self.assertFalse(is_job_cancelled(jid))
+            self.assertEqual(j.status, "idle")
+
+            # 8b. Orphaned running job in SQLite recovers to idle on startup
+            j.status = "running"
+            db_save_job({
+                "job_id": jid, "file_path": j.file_path, "file_name": j.file_name,
+                "file_type": "txt", "status": "running", "mode": "translate",
+                "progress": 42, "current_step": "Running...", "total_chunks": 10,
+                "done_chunks": 4, "created_at": j.created_at, "updated_at": time.time(),
+            })
+            reset_cnt = db_reset_orphaned_running_jobs()
+            self.assertGreaterEqual(reset_cnt, 1)
+            recovered = db_get_job(jid)
+            self.assertEqual(recovered["status"], "idle")
+            print("   Cancelled job restart + Orphaned running job recovery: OK")
+        finally:
+            _jobs.pop(jid, None)
+            db_delete_job(jid)
+
 
 if __name__ == "__main__":
     unittest.main()

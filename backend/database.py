@@ -210,6 +210,23 @@ def db_clear_all_jobs() -> int:
             conn.close()
 
 
+def db_reset_orphaned_running_jobs() -> int:
+    """Resets any stale 'running' jobs left over after a server restart to 'idle' so they can resume cleanly."""
+    with _db_lock:
+        conn = _get_connection()
+        try:
+            with conn:
+                res = conn.execute(
+                    "UPDATE jobs SET status = 'idle', current_step = 'Ready to resume (saved checkpoint)' WHERE status = 'running'"
+                )
+                return res.rowcount
+        except Exception as e:
+            logger.warning(f"Error resetting orphaned running jobs in DB: {e}")
+            return 0
+        finally:
+            conn.close()
+
+
 def db_cleanup_old_jobs(max_age_seconds: int = 86400 * 7) -> int:
     """Deletes job records older than max_age_seconds (default 7 days)."""
     with _db_lock:

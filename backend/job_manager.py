@@ -68,6 +68,14 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
+def clear_job_cancellation(job_id: str) -> None:
+    """Clears cancelled status so a previously cancelled job can be restarted cleanly by the user."""
+    job = _jobs.get(job_id)
+    if job and job.status == "cancelled":
+        job.status = "idle"
+        job.error = None
+
+
 def create_job(file_path: str, file_name: str, file_type: str) -> Job:
     job_id = str(uuid.uuid4())
     now = time.time()
@@ -333,7 +341,8 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
         del _jobs[jid]
 
     try:
-        from backend.database import db_cleanup_old_jobs
+        from backend.database import db_cleanup_old_jobs, db_reset_orphaned_running_jobs
+        db_reset_orphaned_running_jobs()
         db_cleanup_old_jobs(max_age_seconds)
     except Exception:
         pass

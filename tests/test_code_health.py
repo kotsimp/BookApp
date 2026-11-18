@@ -277,6 +277,8 @@ def test_frontend_html_js_integrity():
     assert "function setGraphicNovelLock(" in js, "app.js must expose setGraphicNovelLock() for comic auto-lock"
     assert "function refreshPageApp(" in js, "app.js must expose refreshPageApp() for Refresh button"
     assert "function saveGeminiKeyOnly(" in js, "app.js must expose saveGeminiKeyOnly() for Save Key button"
+    assert "function setActionButtonsEnabled(" in js, "app.js must centralize action button enable/disable via setActionButtonsEnabled()"
+    assert "resetProgress(prefix, true);" in js, "loadHistoryJob must preserve action buttons via resetProgress(prefix, true)"
     print("   Frontend HTML <-> JS cross-integrity: OK")
 
 

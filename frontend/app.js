@@ -100,14 +100,14 @@ function showSelectedFile(prefix, file) {
 function removeFile(prefix) {
   state[prefix].file = null;
   state[prefix].jobId = null;
-  document.getElementById(`${prefix}-selected-file`).classList.remove('visible');
+  const selEl = document.getElementById(`${prefix}-selected-file`);
+  if (selEl) {
+    selEl.classList.remove('visible');
+    selEl.style.display = '';
+  }
   document.getElementById(`${prefix}-upload-zone`).style.display = '';
-  document.getElementById(`${prefix}-start-btn`).disabled = true;
-  const addQBtn = document.getElementById('tr-add-queue-btn');
-  if (prefix === 'tr' && addQBtn) addQBtn.disabled = true;
-  const directBtn = document.getElementById('tr-direct-polish-btn');
-  if (directBtn) directBtn.disabled = true;
-  resetProgress(prefix);
+  setActionButtonsEnabled(prefix, false);
+  resetProgress(prefix, false);
   if (prefix === 'ab') {
     restrictAudiobookLanguage(null);
     const transOpt = document.getElementById('ab-translate-option');
@@ -701,7 +701,7 @@ async function startTranslation() {
   document.getElementById('tr-result-card').classList.remove('visible');
   document.getElementById('tr-error-card').classList.remove('visible');
   document.getElementById('tr-progress-detail').textContent = '';
-  document.getElementById('tr-start-btn').disabled = true;
+  setActionButtonsEnabled('tr', false);
   const trCancelBtn = document.getElementById('tr-cancel-btn');
   if (trCancelBtn) {
     trCancelBtn.disabled = false;
@@ -733,7 +733,7 @@ async function startTranslation() {
     connectSSE('tr', jobId);
   } catch (err) {
     showError('tr', err.message);
-    document.getElementById('tr-start-btn').disabled = false;
+    setActionButtonsEnabled('tr', true);
   }
 }
 
@@ -922,24 +922,27 @@ function updateProgress(prefix, data) {
   }
 
   if (data.status === 'done') {
+    state[prefix].status = 'done';
     setStatusBadge(prefix, 'done');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
     document.getElementById(`${prefix}-progress-step`).textContent = '✅ Complete';
-    document.getElementById(`${prefix}-start-btn`).disabled = false;
+    setActionButtonsEnabled(prefix, true);
     showResult(prefix, data);
     refreshHistory();
     toast(prefix === 'tr' ? '✅ Translation complete!' : '🎉 Audiobook ready!', 'success');
   } else if (data.status === 'error') {
+    state[prefix].status = 'error';
     setStatusBadge(prefix, 'error');
     showError(prefix, data.error || 'An unknown error occurred.');
-    document.getElementById(`${prefix}-start-btn`).disabled = false;
+    setActionButtonsEnabled(prefix, true);
     refreshHistory();
   } else if (data.status === 'cancelled') {
+    state[prefix].status = 'cancelled';
     setStatusBadge(prefix, 'cancelled');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
     document.getElementById(`${prefix}-progress-step`).textContent = '🛑 Cancelled';
     if (detailEl) detailEl.textContent = 'Process was cancelled.';
-    document.getElementById(`${prefix}-start-btn`).disabled = false;
+    setActionButtonsEnabled(prefix, true);
     const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
     if (cancelBtn) {
       cancelBtn.disabled = false;
@@ -976,21 +979,32 @@ async function cancelJob(prefix) {
 }
 
 // ── UI Helpers ─────────────────────────────────────────────
-function resetProgress(prefix) {
+function setActionButtonsEnabled(prefix, enabled) {
+  const startBtn = document.getElementById(`${prefix}-start-btn`);
+  if (startBtn) startBtn.disabled = !enabled;
+  if (prefix === 'tr') {
+    const addQBtn = document.getElementById('tr-add-queue-btn');
+    if (addQBtn) addQBtn.disabled = !enabled;
+    const directBtn = document.getElementById('tr-direct-polish-btn');
+    if (directBtn) directBtn.disabled = !enabled || Boolean(state.tr.isComic);
+  }
+}
+
+function resetProgress(prefix, keepButtonsEnabled = false) {
   document.getElementById(`${prefix}-progress-card`).style.display = 'none';
   document.getElementById(`${prefix}-result-card`).classList.remove('visible');
   document.getElementById(`${prefix}-error-card`).classList.remove('visible');
   document.getElementById(`${prefix}-progress-bar`).style.width = '0%';
   document.getElementById(`${prefix}-progress-bar`).classList.add('shimmer');
   document.getElementById(`${prefix}-progress-pct`).textContent = '0%';
-  document.getElementById(`${prefix}-start-btn`).disabled = true;
+  if (!keepButtonsEnabled) {
+    setActionButtonsEnabled(prefix, false);
+  }
   const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
   if (cancelBtn) {
     cancelBtn.disabled = false;
     cancelBtn.innerHTML = prefix === 'tr' ? '🛑 Cancel Translation' : '🛑 Cancel Audiobook';
   }
-  const directBtn = document.getElementById('tr-direct-polish-btn');
-  if (directBtn) directBtn.disabled = true;
 
   if (prefix === 'tr') {
     closeEditor();
@@ -1173,8 +1187,8 @@ async function deleteHistoryJob(event, jobId) {
     const res = await fetch(`${API}/jobs/${jobId}`, { method: 'DELETE' });
     if (res.ok) {
       toast('Job removed from history.', 'info');
-      if (state.tr.jobId === jobId) resetProgress('tr');
-      if (state.ab.jobId === jobId) resetProgress('ab');
+      if (state.tr.jobId === jobId) removeFile('tr');
+      if (state.ab.jobId === jobId) removeFile('ab');
       await refreshHistory();
     }
   } catch (err) {
@@ -1190,8 +1204,10 @@ async function clearAllHistory() {
     const res = await fetch(`${API}/jobs`, { method: 'DELETE' });
     if (res.ok) {
       toast('All session history deleted.', 'success');
-      resetProgress('tr');
-      resetProgress('ab');
+      if (state.tr.jobId) removeFile('tr');
+      else resetProgress('tr');
+      if (state.ab.jobId) removeFile('ab');
+      else resetProgress('ab');
       await refreshHistory();
     }
   } catch (err) {
@@ -1208,6 +1224,7 @@ async function loadHistoryJob(jobId, mode) {
 
   try {
     const res = await fetch(`${API}/status/${jobId}`);
+    if (!res.ok) throw new Error('Job not found');
     const data = await res.json();
 
     if (data.file_name) {
@@ -1221,13 +1238,19 @@ async function loadHistoryJob(jobId, mode) {
         : `Loaded from Session History · ${data.current_step || 'Ready to translate'}`;
       if (uploadZone) uploadZone.style.display = 'none';
       if (selectedFile) {
+        selectedFile.style.display = '';
         selectedFile.classList.add('visible');
-        selectedFile.style.display = 'flex';
       }
     }
 
+    if (prefix === 'tr') {
+      const ext = (data.file_type || (data.file_name || '').split('.').pop() || '').toLowerCase();
+      const isComic = data.layout_mode === 'comic' || ['cbz', 'cbr', 'zip'].includes(ext);
+      setGraphicNovelLock(isComic);
+    }
+
     if (prefix === 'ab') {
-      document.getElementById('ab-start-btn').disabled = false;
+      setActionButtonsEnabled('ab', true);
       try {
         const textRes = await fetch(`${API}/jobs/${jobId}/text`);
         if (textRes.ok) {
@@ -1253,21 +1276,18 @@ async function loadHistoryJob(jobId, mode) {
         }
       } catch (_) {}
     }
+
     if (data.status === 'running') {
       document.getElementById(`${prefix}-progress-card`).style.display = 'block';
-      document.getElementById(`${prefix}-start-btn`).disabled = true;
+      setActionButtonsEnabled(prefix, false);
+      state[prefix].status = 'running';
       setStatusBadge(prefix, 'running');
       updateProgress(prefix, data);
       connectSSE(prefix, jobId);
     } else if (data.has_output && data.status === 'done' && (prefix === 'tr' || mode === 'audiobook')) {
-      // Re-enable action buttons and show completed output
-      document.getElementById(`${prefix}-start-btn`).disabled = false;
-      if (prefix === 'tr') {
-        const addQBtn = document.getElementById('tr-add-queue-btn');
-        if (addQBtn) addQBtn.disabled = false;
-        const directBtn = document.getElementById('tr-direct-polish-btn');
-        if (directBtn && !state.tr.isComic) directBtn.disabled = false;
-      }
+      resetProgress(prefix, true);
+      state[prefix].status = 'done';
+      setActionButtonsEnabled(prefix, true);
       showResult(prefix, data);
       setStatusBadge(prefix, 'done');
       document.getElementById(`${prefix}-progress-card`).style.display = 'block';
@@ -1275,16 +1295,10 @@ async function loadHistoryJob(jobId, mode) {
       document.getElementById(`${prefix}-progress-bar`).style.width = '100%';
       document.getElementById(`${prefix}-progress-step`).textContent = data.current_step;
     } else {
-      // Idle, queued, cancelled, or error job loaded from history -> enable start/resume buttons!
-      const startBtn = document.getElementById(`${prefix}-start-btn`);
-      if (startBtn) startBtn.disabled = false;
-      if (prefix === 'tr') {
-        const addQBtn = document.getElementById('tr-add-queue-btn');
-        if (addQBtn) addQBtn.disabled = false;
-        const directBtn = document.getElementById('tr-direct-polish-btn');
-        if (directBtn && !state.tr.isComic) directBtn.disabled = false;
-      }
-      resetProgress(prefix);
+      // Idle, queued, cancelled, or error job loaded from history -> reset progress FIRST, then enable buttons!
+      resetProgress(prefix, true);
+      state[prefix].status = data.status || 'idle';
+      setActionButtonsEnabled(prefix, true);
       toast(`📄 Φορτώθηκε "${data.file_name || 'έγγραφο'}" — έτοιμο για μετάφραση/συνέχιση!`, 'info');
     }
     if (prefix === 'tr') {
