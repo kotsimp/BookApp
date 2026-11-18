@@ -201,6 +201,12 @@ class TestSmartBatchQueueAndVisionJson(unittest.TestCase):
             self.assertEqual(item3["output_format"], "pdf", "Comic item must auto-upgrade txt -> pdf")
             self.assertEqual(item3["layout_mode"], "comic", "Comic item must lock layout_mode -> comic")
             self.assertTrue(item3["ai_polish"], "Scanned comic item must auto-enable ai_polish")
+            # Mixed queue (books + comic) MUST report is_mixed=True and force auto_start=False
+            self.assertTrue(q_comic["is_mixed"], "Queue with books + comic must report is_mixed=True")
+            self.assertFalse(q_comic["auto_start"], "Mixed queue must keep auto_start=False")
+            st_as, q_as = api_post_json("/queue/auto-start", {"auto_start": True})
+            self.assertEqual(st_as, 200)
+            self.assertFalse(q_as["auto_start"], "Enabling auto-start must be blocked in a mixed book+comic queue!")
 
             # Remove 3rd item before starting -> verify job status resets from queued back to idle!
             st_rm, q_rm = api_delete(f"/queue/{u3['job_id']}")

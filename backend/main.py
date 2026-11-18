@@ -1531,7 +1531,7 @@ async def add_batch_queue_item(req: QueueAddRequest):
         raise HTTPException(409, str(e))
 
     state_data = get_queue_state()
-    if state_data["auto_start"] and not state_data["paused"]:
+    if state_data["auto_start"] and not state_data["paused"] and not state_data.get("is_mixed"):
         state_data = start_queue(_execute_queue_item)
     return state_data
 
@@ -1585,11 +1585,11 @@ async def pause_batch_queue():
 
 @app.post("/api/queue/auto-start")
 async def toggle_batch_queue_auto_start(req: QueueAutoStartRequest):
-    """Toggles automatic queue execution when new documents are added."""
+    """Toggles automatic queue execution when new documents are added (disabled on mixed book+comic queues)."""
     from backend.queue_manager import set_queue_auto_start, get_queue_state, start_queue
-    set_queue_auto_start(req.auto_start)
+    effective = set_queue_auto_start(req.auto_start)
     state_data = get_queue_state()
-    if req.auto_start and state_data["queued_count"] > 0 and not state_data["is_running"]:
+    if effective and state_data["queued_count"] > 0 and not state_data["is_running"] and not state_data.get("is_mixed"):
         state_data = start_queue(_execute_queue_item)
     return state_data
 

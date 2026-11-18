@@ -2192,6 +2192,7 @@ async function enqueueMultipleFiles(files) {
   }
 
   let added = 0;
+  const uploadedPayloads = [];
   for (const file of filesToUpload) {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!allowed.includes(ext)) {
@@ -2208,9 +2209,33 @@ async function enqueueMultipleFiles(files) {
         continue;
       }
       const upData = await upRes.json();
-
       const isComic = Boolean(upData.is_comic) || ['.cbz', '.cbr', '.zip'].includes(ext);
       const isScanned = Boolean(upData.is_scanned);
+      uploadedPayloads.push({ file, ext, upData, isComic, isScanned });
+    } catch (err) {
+      toast(`❌ Σφάλμα φόρτωσης "${file.name}": ${err.message}`, 'error');
+    }
+  }
+
+  // Detect mixed queue (Books + Graphic Novels) BEFORE enqueueing so Auto-Start is safely disabled upfront
+  const existingHasComic = (_batchQueueState.items || []).some((it) => it.is_comic);
+  const existingHasBook = (_batchQueueState.items || []).some((it) => !it.is_comic);
+  const incomingHasComic = uploadedPayloads.some((p) => p.isComic);
+  const incomingHasBook = uploadedPayloads.some((p) => !p.isComic);
+  const willBeMixed = (existingHasComic || incomingHasComic) && (existingHasBook || incomingHasBook);
+  if (willBeMixed && _batchQueueState.auto_start) {
+    try {
+      await fetch(`${API}/queue/auto-start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_start: false }),
+      });
+      _batchQueueState.auto_start = false;
+    } catch (_) {}
+  }
+
+  for (const { file, ext, upData, isComic, isScanned } of uploadedPayloads) {
+    try {
       let itemLayout = isComic ? 'comic' : cfg.chosenLayout;
       let itemFmt = cfg.chosenFmt;
       if (isComic) {
@@ -2244,13 +2269,16 @@ async function enqueueMultipleFiles(files) {
       }
       added++;
     } catch (err) {
-      toast(`❌ Σφάλμα φόρτωσης "${file.name}": ${err.message}`, 'error');
+      toast(`❌ Σφάλμα προσθήκης "${file.name}": ${err.message}`, 'error');
     }
   }
 
   if (added > 0 || promotedExisting) {
     const totalAdded = added + (promotedExisting ? 1 : 0);
-    toast(`📋 Προστέθηκαν ${totalAdded} αρχεία στην Smart Batch Queue! Ρυθμίστε τις επιλογές από κάτω και πατήστε Start.`, 'success');
+    const mixedNote = willBeMixed
+      ? ' (Μικτή ουρά: το Auto-Start απενεργοποιήθηκε αυτόματα για έλεγχο ρυθμίσεων).'
+      : ' Ρυθμίστε τις επιλογές από κάτω και πατήστε Start.';
+    toast(`📋 Προστέθηκαν ${totalAdded} αρχεία στην Smart Batch Queue!${mixedNote}`, 'success');
     await refreshBatchQueue();
     refreshHistory();
   }
@@ -2309,7 +2337,19 @@ function renderBatchQueue(q) {
     const pauseNote = (q.is_running && q.paused) ? ' · ⏸️ Pausing...' : (q.paused ? ' · ⏸️ Paused' : '');
     counter.textContent = `${q.done_count} / ${q.total_count} done (max ${maxItems})${pauseNote}`;
   }
-  if (autoToggle) autoToggle.checked = Boolean(q.auto_start);
+  if (autoToggle) {
+    const isMixed = Boolean(q.is_mixed);
+    autoToggle.checked = isMixed ? false : Boolean(q.auto_start);
+    autoToggle.disabled = isMixed;
+    const autoLabel = autoToggle.closest('label');
+    if (autoLabel) {
+      autoLabel.style.opacity = isMixed ? '0.55' : '1';
+      autoLabel.style.cursor = isMixed ? 'not-allowed' : 'pointer';
+      autoLabel.title = isMixed
+        ? 'Απενεργοποιημένο σε μικτή ουρά (Βιβλία + Graphic Novels) ώστε να ελέγχετε τις ρυθμίσεις πριν την εκκίνηση.'
+        : 'Αυτόματη έναρξη μετάφρασης μόλις προστεθούν αρχεία';
+    }
+  }
 
   if (pauseBtn) {
     pauseBtn.style.display = (q.is_running && !q.paused) ? 'inline-flex' : 'none';
@@ -2435,14 +2475,25 @@ async function pauseBatchQueue() {
 }
 
 async function toggleQueueAutoStart() {
-  const enabled = document.getElementById('queue-auto-start-toggle')?.checked || false;
+  const autoToggle = document.getElementById('queue-auto-start-toggle');
+  const enabled = autoToggle?.checked || false;
+  if (enabled && _batchQueueState.is_mixed) {
+    if (autoToggle) autoToggle.checked = false;
+    toast('⚠️ Το Auto-Start είναι απενεργοποιημένο σε μικτή ουρά (Βιβλία + Graphic Novels) για ασφαλή έλεγχο ρυθμίσεων.', 'info');
+    return;
+  }
   try {
-    await fetch(`${API}/queue/auto-start`, {
+    const res = await fetch(`${API}/queue/auto-start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auto_start: enabled }),
     });
-    toast(enabled ? '⚡ Auto-Start Queue ενεργοποιήθηκε.' : '⏸️ Manual Queue mode ενεργό.', 'info');
+    const data = res.ok ? await res.json().catch(() => null) : null;
+    if (enabled && data && data.is_mixed && !data.auto_start) {
+      toast('⚠️ Το Auto-Start είναι απενεργοποιημένο σε μικτή ουρά (Βιβλία + Graphic Novels).', 'info');
+    } else {
+      toast(enabled ? '⚡ Auto-Start Queue ενεργοποιήθηκε.' : '⏸️ Manual Queue mode ενεργό.', 'info');
+    }
     await refreshBatchQueue();
   } catch (_) {}
 }

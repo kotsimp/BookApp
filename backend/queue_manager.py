@@ -41,8 +41,20 @@ _queue_auto_start: bool = False
 MAX_QUEUE_ITEMS: int = 20
 
 
+def is_mixed_queue() -> bool:
+    """Returns True when the batch queue contains BOTH comic/graphic novel items and regular book/document items."""
+    has_comic = any(it.is_comic for it in _queue_items)
+    has_book = any(not it.is_comic for it in _queue_items)
+    return has_comic and has_book
+
+
 def get_queue_state() -> Dict[str, Any]:
     """Returns full live snapshot of the Smart Batch Queue synced with JobManager."""
+    global _queue_auto_start
+    mixed = is_mixed_queue()
+    if mixed and _queue_auto_start:
+        _queue_auto_start = False
+
     serialized = []
     done_count = 0
     queued_count = 0
@@ -98,6 +110,7 @@ def get_queue_state() -> Dict[str, Any]:
         "is_running": is_running,
         "paused": _queue_paused,
         "auto_start": _queue_auto_start,
+        "is_mixed": mixed,
         "done_count": done_count,
         "queued_count": queued_count,
         "total_count": len(serialized),
@@ -191,6 +204,11 @@ def add_to_queue(
         status="queued",
     )
     _queue_items.append(item)
+    if is_mixed_queue():
+        global _queue_auto_start
+        if _queue_auto_start:
+            logger.info("[Queue] Mixed batch detected (books + comics) — auto-disabling Auto-Start for safe settings review.")
+        _queue_auto_start = False
     clear_job_cancellation(job_id)
     update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
     return item
@@ -215,6 +233,9 @@ def retry_queue_item(job_id: str) -> QueueItem:
 
 def set_queue_auto_start(enabled: bool) -> bool:
     global _queue_auto_start
+    if enabled and is_mixed_queue():
+        _queue_auto_start = False
+        return False
     _queue_auto_start = bool(enabled)
     return _queue_auto_start
 
