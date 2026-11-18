@@ -1271,6 +1271,28 @@ async def remove_glossary_term(term: str):
 # Genre Detection, Voice Previews & Cache / Storage Ops
 # ---------------------------------------------------------------------------
 
+@app.get("/api/preview/{job_id}")
+async def preview_document_text(job_id: str, max_chars: int = 3500):
+    """Returns a fast text preview snippet of an uploaded document for auto-genre detection."""
+    job = get_job(job_id)
+    if not job or not job.file_path or not Path(job.file_path).exists():
+        raise HTTPException(404, f"Job '{job_id}' or its source file not found.")
+    try:
+        parts = []
+        total_len = 0
+        for page in parse_document(job.file_path, job.file_type):
+            txt = (page.get("text") or "").strip()
+            if txt:
+                parts.append(txt)
+                total_len += len(txt)
+            if total_len >= max_chars:
+                break
+        preview_text = "\n\n".join(parts)[:max_chars]
+        return {"job_id": job_id, "file_type": job.file_type, "preview_text": preview_text}
+    except Exception as e:
+        raise HTTPException(500, f"Preview extraction failed: {e}")
+
+
 @app.post("/api/detect-genre")
 async def detect_genre(req: GenreDetectionRequest):
     """Auto-detects document genre, tone, recommended polish style and glossary category."""

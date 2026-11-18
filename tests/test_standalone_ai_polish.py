@@ -28,6 +28,11 @@ def api_post_json(path, data):
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
 def api_post_file(path, filepath, filename):
     boundary = "----TestBoundaryStandalonePolish123"
     file_data = open(filepath, "rb").read()
@@ -47,6 +52,18 @@ def api_post_file(path, filepath, filename):
 
 def run_tests():
     print("=== 1. Testing Persistent Settings API ===")
+    _, orig_settings = api_get("/settings")
+    orig_key = orig_settings.get("gemini_api_key", "")
+    try:
+        _run_standalone_polish_suite()
+    finally:
+        if orig_key:
+            api_post_json("/settings", {"gemini_api_key": orig_key})
+        else:
+            api_delete("/settings/gemini_api_key")
+
+
+def _run_standalone_polish_suite():
     status, res = api_post_json("/settings", {"gemini_api_key": "AQ.TestKeyAutoPersist123"})
     assert status == 200, f"Expected 200, got {status}"
     status, settings = api_get("/settings")

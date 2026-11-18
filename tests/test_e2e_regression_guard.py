@@ -249,6 +249,136 @@ class TestE2ERegressionGuard(unittest.TestCase):
                 except Exception:
                     pass
 
+    def test_5_health_preview_cover_debug_polish_status_and_sse(self):
+        print("-> 5. Testing /health, /preview, /cover (POST/GET/DELETE), /debug/extract, /polish/status & /progress SSE...")
+        # 5a. GET /api/health
+        st_h, h_data = api_get("/health")
+        self.assertEqual(st_h, 200)
+        self.assertEqual(h_data.get("status"), "ok")
+
+        # Upload a real sample DOCX for endpoint round-trips
+        doc_p = Path("temp/reg_full_endpoints.docx")
+        d = docx.Document()
+        d.add_heading("Technical API Guide", level=1)
+        d.add_paragraph("The server database API runs in a Docker container with SQL protocol.")
+        d.save(str(doc_p))
+        cov_p = Path("temp/reg_test_cover.jpg")
+        Image.new("RGB", (200, 300), (80, 40, 120)).save(cov_p, quality=85)
+
+        jid = None
+        try:
+            st_u, up = api_post_file("/upload", doc_p, "reg_full_endpoints.docx")
+            self.assertEqual(st_u, 200)
+            jid = up["job_id"]
+
+            # 5b. GET /api/preview/{job_id} -> must return 200 with preview_text (fixes silent 404 bug!)
+            st_p, prev = api_get(f"/preview/{jid}")
+            self.assertEqual(st_p, 200)
+            self.assertIn("Docker container", prev.get("preview_text", ""))
+
+            # Feed preview into /api/detect-genre -> must auto-detect technical
+            st_g, gdata = api_post_json("/detect-genre", {"sample_text": prev["preview_text"], "file_type": "docx"})
+            self.assertEqual(st_g, 200)
+            self.assertEqual(gdata["genre"], "technical")
+
+            # 5c. POST / GET / DELETE /api/cover/{job_id}
+            st_cp, cp_data = api_post_file(f"/cover/{jid}", cov_p, "reg_test_cover.jpg")
+            self.assertEqual(st_cp, 200)
+            self.assertEqual(cp_data.get("status"), "ok")
+
+            with urllib.request.urlopen(f"{API}/cover/{jid}", timeout=10) as cov_resp:
+                self.assertEqual(cov_resp.status, 200)
+                self.assertGreater(len(cov_resp.read()), 100)
+
+            st_cd, cd_data = api_delete(f"/cover/{jid}")
+            self.assertEqual(st_cd, 200)
+            self.assertEqual(cd_data.get("status"), "deleted")
+
+            # 5d. GET /api/debug/extract/{job_id}
+            st_dbg, dbg = api_get(f"/debug/extract/{jid}")
+            self.assertEqual(st_dbg, 200)
+            self.assertGreaterEqual(dbg.get("pages_sampled", 0), 1)
+
+            # 5e. GET /api/polish/status/{job_id}
+            st_ps, ps = api_get(f"/polish/status/{jid}")
+            self.assertEqual(st_ps, 200)
+            self.assertIn("status", ps)
+
+            # 5f. GET /api/progress/{job_id} SSE stream (read initial event cleanly)
+            req_sse = urllib.request.Request(f"{API}/progress/{jid}")
+            with urllib.request.urlopen(req_sse, timeout=5) as sse_resp:
+                self.assertEqual(sse_resp.status, 200)
+                first_line = sse_resp.readline().decode("utf-8", errors="ignore")
+                self.assertTrue(first_line.startswith("data:"), f"Expected SSE data line, got: {first_line!r}")
+
+            print("   All 6 auxiliary endpoints (/health, /preview, /cover, /debug/extract, /polish/status, /progress SSE): OK")
+        finally:
+            doc_p.unlink(missing_ok=True)
+            cov_p.unlink(missing_ok=True)
+            if jid:
+                try:
+                    api_delete(f"/jobs/{jid}")
+                except Exception:
+                    pass
+
+    def test_6_source_anchored_auto_disables_when_source_equals_draft(self):
+        print("-> 6. Testing Source-Anchored Verification auto-disables when source == draft...")
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        from backend.ai_polisher import polish_text_with_gemini
+
+        same_text = "=== PAGE 1 ===\nΑυτό είναι ένα ήδη ελληνικό κείμενο προς επιμέλεια."
+        captured_inputs = []
+
+        async def fake_call(content_text, *args, **kwargs):
+            captured_inputs.append(content_text)
+            return same_text
+
+        with patch("backend.ai_polisher._call_gemini_api", side_effect=fake_call):
+            res = asyncio.run(polish_text_with_gemini(
+                text=same_text,
+                api_key="AQ.TestMockSameText123",
+                style="literature",
+                original_text=same_text,
+                use_source_anchoring=True,
+            ))
+        self.assertTrue(len(captured_inputs) >= 1)
+        self.assertNotIn("SOURCE REFERENCE", captured_inputs[0], "Identical source==draft should NOT duplicate text in prompt!")
+        print("   Source-Anchored identical-text auto-disable: OK")
+
+    def test_7_google_429_circuit_breaker_trips_fast(self):
+        print("-> 7. Testing Google GTX 429 Circuit Breaker trips without hanging...")
+        import asyncio
+        import urllib.error
+        from unittest.mock import patch
+        import backend.translator as tr_mod
+
+        orig_cooldown = tr_mod._GTX_COOLDOWN_UNTIL
+        tr_mod._GTX_COOLDOWN_UNTIL = 0.0
+        calls = {"gtx": 0}
+
+        def always_429(*args, **kwargs):
+            calls["gtx"] += 1
+            raise urllib.error.HTTPError("https://translate.googleapis.com", 429, "Too Many Requests", {}, None)
+
+        try:
+            t0 = time.time()
+            with patch("backend.translator._translate_gtx", side_effect=always_429), \
+                 patch("backend.settings_manager.get_setting", return_value=""):
+                out = asyncio.run(tr_mod._translate_with_retry(
+                    "Unique circuit breaker probe " + str(time.time()),
+                    "english",
+                    "greek",
+                    retries=3,
+                ))
+            dur = time.time() - t0
+            self.assertLess(dur, 4.0, f"429 circuit breaker took too long: {dur:.2f}s")
+            self.assertGreater(tr_mod._GTX_COOLDOWN_UNTIL, time.time(), "Expected 429 circuit breaker cooldown to activate!")
+            self.assertEqual(calls["gtx"], 2, "Expected GTX to trip circuit breaker after 2nd 429 attempt")
+            print(f"   429 Circuit Breaker ({dur:.2f}s, cooldown active): OK")
+        finally:
+            tr_mod._GTX_COOLDOWN_UNTIL = orig_cooldown
+
 
 if __name__ == "__main__":
     unittest.main()

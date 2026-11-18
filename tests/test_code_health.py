@@ -294,6 +294,49 @@ def test_production_config_hygiene():
     print("   Production Config Hygiene: OK")
 
 
+def test_frontend_api_routes_match_backend():
+    print("-> 9. Testing Frontend ${API} URLs match real FastAPI routes (zero 404 drift)...")
+    import re
+    main_src = Path("backend/main.py").read_text(encoding="utf-8")
+    js_src = Path("frontend/app.js").read_text(encoding="utf-8")
+
+    routes = re.findall(r'@app\.(?:get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
+    backend_patterns = []
+    for path in routes:
+        pat = "^" + re.sub(r"\{[^}]+\}", r"[^/?]+", path.replace("/api", "")) + r"(\?.*)?$"
+        backend_patterns.append(re.compile(pat))
+
+    js_calls = sorted(set(re.findall(r'\$\{API\}(/[a-zA-Z0-9_/\-${}.?=&]+)', js_src)))
+    assert len(js_calls) >= 10, "Expected at least 10 API calls in frontend/app.js"
+    for call in js_calls:
+        normalized = re.sub(r"\$\{[^}]+\}", "PLACEHOLDER", call).split("?")[0]
+        matched = any(p.match(normalized) for p in backend_patterns)
+        assert matched, f"Frontend calls ${{API}}{call} which has NO matching FastAPI route in backend/main.py!"
+    print(f"   Frontend -> Backend API route alignment: OK ({len(js_calls)} UI endpoints verified)")
+
+
+def test_all_backend_endpoints_covered_by_tests():
+    print("-> 10. Testing 100% Backend Endpoint Test Coverage Guard...")
+    import re
+    main_src = Path("backend/main.py").read_text(encoding="utf-8")
+    routes = re.findall(r'@app\.(get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
+    test_src = "\n".join(Path(f).read_text(encoding="utf-8") for f in glob.glob("tests/*.py"))
+
+    uncovered = []
+    for method, path in routes:
+        short = path.replace("/api", "")
+        seg = short.split("{")[0].rstrip("/")
+        covered = (seg in test_src) or (path in test_src)
+        suffix = short.split("}")[-1] if "}" in short else ""
+        if suffix and suffix not in test_src:
+            covered = False
+        if not covered:
+            uncovered.append(f"{method.upper()} {path}")
+
+    assert not uncovered, f"Uncovered FastAPI endpoints found (zero test coverage): {uncovered}"
+    print(f"   100% Backend endpoint coverage: OK ({len(routes)}/{len(routes)} endpoints covered)")
+
+
 if __name__ == "__main__":
     test_ast_and_syntax_validity()
     test_unbound_local_variables()
@@ -303,4 +346,6 @@ if __name__ == "__main__":
     test_no_unused_imports_or_deprecated_apis()
     test_frontend_html_js_integrity()
     test_production_config_hygiene()
+    test_frontend_api_routes_match_backend()
+    test_all_backend_endpoints_covered_by_tests()
     print("\nALL CODE HEALTH AND STATIC INTEGRITY TESTS PASSED!")

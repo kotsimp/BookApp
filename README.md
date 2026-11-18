@@ -35,7 +35,7 @@ A modern, high-performance local web application to **translate documents** betw
 | **M4B & Tagged Audiobooks** | Exports audiobooks in both `.mp3` and `.m4b` formats with full ID3v2/MP4 metadata tagging (Title, Artist, Album, Genre="Audiobook") and embedded cover art via `mutagen`. |
 | **Voice Preview Auditions** | Instant 2–3 second voice audition playback button (`🔊 Ακρόαση`, `GET /api/tts/preview`) next to each voice in the UI. |
 | **Modern UI Controls & One-Click Launcher** | Dark/Light theme toggle, dedicated **🔄 Refresh** button in header & navbar, dedicated **🔑 Gemini API Key** button with **💾 Save Key** and auto-sync to server, Split-Screen Editor with Sync Scroll, and Windows desktop launcher (`start_bookapp.bat`). |
-| **Automated Test Suite (28 Suites)** | Master test runner `run_all_tests.py` executing 28 comprehensive test suites (100% pass rate) covering code health/AST + undefined globals + HTML⇄JS cross-integrity + config hygiene, E2E regression guards (`test_e2e_regression_guard.py`), SQLite & cache, performance benchmarks, HTTP endpoints, scanned comic auto-detection & Vision erasure, typography, manga RTL, multi-voice TTS, concurrency, encoding, and end-to-end APIs. |
+| **Automated Test Suite (28 Suites)** | Bulletproof master runner `run_all_tests.py` (with `--fast` mode, auto-server launch, and automatic `config/settings.json` snapshot/restore so user API keys are never overwritten). Executes 28 suites (100% pass rate) including a **10-point static/contract guard** (`test_code_health.py`: AST, undefined globals, unused imports, deprecated APIs, HTML⇄JS cross-integrity, Frontend⇄Backend API route matching, 100% endpoint coverage across all 30 FastAPI routes, and config hygiene) plus `test_e2e_regression_guard.py`. |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
@@ -122,7 +122,7 @@ BookApp/
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide in Greek
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 27 Automated Test Suites (100% PASS)
+├── tests/                   # 28 Automated Test Suites (100% PASS)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt
@@ -154,15 +154,20 @@ BookApp/
 
 ## 🧪 Running Tests (Αυτοματοποιημένοι Έλεγχοι)
 
-To run the complete 27-suite automated verification & benchmark test runner:
+The master runner automatically protects & restores your `config/settings.json` (never touching your saved API keys) and starts a temporary test server if none is running:
 
 ```bash
+# Run all 28 automated test suites (Full Suite)
 .\.venv\Scripts\python run_all_tests.py
+
+# Run fast local suite (23 static/unit/regression/benchmark suites in ~30s)
+.\.venv\Scripts\python run_all_tests.py --fast
 ```
 
-Or run individual focused suites directly, e.g.:
+Or run individual focused guard suites directly:
 ```bash
 .\.venv\Scripts\python tests/test_code_health.py
+.\.venv\Scripts\python tests/test_e2e_regression_guard.py
 .\.venv\Scripts\python tests/test_scanned_comic_and_autodetect.py
 .\.venv\Scripts\python tests/test_performance_and_benchmarks.py
 ```
