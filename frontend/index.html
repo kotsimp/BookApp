@@ -257,7 +257,10 @@
     </div>
 
     <!-- Smart Batch Queue Card (shown automatically when 1+ files are queued or multiple files dropped) -->
-    <div class="card animate-in" id="tr-queue-card" style="display:none; border:1px solid rgba(124,58,237,0.35)">
+    <div class="card animate-in" id="tr-queue-card" style="display:none; border:1px solid rgba(124,58,237,0.35)"
+         ondragover="handleDragOver(event, 'tr-queue-card')"
+         ondragleave="handleDragLeave(event, 'tr-queue-card')"
+         ondrop="handleQueueDrop(event)">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
         <div class="card-title" style="margin:0">
           <span class="card-title-icon">📋</span>

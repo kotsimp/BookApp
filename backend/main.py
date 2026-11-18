@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -218,10 +219,10 @@ async def upload_file(file: UploadFile = File(...)):
 
     file_type = _get_file_type(file.filename)
 
-    # Save upload
+    # Save upload (unique prefix avoids filename collisions during multi-file drops)
     job_dir = UPLOAD_DIR / "tmp"
     job_dir.mkdir(exist_ok=True)
-    tmp_path = job_dir / file.filename
+    tmp_path = job_dir / f"{uuid.uuid4().hex}_{file.filename}"
 
     async with aiofiles.open(tmp_path, "wb") as out:
         content = await file.read()
@@ -937,6 +938,8 @@ async def clear_all_jobs():
                 pass
     _jobs.clear()
     POLISH_STATUS.clear()
+    from backend.queue_manager import clear_queue
+    clear_queue()
     from backend.database import db_clear_all_jobs
     db_clear_all_jobs()
     return {"status": "cleared", "count": 0}
@@ -967,6 +970,8 @@ async def delete_job(job_id: str):
 
     from backend.job_manager import _jobs
     from backend.database import db_delete_job
+    from backend.queue_manager import remove_from_queue
+    remove_from_queue(job_id)
     _jobs.pop(job_id, None)
     POLISH_STATUS.pop(job_id, None)
     db_delete_job(job_id)
@@ -1359,6 +1364,10 @@ async def _execute_queue_item(q_item):
     job = get_job(q_item.job_id)
     if not job:
         raise ValueError(f"Job '{q_item.job_id}' not found.")
+    if job.status == "running":
+        raise RuntimeError(f"Job '{q_item.job_id}' is already running.")
+    if q_item.source_lang == q_item.target_lang:
+        raise ValueError("Source and target languages must be different.")
 
     out_dir = _job_output_dir(q_item.job_id)
     stem = Path(job.file_name).stem
@@ -1412,11 +1421,32 @@ async def add_batch_queue_item(req: QueueAddRequest):
             is_comic=req.is_comic,
             is_scanned=req.is_scanned,
         )
-    except ValueError as e:
+    except KeyError as e:
         raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
     state_data = get_queue_state()
     if state_data["auto_start"] and not state_data["paused"]:
+        state_data = start_queue(_execute_queue_item)
+    return state_data
+
+
+@app.post("/api/queue/{job_id}/retry")
+async def retry_batch_queue_item(job_id: str):
+    """Retries a failed, cancelled, or completed queue item and starts processing if not paused."""
+    from backend.queue_manager import retry_queue_item, get_queue_state, start_queue
+    try:
+        retry_queue_item(job_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+    state_data = get_queue_state()
+    if not state_data["paused"]:
         state_data = start_queue(_execute_queue_item)
     return state_data
 

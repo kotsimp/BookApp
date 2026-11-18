@@ -256,13 +256,17 @@ def test_frontend_html_js_integrity():
     js_dyn_ids = set(re.findall(r'id=["\']([^"\']+)["\']', js))
     all_ids = html_ids | js_dyn_ids
 
-    # Every inline event handler in index.html must exist in app.js
+    # Every inline event handler in index.html AND dynamic templates in app.js must exist in app.js
     handlers = set(re.findall(r'on(?:click|change|input|submit|dragover|dragleave|drop|keydown)=["\']([a-zA-Z0-9_]+)\(', html))
+    dyn_handlers = set(re.findall(r'on(?:click|change|input|submit)=["\']([a-zA-Z0-9_]+)\(', js))
     js_func_list = re.findall(r'(?:async\s+)?function\s+([a-zA-Z0-9_]+)\s*\(', js)
     js_funcs = set(js_func_list)
-    for h in handlers:
+    for h in handlers | dyn_handlers:
         if h not in ("document", "window"):
-            assert h in js_funcs, f"HTML event handler '{h}()' is not defined in frontend/app.js"
+            assert h in js_funcs, f"Event handler '{h}()' is not defined in frontend/app.js"
+
+    # Guard against common undefined helper typos (e.g. escapeHtml instead of escHtml)
+    assert "escapeHtml(" not in js, "Undefined 'escapeHtml(' call found in frontend/app.js — use escHtml()!"
 
     # No duplicate top-level JS function definitions
     assert len(js_func_list) == len(js_funcs), "Duplicate function definitions detected in frontend/app.js"

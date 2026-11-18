@@ -128,6 +128,7 @@ function removeFile(prefix) {
 
 function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
   state.tr.isComic = !!isComic;
+  state.tr.isScanned = !!isScanned;
   const btnStd = document.getElementById('layout-standard');
   const btnLit = document.getElementById('layout-literature');
   const btnComic = document.getElementById('layout-comic');
@@ -1190,6 +1191,7 @@ async function deleteHistoryJob(event, jobId) {
       if (state.tr.jobId === jobId) removeFile('tr');
       if (state.ab.jobId === jobId) removeFile('ab');
       await refreshHistory();
+      await refreshBatchQueue();
     }
   } catch (err) {
     toast('Failed to delete job.', 'error');
@@ -1209,6 +1211,7 @@ async function clearAllHistory() {
       if (state.ab.jobId) removeFile('ab');
       else resetProgress('ab');
       await refreshHistory();
+      await refreshBatchQueue();
     }
   } catch (err) {
     toast('Failed to clear history.', 'error');
@@ -1323,7 +1326,7 @@ function toast(msg, type = 'info') {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g, '&#39;');
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g, '&#39;');
 }
 
 // ── Translation Editor ──────────────────────────────────────
@@ -2004,6 +2007,17 @@ function setupSyncScroll() {
 // ── Smart Batch Queue ──────────────────────────────────────
 let _queuePollTimer = null;
 
+function handleQueueDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const card = document.getElementById('tr-queue-card');
+  if (card) card.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length > 0) {
+    enqueueMultipleFiles(files);
+  }
+}
+
 async function enqueueMultipleFiles(files) {
   const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
   const srcLang = document.getElementById('tr-source-lang')?.value || 'english';
@@ -2014,6 +2028,10 @@ async function enqueueMultipleFiles(files) {
   const apiKey = localStorage.getItem('gemini_api_key') || null;
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
+
+  if (files.length > 1) {
+    toast(`⏳ Φόρτωση ${files.length} αρχείων στην Smart Batch Queue...`, 'info');
+  }
 
   let added = 0;
   for (const file of files) {
@@ -2026,17 +2044,26 @@ async function enqueueMultipleFiles(files) {
       const fd = new FormData();
       fd.append('file', file);
       const upRes = await fetch(`${API}/upload`, { method: 'POST', body: fd });
-      if (!upRes.ok) continue;
+      if (!upRes.ok) {
+        const upErr = await upRes.json().catch(() => ({}));
+        toast(`❌ Αποτυχία φόρτωσης "${file.name}": ${upErr.detail || upRes.statusText}`, 'error');
+        continue;
+      }
       const upData = await upRes.json();
 
       const isComic = Boolean(upData.is_comic) || ['.cbz', '.cbr', '.zip'].includes(ext);
-      const itemLayout = isComic ? 'comic' : chosenLayout;
+      const isScanned = Boolean(upData.is_scanned);
+      let itemLayout = isComic ? 'comic' : chosenLayout;
       let itemFmt = chosenFmt;
-      if (isComic && ['txt', 'docx', 'doc'].includes(itemFmt)) {
-        itemFmt = 'pdf';
+      if (isComic) {
+        if (['txt', 'docx', 'doc'].includes(itemFmt)) itemFmt = 'pdf';
+      } else {
+        // Protect non-comic books in mixed batches from inheriting comic-only settings
+        if (itemLayout === 'comic') itemLayout = (ext === '.epub' ? 'literature' : 'standard');
+        if (['cbz', 'cbr'].includes(itemFmt)) itemFmt = 'pdf';
       }
 
-      await fetch(`${API}/queue/add`, {
+      const addRes = await fetch(`${API}/queue/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2046,12 +2073,17 @@ async function enqueueMultipleFiles(files) {
           output_format: itemFmt,
           layout_mode: itemLayout,
           reading_direction: readingDirection,
-          ai_polish: isComic ? true : aiPolish,
+          ai_polish: (isComic && isScanned) ? true : aiPolish,
           api_key: apiKey || null,
           is_comic: isComic,
-          is_scanned: Boolean(upData.is_scanned),
+          is_scanned: isScanned,
         }),
       });
+      if (!addRes.ok) {
+        const addErr = await addRes.json().catch(() => ({}));
+        toast(`❌ "${file.name}": ${addErr.detail || 'Αποτυχία προσθήκης στην ουρά'}`, 'error');
+        continue;
+      }
       added++;
     } catch (err) {
       toast(`❌ Σφάλμα φόρτωσης "${file.name}": ${err.message}`, 'error');
@@ -2075,7 +2107,9 @@ async function addCurrentFileToQueue() {
   let outputFormat = document.getElementById('tr-output-format')?.value || 'pdf';
   const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
   const isComic = Boolean(state.tr.isComic) || layoutMode === 'comic';
+  const isScanned = Boolean(state.tr.isScanned);
   if (isComic && ['txt', 'docx', 'doc'].includes(outputFormat)) outputFormat = 'pdf';
+  if (!isComic && ['cbz', 'cbr'].includes(outputFormat)) outputFormat = 'pdf';
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
@@ -2092,12 +2126,16 @@ async function addCurrentFileToQueue() {
         output_format: outputFormat,
         layout_mode: isComic ? 'comic' : layoutMode,
         reading_direction: readingDirection,
-        ai_polish: aiPolish,
+        ai_polish: (isComic && isScanned) ? true : aiPolish,
         api_key: apiKey || null,
         is_comic: isComic,
+        is_scanned: isScanned,
       }),
     });
-    if (!res.ok) throw new Error('Failed to add file to queue');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Failed to add file to queue');
+    }
     toast('📋 Προστέθηκε στην Smart Batch Queue!', 'success');
     removeFile('tr');
     await refreshBatchQueue();
@@ -2122,7 +2160,9 @@ async function refreshBatchQueue() {
       _queuePollTimer = null;
       refreshHistory();
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn('Batch queue refresh error:', err);
+  }
 }
 
 function renderBatchQueue(q) {
@@ -2141,11 +2181,15 @@ function renderBatchQueue(q) {
   }
 
   card.style.display = 'block';
-  if (counter) counter.textContent = `${q.done_count} / ${q.total_count} completed`;
+  if (counter) {
+    const pauseNote = (q.is_running && q.paused) ? ' · ⏸️ Pausing after current...' : (q.paused ? ' · ⏸️ Paused' : '');
+    counter.textContent = `${q.done_count} / ${q.total_count} completed${pauseNote}`;
+  }
   if (autoToggle) autoToggle.checked = Boolean(q.auto_start);
 
   if (startBtn) {
-    startBtn.style.display = (!q.is_running && q.queued_count > 0) ? 'inline-flex' : 'none';
+    const canStartOrResume = q.queued_count > 0 && (!q.is_running || q.paused);
+    startBtn.style.display = canStartOrResume ? 'inline-flex' : 'none';
     startBtn.textContent = q.paused ? '▶️ Resume Queue' : '▶️ Start Queue';
   }
   if (pauseBtn) {
@@ -2166,17 +2210,20 @@ function renderBatchQueue(q) {
 
   list.innerHTML = q.items.map((it) => {
     const modeTag = it.is_comic
-      ? `🎨 Comic (${it.reading_direction.toUpperCase()})`
+      ? `🎨 Comic (${(it.reading_direction || 'ltr').toUpperCase()})`
       : (it.layout_mode === 'literature' ? '📚 Literature' : '📄 Standard');
     const aiTag = it.ai_polish ? ' · ✨ AI Polish' : '';
     const dlLink = it.has_output
       ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
       : '';
+    const retryBtn = (it.status === 'error' || it.status === 'cancelled')
+      ? `<button type="button" class="btn-sm btn-outline" onclick="retryQueueItem('${it.job_id}')" title="Επανάληψη μετάφρασης" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">🔄 Retry</button>`
+      : '';
     const progressBar = (it.status === 'running' || it.status === 'done')
       ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`
       : '';
     const errLine = it.error
-      ? `<div style="font-size:0.75rem; color:var(--rose)">${escapeHtml(it.error)}</div>`
+      ? `<div style="font-size:0.75rem; color:var(--rose)">${escHtml(it.error)}</div>`
       : '';
     return `
       <div class="queue-item ${it.status}">
@@ -2184,17 +2231,18 @@ function renderBatchQueue(q) {
           <div class="queue-item-info">
             <span style="font-size:1.2rem">${it.is_comic ? '🎨' : '📄'}</span>
             <div style="min-width:0; flex:1">
-              <div class="queue-item-name" title="${escapeHtml(it.file_name)}">${escapeHtml(it.file_name)}</div>
+              <div class="queue-item-name" title="${escHtml(it.file_name)}">${escHtml(it.file_name)}</div>
               <div class="queue-item-meta">
                 <span>${modeTag}${aiTag}</span>
                 <span>→ ${it.output_format.toUpperCase()}</span>
-                <span>${escapeHtml(it.current_step || '')}</span>
+                <span>${escHtml(it.current_step || '')}</span>
               </div>
             </div>
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
             <span class="queue-badge ${it.status}">${statusLabels[it.status] || it.status}${it.status === 'running' ? ` ${it.progress}%` : ''}</span>
             ${dlLink}
+            ${retryBtn}
             <button type="button" class="btn-icon" onclick="removeQueueItem('${it.job_id}')" title="Αφαίρεση από την ουρά">✕</button>
           </div>
         </div>
@@ -2203,6 +2251,20 @@ function renderBatchQueue(q) {
       </div>
     `;
   }).join('');
+}
+
+async function retryQueueItem(jobId) {
+  try {
+    const res = await fetch(`${API}/queue/${jobId}/retry`, { method: 'POST' });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Retry failed');
+    }
+    toast('🔄 Το αρχείο ξαναμπήκε στην ουρά για επανάληψη!', 'info');
+    await refreshBatchQueue();
+  } catch (err) {
+    toast(`❌ ${err.message}`, 'error');
+  }
 }
 
 async function startBatchQueue() {

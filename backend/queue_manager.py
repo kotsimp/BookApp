@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from backend.job_manager import get_job, cancel_job, update_job
+from backend.job_manager import get_job, cancel_job, update_job, clear_job_cancellation
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def get_queue_state() -> Dict[str, Any]:
             progress = job.progress if item.status != "queued" else 0
             current_step = job.current_step if item.status != "queued" else "⏳ Waiting in queue..."
             has_output = bool(job.output_path) and item.status == "done"
-            if job.error:
+            if item.status != "queued" and job.error:
                 err = job.error
                 item.error = err
 
@@ -115,32 +115,56 @@ def add_to_queue(
     is_comic: bool = False,
     is_scanned: bool = False,
 ) -> QueueItem:
-    """Adds an uploaded job to the batch queue (or updates it if already queued)."""
+    """Adds an uploaded job to the batch queue (or updates/re-queues it if already present)."""
+    if source_lang == target_lang:
+        raise ValueError("Source and target languages must be different.")
+
     job = get_job(job_id)
     if not job:
-        raise ValueError(f"Job '{job_id}' not found.")
+        raise KeyError(f"Job '{job_id}' not found.")
 
-    # Enforce comic-compatible options automatically
-    if is_comic or job.file_type in ("cbz", "cbr"):
-        is_comic = True
-        layout_mode = "comic"
-        if output_format.lower() in ("txt", "docx", "doc"):
-            output_format = "pdf"
+    if job.status == "running":
+        raise RuntimeError(f"Job '{job_id}' is already running.")
+
+    # Auto-detect comic vs book compatibility safely for mixed batches
+    effective_comic = bool(
+        is_comic
+        or job.file_type in ("cbz", "cbr")
+        or (job.file_name or "").lower().endswith((".cbz", ".cbr", ".zip"))
+    )
+    fmt_clean = (output_format or "pdf").lower().lstrip(".")
+    layout_clean = (layout_mode or "standard").lower()
+
+    if effective_comic:
+        layout_clean = "comic"
+        if fmt_clean in ("txt", "docx", "doc"):
+            fmt_clean = "pdf"
+        if is_scanned:
+            ai_polish = True
+    else:
+        # Protect non-comic books in mixed batches from inheriting comic-only settings
+        if layout_clean == "comic" and not is_comic:
+            layout_clean = "literature" if job.file_type == "epub" else "standard"
+        if fmt_clean in ("cbz", "cbr"):
+            fmt_clean = "pdf"
 
     for existing in _queue_items:
         if existing.job_id == job_id:
-            if existing.status in ("queued", "error", "cancelled"):
-                existing.source_lang = source_lang
-                existing.target_lang = target_lang
-                existing.output_format = output_format
-                existing.layout_mode = layout_mode
-                existing.reading_direction = reading_direction
-                existing.ai_polish = ai_polish
-                existing.api_key = api_key
-                existing.is_comic = is_comic
-                existing.is_scanned = is_scanned
-                existing.status = "queued"
-                existing.error = None
+            if existing.status == "running":
+                raise RuntimeError(f"Job '{job_id}' is already running in the queue.")
+            existing.source_lang = source_lang
+            existing.target_lang = target_lang
+            existing.output_format = fmt_clean
+            existing.layout_mode = layout_clean
+            existing.reading_direction = reading_direction
+            existing.ai_polish = ai_polish
+            existing.api_key = api_key
+            existing.is_comic = effective_comic
+            existing.is_scanned = is_scanned
+            existing.status = "queued"
+            existing.error = None
+            clear_job_cancellation(job_id)
+            update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
             return existing
 
     item = QueueItem(
@@ -149,18 +173,36 @@ def add_to_queue(
         file_type=job.file_type,
         source_lang=source_lang,
         target_lang=target_lang,
-        output_format=output_format,
-        layout_mode=layout_mode,
+        output_format=fmt_clean,
+        layout_mode=layout_clean,
         reading_direction=reading_direction,
         ai_polish=ai_polish,
         api_key=api_key,
-        is_comic=is_comic,
+        is_comic=effective_comic,
         is_scanned=is_scanned,
         status="queued",
     )
     _queue_items.append(item)
-    update_job(job_id, status="queued", current_step="⏳ Queued in batch...")
+    clear_job_cancellation(job_id)
+    update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
     return item
+
+
+def retry_queue_item(job_id: str) -> QueueItem:
+    """Resets a failed, cancelled, or done queue item back to queued state."""
+    for item in _queue_items:
+        if item.job_id == job_id:
+            if item.status == "running":
+                raise RuntimeError(f"Job '{job_id}' is currently running.")
+            job = get_job(job_id)
+            if not job:
+                raise KeyError(f"Job '{job_id}' no longer exists.")
+            item.status = "queued"
+            item.error = None
+            clear_job_cancellation(job_id)
+            update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued for retry...")
+            return item
+    raise KeyError(f"Job '{job_id}' not found in queue.")
 
 
 def set_queue_auto_start(enabled: bool) -> bool:
@@ -176,33 +218,54 @@ def pause_queue() -> bool:
 
 
 def remove_from_queue(job_id: str) -> bool:
-    """Removes a job from the queue (cancelling it if currently running)."""
+    """Removes a job from the queue (cancelling it if currently running, or resetting queued status to idle)."""
+    global _queue_paused
     for idx, item in enumerate(_queue_items):
         if item.job_id == job_id:
             if item.status == "running":
                 cancel_job(job_id)
+            elif item.status == "queued":
+                job = get_job(job_id)
+                if job and job.status == "queued":
+                    update_job(job_id, status="idle", current_step="Ready")
             _queue_items.pop(idx)
+            if not _queue_items:
+                _queue_paused = False
             return True
     return False
 
 
 def clear_queue() -> int:
     """Clears all non-running items from the queue (returns number removed)."""
-    global _queue_items
+    global _queue_items, _queue_paused
     before = len(_queue_items)
-    _queue_items = [it for it in _queue_items if it.status == "running"]
+    kept = []
+    for it in _queue_items:
+        if it.status == "running":
+            kept.append(it)
+        elif it.status == "queued":
+            job = get_job(it.job_id)
+            if job and job.status == "queued":
+                update_job(it.job_id, status="idle", current_step="Ready")
+    _queue_items = kept
+    if not _queue_items:
+        _queue_paused = False
     return before - len(_queue_items)
 
 
 def get_completed_queue_job_ids() -> List[str]:
     """Returns job_ids of all completed queue items."""
+    get_queue_state()  # ensure statuses are synced with JobManager
     return [it.job_id for it in _queue_items if it.status == "done"]
 
 
 async def _process_queue_loop(
     execute_item: Callable[[QueueItem], Awaitable[None]],
 ) -> None:
-    """Serially processes queued items one by one until queue is empty or paused."""
+    """Serially processes queued items one by one until queue is empty or paused.
+    Each item runs in its own isolated child Task so cancelling a single running item
+    never terminates the queue processor loop — it cleanly moves on to the next item.
+    """
     global _queue_paused
     logger.info("Smart Batch Queue processor started.")
     try:
@@ -214,8 +277,9 @@ async def _process_queue_loop(
             next_item.status = "running"
             next_item.error = None
             logger.info(f"[Queue] Starting job {next_item.job_id} ({next_item.file_name})")
+            item_task = asyncio.create_task(execute_item(next_item))
             try:
-                await execute_item(next_item)
+                await item_task
                 job = get_job(next_item.job_id)
                 if job and job.status in ("done", "error", "cancelled"):
                     next_item.status = job.status
@@ -224,7 +288,7 @@ async def _process_queue_loop(
                     next_item.status = "done"
             except asyncio.CancelledError:
                 next_item.status = "cancelled"
-                logger.info(f"[Queue] Job {next_item.job_id} cancelled.")
+                logger.info(f"[Queue] Job {next_item.job_id} cancelled; continuing queue.")
             except Exception as ex:
                 next_item.status = "error"
                 next_item.error = str(ex)
@@ -239,6 +303,7 @@ def start_queue(
     """Starts or resumes background serial queue processing."""
     global _queue_task, _queue_paused
     _queue_paused = False
-    if _queue_task is None or _queue_task.done():
+    has_queued = any(it.status == "queued" for it in _queue_items)
+    if has_queued and (_queue_task is None or _queue_task.done()):
         _queue_task = asyncio.create_task(_process_queue_loop(execute_item))
     return get_queue_state()
