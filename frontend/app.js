@@ -2275,7 +2275,6 @@ function renderBatchQueue(q) {
   const list = document.getElementById('tr-queue-list');
   const counter = document.getElementById('tr-queue-counter');
   const autoToggle = document.getElementById('queue-auto-start-toggle');
-  const startBtn = document.getElementById('btn-queue-start');
   const pauseBtn = document.getElementById('btn-queue-pause');
   const addMoreBtn = document.getElementById('btn-queue-add-more');
   const dlAllBtn = document.getElementById('btn-queue-download-all');
@@ -2304,11 +2303,6 @@ function renderBatchQueue(q) {
   }
   if (autoToggle) autoToggle.checked = Boolean(q.auto_start);
 
-  if (startBtn) {
-    const canStartOrResume = q.queued_count > 0 && (!q.is_running || q.paused);
-    startBtn.style.display = canStartOrResume ? 'inline-flex' : 'none';
-    startBtn.textContent = q.paused ? '▶️ Resume Queue' : `▶️ Start Batch (${q.queued_count})`;
-  }
   if (pauseBtn) {
     pauseBtn.style.display = (q.is_running && !q.paused) ? 'inline-flex' : 'none';
   }
