@@ -299,6 +299,124 @@ def count_pages(file_path: str, file_type: str) -> int:
     return 1
 
 
+COMIC_FILENAME_PATTERNS = (
+    "graphic novel", "graphic_novel", "comic", "manga", "humanoids",
+    "marvel", "dark horse", "image comics", "bande dessinee", "asterix",
+    "tintin", "sanctum", "vertigo", "dc comics", "webtoon", "manhwa",
+)
+
+
+def detect_is_graphic_novel(file_path: str, file_type: str, file_name: str = "") -> dict:
+    """
+    Automatically detects whether an uploaded file is a Graphic Novel / Comic
+    (including scanned image PDFs, digital comic PDFs with overlaid balloons,
+    CBZ/CBR archives, and fixed-layout comic EPUBs).
+    Returns: {"is_comic": bool, "is_scanned": bool, "reason": str}
+    """
+    ft = (file_type or "").lower()
+    fname_lower = (file_name or Path(file_path).name).lower()
+
+    if ft in ("cbz", "cbr", "zip"):
+        return {
+            "is_comic": True,
+            "is_scanned": True,
+            "reason": f"Comic archive format ({ft.upper()})",
+        }
+
+    filename_hint = any(k in fname_lower for k in COMIC_FILENAME_PATTERNS)
+
+    if ft == "pdf":
+        try:
+            import pymupdf as fitz
+            doc = fitz.open(file_path)
+            total = len(doc)
+            if total == 0:
+                doc.close()
+                return {"is_comic": False, "is_scanned": False, "reason": ""}
+
+            # Sample up to 8 representative pages (prefer interior pages when total > 2)
+            if total <= 8:
+                sample_indices = list(range(total))
+            else:
+                step = max(1, (total - 1) // 7)
+                sample_indices = [min(total - 1, 1 + i * step) for i in range(8)]
+                sample_indices = sorted(set(sample_indices))
+
+            full_image_pages = 0
+            total_chars = 0
+            sampled_count = len(sample_indices)
+
+            for idx in sample_indices:
+                page = doc[idx]
+                txt = (page.get_text("text") or "").strip()
+                total_chars += len(txt)
+
+                page_area = max(1.0, page.rect.width * page.rect.height)
+                max_img_cov = 0.0
+                for img_info in page.get_images(full=True):
+                    xref = img_info[0]
+                    try:
+                        for rect in page.get_image_rects(xref):
+                            cov = (rect.width * rect.height) / page_area
+                            if cov > max_img_cov:
+                                max_img_cov = cov
+                    except Exception:
+                        pass
+                # Also detect vector-drawn comic panels/artwork (lots of drawings + short text)
+                if max_img_cov >= 0.60:
+                    full_image_pages += 1
+
+            doc.close()
+
+            avg_chars = total_chars / max(1, sampled_count)
+            full_img_ratio = full_image_pages / max(1, sampled_count)
+            is_scanned = (avg_chars < 35 and full_img_ratio >= 0.60)
+
+            if is_scanned:
+                return {
+                    "is_comic": True,
+                    "is_scanned": True,
+                    "reason": f"Scanned image-based PDF detected ({int(full_img_ratio*100)}% full-page artwork, Vision AI mode)",
+                }
+            if filename_hint and (full_img_ratio >= 0.40 or avg_chars < 300):
+                return {
+                    "is_comic": True,
+                    "is_scanned": False,
+                    "reason": "Graphic novel / comic PDF detected (artwork + speech balloons)",
+                }
+            if full_img_ratio >= 0.65 and avg_chars < 220:
+                return {
+                    "is_comic": True,
+                    "is_scanned": False,
+                    "reason": f"Digital graphic novel PDF detected ({int(full_img_ratio*100)}% full-page artwork with dialogue blocks)",
+                }
+        except Exception as e:
+            logger.debug(f"PDF graphic novel detection check skipped: {e}")
+
+    elif ft == "epub" and filename_hint:
+        try:
+            from ebooklib import epub, ITEM_DOCUMENT
+            from bs4 import BeautifulSoup
+            book = epub.read_epub(file_path)
+            docs = [it for it in book.get_items() if it.get_type() == ITEM_DOCUMENT][:8]
+            if docs:
+                img_only = 0
+                for d in docs:
+                    soup = BeautifulSoup(d.get_content(), "html.parser")
+                    if soup.find("img") and len(soup.get_text(strip=True)) < 80:
+                        img_only += 1
+                if img_only / len(docs) >= 0.6:
+                    return {
+                        "is_comic": True,
+                        "is_scanned": True,
+                        "reason": "Fixed-layout Graphic Novel EPUB detected",
+                    }
+        except Exception:
+            pass
+
+    return {"is_comic": False, "is_scanned": False, "reason": ""}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

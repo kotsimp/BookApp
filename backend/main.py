@@ -226,7 +226,7 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as cov_err:
         logger.warning(f"Could not extract cover image for {file.filename}: {cov_err}")
 
-    # Count pages and detect primary language for metadata
+    # Count pages, detect language, and auto-detect Graphic Novel / Scanned Comic
     try:
         page_count = count_pages(str(final_path), file_type)
     except Exception:
@@ -234,8 +234,11 @@ async def upload_file(file: UploadFile = File(...)):
 
     detected_language = _detect_document_language(str(final_path), file_type)
 
+    from backend.parsers import detect_is_graphic_novel
+    comic_info = detect_is_graphic_novel(str(final_path), file_type, file.filename)
+
     logger.info(
-        f"Uploaded: {file.filename} → job_id={job.job_id}, pages≈{page_count}, lang={detected_language}"
+        f"Uploaded: {file.filename} → job_id={job.job_id}, pages≈{page_count}, lang={detected_language}, is_comic={comic_info['is_comic']}, is_scanned={comic_info['is_scanned']}"
     )
 
     return {
@@ -244,6 +247,9 @@ async def upload_file(file: UploadFile = File(...)):
         "file_type": file_type,
         "estimated_pages": page_count,
         "detected_language": detected_language,
+        "is_comic": comic_info["is_comic"],
+        "is_scanned": comic_info["is_scanned"],
+        "comic_reason": comic_info["reason"],
     }
 
 
@@ -309,11 +315,21 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
-        # 0. Graphic Novel / Comic translation (balloons only, preserving 100% artwork)
-        if layout in ("comic", "graphic_novel") or file_type in ("cbz", "cbr"):
+        from backend.settings_manager import get_setting
+        from backend.parsers import detect_is_graphic_novel
+        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+
+        # Check if uploaded PDF is a scanned/image-only document or graphic novel
+        comic_probe = detect_is_graphic_novel(file_path, file_type, job.file_name or "")
+        is_comic_flow = (
+            layout in ("comic", "graphic_novel")
+            or file_type in ("cbz", "cbr")
+            or (file_type == "pdf" and comic_probe.get("is_scanned", False))
+        )
+
+        # 0. Graphic Novel / Comic / Scanned Image PDF translation (balloons/vision only, preserving 100% artwork)
+        if is_comic_flow:
             from backend.comic_translator import translate_comic_document
-            from backend.settings_manager import get_setting
-            resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
             reading_dir = getattr(job, "reading_direction", "ltr") or "ltr"
             final_comic_pdf = await translate_comic_document(
                 job_id=job_id,
@@ -322,7 +338,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 source_lang=source_lang,
                 target_lang=target_lang,
                 output_path=output_path,
-                api_key=resolved_key if (ai_polish or resolved_key) else None,
+                api_key=resolved_key if resolved_key else None,
                 reading_direction=reading_dir,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
@@ -356,7 +372,27 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 job.output_format = "pdf"
             job.layout_mode = "comic"
 
-        # 1. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
+        # 1. Single-Pass Direct AI Translation & Polish for ALL book/document formats (PDF, EPUB, DOCX, TXT)
+        elif ai_polish and resolved_key:
+            from backend.ai_polisher import translate_and_polish_direct_with_gemini
+            style_for_layout = "literature" if layout == "literature" else "natural"
+            await translate_and_polish_direct_with_gemini(
+                job_id=job_id,
+                file_path=file_path,
+                file_type=file_type,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                output_path=output_path,
+                api_key=resolved_key,
+                style=style_for_layout,
+            )
+            if is_job_cancelled(job_id):
+                return
+            txt_content = Path(output_path).read_text(encoding="utf-8")
+            update_job(job_id, current_step=f"Exporting AI-polished {fmt.upper()}...", progress=95)
+            final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
+
+        # 2. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
         elif file_type == "docx" and fmt in ("docx", "doc"):
             final_docx_path = out_dir / f"{base_name}.docx"
 
@@ -375,7 +411,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             Path(output_path).write_text(translated_txt, encoding="utf-8")
             final_path = final_docx_path
 
-        # 2. EPUB In-Place Format Preservation (HTML tags, CSS, headings, styles, images)
+        # 3. EPUB In-Place Format Preservation (HTML tags, CSS, headings, styles, images)
         elif file_type == "epub" and fmt == "epub":
             final_epub_path = out_dir / f"{base_name}.epub"
 
@@ -393,33 +429,16 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             Path(output_path).write_text(translated_txt, encoding="utf-8")
             final_path = final_epub_path
 
-        # 3. Standard parsing + rich styled export (for PDF or cross-format exports)
+        # 4. Standard parsing + rich styled export (for PDF or cross-format exports)
         else:
-            from backend.settings_manager import get_setting
-            resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-            if ai_polish and resolved_key:
-                # Single-Pass Direct AI Translation & Literary Polish (3x-5x faster, zero 429 bottleneck)
-                from backend.ai_polisher import translate_and_polish_direct_with_gemini
-                style_for_layout = "literature" if layout == "literature" else "natural"
-                await translate_and_polish_direct_with_gemini(
-                    job_id=job_id,
-                    file_path=file_path,
-                    file_type=file_type,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    output_path=output_path,
-                    api_key=resolved_key,
-                    style=style_for_layout,
-                )
-            else:
-                await translate_document(
-                    job_id=job_id,
-                    file_path=file_path,
-                    file_type=file_type,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    output_path=output_path,
-                )
+            await translate_document(
+                job_id=job_id,
+                file_path=file_path,
+                file_type=file_type,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                output_path=output_path,
+            )
             if is_job_cancelled(job_id):
                 return
             txt_content = Path(output_path).read_text(encoding="utf-8")

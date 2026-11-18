@@ -101,12 +101,93 @@ function removeFile(prefix) {
     if (useTranslated) useTranslated.checked = false;
   }
   if (prefix === 'tr') {
-    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
-    updateFormatAvailability(layout, '');
+    setGraphicNovelLock(false);
+    const stdBtn = document.getElementById('layout-standard');
+    if (stdBtn) selectLayout('standard', stdBtn);
+    updateFormatAvailability('standard', '');
   }
   // Reset file input
   const inp = document.getElementById(`${prefix}-file-input`);
   if (inp) inp.value = '';
+}
+
+function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
+  state.tr.isComic = !!isComic;
+  const btnStd = document.getElementById('layout-standard');
+  const btnLit = document.getElementById('layout-literature');
+  const btnComic = document.getElementById('layout-comic');
+  const directPolishBtn = document.getElementById('tr-direct-polish-btn');
+  const directEditorBtn = document.getElementById('tr-direct-editor-btn');
+  const hintEl = document.getElementById('comic-format-hint');
+  const readingDirGroup = document.getElementById('tr-reading-dir-group');
+  const covGroup = document.getElementById('tr-cover-group');
+  const aiPolishChk = document.getElementById('tr-ai-polish');
+
+  if (isComic) {
+    // Lock layout strictly to Graphic Novel / Comic
+    if (btnStd) {
+      btnStd.disabled = true;
+      btnStd.classList.add('format-btn-disabled');
+      btnStd.classList.remove('active');
+      btnStd.title = 'Απενεργοποιημένο — εντοπίστηκε Graphic Novel / Comic';
+    }
+    if (btnLit) {
+      btnLit.disabled = true;
+      btnLit.classList.add('format-btn-disabled');
+      btnLit.classList.remove('active');
+      btnLit.title = 'Απενεργοποιημένο — εντοπίστηκε Graphic Novel / Comic';
+    }
+    if (btnComic) {
+      btnComic.disabled = false;
+      btnComic.classList.remove('format-btn-disabled');
+      selectLayout('comic', btnComic);
+    }
+    // Disable non-comic standalone text buttons
+    if (directPolishBtn) {
+      directPolishBtn.disabled = true;
+      directPolishBtn.style.opacity = '0.45';
+      directPolishBtn.title = 'Δεν ισχύει για Graphic Novels — χρησιμοποιήστε Start Translation (με ή χωρίς AI Polish checkbox)';
+    }
+    if (directEditorBtn) {
+      directEditorBtn.disabled = true;
+      directEditorBtn.style.opacity = '0.4';
+      directEditorBtn.style.pointerEvents = 'none';
+      directEditorBtn.title = 'Δεν ισχύει για Graphic Novels';
+    }
+    if (covGroup) covGroup.style.display = 'none';
+    if (readingDirGroup) readingDirGroup.style.display = 'block';
+    if (isScanned && aiPolishChk) {
+      aiPolishChk.checked = true;
+    }
+    if (hintEl) {
+      hintEl.style.display = 'flex';
+      const detail = reason ? ` (${reason})` : '';
+      hintEl.innerHTML = `<span>🎨 <strong>Graphic Novel / Comic Auto-Detected${detail}:</strong> Ενεργοποιήθηκαν αποκλειστικά οι επιλογές Graphic Novel (<strong>PDF, CBZ, CBR, EPUB</strong> &amp; LTR/RTL). Οι επιλογές κειμένου/βιβλίου απενεργοποιήθηκαν αυτόματα.</span>`;
+    }
+  } else {
+    // Unlock all standard book/document options
+    if (btnStd) {
+      btnStd.disabled = false;
+      btnStd.classList.remove('format-btn-disabled');
+      btnStd.title = '';
+    }
+    if (btnLit) {
+      btnLit.disabled = false;
+      btnLit.classList.remove('format-btn-disabled');
+      btnLit.title = '';
+    }
+    if (directPolishBtn) {
+      directPolishBtn.disabled = !state.tr.jobId;
+      directPolishBtn.style.opacity = '';
+      directPolishBtn.title = '';
+    }
+    if (directEditorBtn) {
+      directEditorBtn.disabled = false;
+      directEditorBtn.style.opacity = '';
+      directEditorBtn.style.pointerEvents = '';
+      directEditorBtn.title = '';
+    }
+  }
 }
 
 async function uploadFile(prefix, file) {
@@ -144,12 +225,19 @@ async function uploadFile(prefix, file) {
     if (prefix === 'tr') {
       state.tr.file = file;
       const ext = file.name.split('.').pop().toLowerCase();
-      if (ext === 'cbz' || ext === 'cbr' || ext === 'zip') {
-        const comicBtn = document.getElementById('layout-comic');
-        if (comicBtn) selectLayout('comic', comicBtn);
+      const autoDetectedComic = Boolean(data.is_comic) || ['cbz', 'cbr', 'zip'].includes(ext);
+      if (autoDetectedComic) {
+        setGraphicNovelLock(true, data.comic_reason || '', Boolean(data.is_scanned));
+        toast(`🎨 Εντοπίστηκε Graphic Novel / Comic! Ενεργοποιήθηκαν αποκλειστικά οι επιλογές Graphic Novel.`, 'info');
       } else {
+        setGraphicNovelLock(false);
         const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
-        updateFormatAvailability(layout, ext);
+        if (layout === 'comic') {
+          const stdBtn = document.getElementById('layout-standard');
+          if (stdBtn) selectLayout('standard', stdBtn);
+        } else {
+          updateFormatAvailability(layout, ext);
+        }
         checkCoverImage(data.job_id);
 
         // Auto-Genre Detection
@@ -349,6 +437,10 @@ function selectFormat(fmt, btn) {
 }
 
 function selectLayout(layout, btn) {
+  if (btn && btn.disabled) {
+    toast('Αυτή η επιλογή είναι απενεργοποιημένη για Graphic Novels / Comics.', 'info');
+    return;
+  }
   document.querySelectorAll('#tr-layout-selector .format-btn').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tr-layout-mode').value = layout;

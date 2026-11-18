@@ -297,6 +297,24 @@ async def _translate_page_vector(
     return page_dialogues
 
 
+_CACHED_VISION_MODEL: Optional[str] = None
+
+
+def _hex_to_rgb01(hex_color: Optional[str]) -> Tuple[float, float, float]:
+    """Converts '#rrggbb' to PyMuPDF 0..1 RGB tuple, defaulting to crisp white."""
+    if not hex_color or not isinstance(hex_color, str):
+        return (1.0, 1.0, 1.0)
+    h = hex_color.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return (1.0, 1.0, 1.0)
+    try:
+        return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+    except Exception:
+        return (1.0, 1.0, 1.0)
+
+
 def _encode_comic_page_jpeg(page: fitz.Page, max_dim: int = 1400, quality: int = 82) -> bytes:
     """Renders a comic page to an optimized JPEG (capped at max_dim) for fast, crisp Vision OCR."""
     import io
@@ -372,10 +390,15 @@ async def _detect_comic_balloons_vision_async(
     if owns_session:
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
 
+    global _CACHED_VISION_MODEL
+    vision_models = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
+    if _CACHED_VISION_MODEL and _CACHED_VISION_MODEL in vision_models:
+        vision_models = [_CACHED_VISION_MODEL] + [m for m in vision_models if m != _CACHED_VISION_MODEL]
+
     detected_items: List[Dict[str, Any]] = []
     try:
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-        for model in ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+        for model in vision_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             use_no_thinking = "2.5-flash" in model or "flash-latest" in model
             req_payload = (
@@ -402,6 +425,7 @@ async def _detect_comic_balloons_vision_async(
                         text_resp = parts[0].get("text", "")
                         parsed = json.loads(text_resp)
                         if isinstance(parsed, list):
+                            _CACHED_VISION_MODEL = model
                             detected_items = parsed
                             if cache_key:
                                 try:
@@ -422,6 +446,7 @@ async def _detect_comic_balloons_vision_async(
                                     text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
                                     parsed = json.loads(text_resp)
                                     if isinstance(parsed, list):
+                                        _CACHED_VISION_MODEL = model
                                         detected_items = parsed
                                         break
                     elif resp.status == 429:
@@ -444,44 +469,71 @@ def _render_vision_balloons_on_page(
     detected_items: List[Dict[str, Any]],
     font_path: str,
 ) -> List[str]:
-    """Redacts detected balloon text boxes and renders translated Greek comic dialogue."""
+    """Covers detected scanned balloon text with opaque matching background fill and renders Greek comic dialogue."""
     if not detected_items:
         return []
 
     page_dialogues: List[str] = []
     w, h = page.rect.width, page.rect.height
-    for item in detected_items:
-        box = item.get("box_2d")
-        if not box or len(box) != 4:
-            continue
-        ymin, xmin, ymax, xmax = box
-        rect = fitz.Rect((xmin / 1000.0) * w, (ymin / 1000.0) * h, (xmax / 1000.0) * w, (ymax / 1000.0) * h)
-        page.add_redact_annot(rect, fill=(1, 1, 1))
-
-    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
     for item in detected_items:
         box = item.get("box_2d")
         if not box or len(box) != 4:
             continue
-        ymin, xmin, ymax, xmax = box
-        rect = fitz.Rect((xmin / 1000.0) * w, (ymin / 1000.0) * h, (xmax / 1000.0) * w, (ymax / 1000.0) * h)
-        greek_text = item.get("translated_text", "")
+        greek_text = (item.get("translated_text") or "").strip()
         if not greek_text:
             continue
+        ymin, xmin, ymax, xmax = box
+        # Slight padding so original raster letters inside the speech balloon are 100% covered
+        pad_x = max(2.0, (xmax - xmin) / 1000.0 * w * 0.04)
+        pad_y = max(2.0, (ymax - ymin) / 1000.0 * h * 0.04)
+        rx0 = max(0.0, (xmin / 1000.0) * w - pad_x)
+        ry0 = max(0.0, (ymin / 1000.0) * h - pad_y)
+        rx1 = min(w, (xmax / 1000.0) * w + pad_x)
+        ry1 = min(h, (ymax / 1000.0) * h + pad_y)
+        rect = fitz.Rect(rx0, ry0, rx1, ry1)
+
+        # Determine balloon background color (prefer Gemini bg_color or sampled edge color)
+        bg_hex = item.get("bg_color")
+        bg_rgb = _hex_to_rgb01(bg_hex) if bg_hex else _sample_balloon_bg_color(page, rect)
+        # Choose contrasting text color (white text on dark narration boxes, black on light balloons)
+        luminance = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
+        text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
+
+        # Draw opaque filled rectangle over scanned raster text pixels (preserves surrounding artwork)
+        page.draw_rect(rect, color=bg_rgb, fill=bg_rgb, overlay=True)
+
         page_dialogues.append(greek_text)
 
-        for fs in range(14, 5, -1):
+        # Dynamic fit-to-box Greek comic typesetting
+        placed = False
+        for fs in [13, 12, 11, 10, 9, 8, 7, 6, 5.5, 5]:
             rc = page.insert_textbox(
                 rect,
                 greek_text,
                 fontname="comic",
                 fontfile=font_path,
                 fontsize=fs,
+                color=text_color,
                 align=fitz.TEXT_ALIGN_CENTER,
+                overlay=True,
             )
             if rc >= 0:
+                placed = True
                 break
+        if not placed:
+            expanded = fitz.Rect(max(0, rect.x0 - 4), max(0, rect.y0 - 4), min(w, rect.x1 + 4), min(h, rect.y1 + 4))
+            page.draw_rect(expanded, color=bg_rgb, fill=bg_rgb, overlay=True)
+            page.insert_textbox(
+                expanded,
+                greek_text,
+                fontname="comic",
+                fontfile=font_path,
+                fontsize=5.0,
+                color=text_color,
+                align=fitz.TEXT_ALIGN_CENTER,
+                overlay=True,
+            )
 
     return page_dialogues
 

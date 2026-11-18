@@ -228,6 +228,31 @@ async def _translate_with_retry(
                 if "too many requests" in str(e).lower() or "429" in str(e):
                     _GTX_COOLDOWN_UNTIL = time.time() + 20.0
 
+    # 4. Automatic Gemini Flash failover when Google Translate is rate-limited (429) and an API key exists
+    try:
+        import os
+        from backend.settings_manager import get_setting
+        gemini_key = (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+        if gemini_key and not gemini_key.startswith("AQ.Test"):
+            from backend.ai_polisher import _call_gemini_api
+            tgt_label = "Greek" if target_lang.lower().startswith(("gr", "el")) else "English"
+            src_label = "English" if source_lang.lower().startswith("en") else "Greek"
+            prompt = (
+                f"Translate the following text accurately and naturally from {src_label} to {tgt_label}. "
+                f"Preserve paragraph structure and punctuation. Return ONLY the translated text without comments."
+            )
+            gem_res = await _call_gemini_api(text, gemini_key, prompt, session=session, temperature=0.2)
+            if gem_res and gem_res.strip():
+                if cache_key:
+                    try:
+                        from backend.database import db_set_cached_translation
+                        db_set_cached_translation(cache_key, text, gem_res, source_lang, target_lang, engine="google")
+                    except Exception:
+                        pass
+                return gem_res.strip()
+    except Exception as gem_err:
+        logger.warning(f"Gemini automatic failover failed: {gem_err}")
+
     logger.error("All translation retries failed for chunk. Returning original text.")
     return text
 
