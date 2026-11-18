@@ -141,10 +141,21 @@ def run_suite():
                 failed.append((rel_name, dur, err_output))
                 print(f"❌ FAIL ({dur:.2f}s)")
     finally:
-        # Always clear test sessions, queue items, and temporary test files (preserves translation_cache)
+        # 1. Clear all test sessions via HTTP while server is still up
         _clear_test_sessions()
 
-        # Always restore user settings untouched
+        # 2. Stop temporary server so Windows releases all file handles
+        if temp_server is not None:
+            temp_server.terminate()
+            try:
+                temp_server.wait(timeout=5)
+            except Exception:
+                temp_server.kill()
+
+        # 3. Run disk/SQLite cleanup again after server exit to guarantee zero locked test leftovers
+        _clear_test_sessions()
+
+        # 4. Always restore user settings untouched
         if settings_backup is not None:
             settings_file.parent.mkdir(parents=True, exist_ok=True)
             settings_file.write_bytes(settings_backup)
@@ -153,13 +164,6 @@ def run_suite():
                 settings_file.unlink(missing_ok=True)
             except Exception:
                 pass
-
-        if temp_server is not None:
-            temp_server.terminate()
-            try:
-                temp_server.wait(timeout=5)
-            except Exception:
-                temp_server.kill()
 
     total_dur = time.time() - total_start
     print("\n" + "=" * 72)

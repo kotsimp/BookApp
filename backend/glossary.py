@@ -116,11 +116,21 @@ def _write_raw_file(data: Dict[str, Any]) -> None:
     GLOSSARY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_glossary(category: Optional[str] = None) -> Dict[str, str]:
+# IT / infrastructure terms that must NEVER be auto-substituted into literary fiction, poetry, or comics
+_IT_GENERAL_BLOCKLIST = frozenset({
+    "server room", "file server", "in-house applications", "in house applications",
+    "ups", "online double conversion", "double conversion", "backup", "data loss",
+    "power outage", "voltage fluctuations",
+})
+
+
+def load_glossary(category: Optional[str] = None, style: Optional[str] = None) -> Dict[str, str]:
     """
     Loads glossary terms as a flat source->target dictionary.
     If category is specified ('technical', 'literary', 'general'), returns only that subset.
-    If None or 'all', merges all categories into a single dictionary.
+    If style is specified ('literature', 'poetry', 'audiobook', 'comic'), excludes technical/IT terms
+    so DevOps/Kubernetes vocabulary cannot corrupt literary prose or dialogue.
+    If neither is specified (or category is 'all'), merges all categories.
     """
     data = _read_raw_file()
     terms_by_cat = data.get("terms", {})
@@ -129,8 +139,17 @@ def load_glossary(category: Optional[str] = None) -> Dict[str, str]:
         cat_key = category.lower()
         return dict(terms_by_cat.get(cat_key, {}))
 
+    style_low = (style or "").lower()
+    if style_low in ("literature", "audiobook", "poetry", "comic", "graphic_novel"):
+        merged: Dict[str, str] = {}
+        for k, v in terms_by_cat.get("general", {}).items():
+            if k.lower() not in _IT_GENERAL_BLOCKLIST:
+                merged[k] = v
+        merged.update(terms_by_cat.get("literary", {}))
+        return merged
+
     # Merge all categories (general overrides literary, technical takes precedence for technical docs)
-    merged: Dict[str, str] = {}
+    merged = {}
     for cat_name in ("general", "literary", "technical"):
         merged.update(terms_by_cat.get(cat_name, {}))
     return merged
@@ -231,35 +250,81 @@ def delete_term(source: str) -> Dict[str, str]:
 
 
 def _build_term_regex(term: str) -> re.Pattern:
-    """Builds regex pattern supporting terms with leading/trailing non-word symbols (e.g. C++, .NET)."""
+    """
+    Builds regex pattern supporting terms with leading/trailing non-word symbols (e.g. C++, .NET)
+    while refusing to match fragments inside hyphenated compounds (e.g. 'pod' inside 'pod-man',
+    'royalty' inside 'royalty-free').
+    """
     escaped = re.escape(term)
-    prefix = r"\b" if bool(re.search(r"^\w", term)) else r"(?<!\S)"
-    suffix = r"\b" if bool(re.search(r"\w$", term)) else r"(?!\S)"
+    prefix = r"(?<![\w-])" if bool(re.search(r"^\w", term)) else r"(?<!\S)"
+    suffix = r"(?![\w-])" if bool(re.search(r"\w$", term)) else r"(?!\S)"
     flags = re.IGNORECASE if term.islower() else 0
     return re.compile(rf"{prefix}{escaped}{suffix}", flags)
 
 
-def apply_glossary(text: str, target_lang: str = "greek", category: Optional[str] = None) -> str:
+def _is_english_citation_line(line: str) -> bool:
+    """Detects English-language academic citation/bibliography lines that should not be partially glossary-patched."""
+    s = line.strip()
+    if len(s) < 25:
+        return False
+    latin_cnt = len(re.findall(r"[A-Za-z]", s))
+    greek_cnt = len(re.findall(r"[\u0370-\u03ff]", s))
+    if latin_cnt < 15 or latin_cnt < greek_cnt * 3:
+        return False
+    # Typical citation cues: year (1998) / 2004. / Journal / pp. / Vol. / et al. / doi / ISBN
+    return bool(re.search(r"\b(?:19\d{2}|20\d{2})\b|\bet al\.|\bJournal\b|\bpp\.\s*\d|\bdoi:|:\s*\d+\s*[-–]\s*\d+", s))
+
+
+def apply_glossary(
+    text: str,
+    target_lang: str = "greek",
+    category: Optional[str] = None,
+    style: Optional[str] = None,
+) -> str:
     """
     Applies glossary replacements to text using word-boundary substitutions.
     Sorted by term length descending so longer phrases match first.
     Includes fast substring pre-filtering for high performance across 1000+ terms.
+    When style is literary/comic/audiobook/poetry, excludes technical/IT categories and skips
+    English-only bibliographic citation lines.
     """
     if not text or target_lang.lower() not in ("greek", "el"):
         return text
 
-    glossary = load_glossary(category=category)
+    glossary = load_glossary(category=category, style=style)
+    if not glossary:
+        return text
+
     # Sort terms by length descending to prevent sub-string overlap
     sorted_terms = sorted(glossary.keys(), key=len, reverse=True)
+    protect_citations = (style or "").lower() in ("literature", "audiobook", "poetry", "natural")
 
-    text_lower = text.lower()
-    for term in sorted_terms:
-        # Fast substring pre-check: skip terms that do not appear in text
-        if term.lower() not in text_lower:
-            continue
-        replacement = glossary[term]
-        pattern = _build_term_regex(term)
-        text = pattern.sub(replacement, text)
+    if not protect_citations:
         text_lower = text.lower()
+        for term in sorted_terms:
+            if term.lower() not in text_lower:
+                continue
+            replacement = glossary[term]
+            pattern = _build_term_regex(term)
+            text = pattern.sub(replacement, text)
+            text_lower = text.lower()
+        return text
 
-    return text
+    # Pre-filter active terms against the entire text once for speed
+    full_lower = text.lower()
+    active_terms = [(t, glossary[t], _build_term_regex(t)) for t in sorted_terms if t.lower() in full_lower]
+    if not active_terms:
+        return text
+
+    out_lines = []
+    for line in text.split("\n"):
+        if _is_english_citation_line(line):
+            out_lines.append(line)
+            continue
+        line_lower = line.lower()
+        for term, replacement, pattern in active_terms:
+            if term.lower() in line_lower:
+                line = pattern.sub(replacement, line)
+                line_lower = line.lower()
+        out_lines.append(line)
+    return "\n".join(out_lines)

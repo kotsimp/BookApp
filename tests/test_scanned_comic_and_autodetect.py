@@ -239,7 +239,7 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         # Cache hit MUST mark status_out["succeeded"] = True
         fake_img = b"fake-comic-page-vision-cache-test-bytes-12345"
         img_hash = hashlib.sha256(fake_img).hexdigest()
-        cache_key = compute_cache_key(img_hash, "english", "greek", engine="gemini_comic_vision")
+        cache_key = compute_cache_key(img_hash, "english", "greek", engine="gemini_comic_vision_v2")
         cached_payload = [{"box_2d": [10, 20, 100, 200], "translated_text": "Γεια!"}]
         db_set_cached_translation(
             cache_key,
@@ -247,7 +247,7 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
             json.dumps(cached_payload, ensure_ascii=False),
             "english",
             "greek",
-            engine="gemini_comic_vision",
+            engine="gemini_comic_vision_v2",
         )
         st_info = {}
         res = asyncio.run(

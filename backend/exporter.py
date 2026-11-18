@@ -94,11 +94,74 @@ _CHAPTER_RE = re.compile(
 _SCENE_BREAK_RE = re.compile(r"^(?:\*\s*\*\s*\*+|---\s*|~~~\s*|•\s*•\s*•+)$")
 
 
+_EXPORT_HTML_TAG_RE = re.compile(
+    r"</?(?:i|b|em|strong|u|s|span|p|br|div|font|sup|sub|small|big|mark|del|ins)\b[^>]*>",
+    re.IGNORECASE,
+)
+_EXPORT_SPECIAL_TOKEN_RE = re.compile(
+    r"<(?:/?(?:bos|eos|pad|unk|sep|cls|mask|start_of_turn|end_of_turn)|\|[^|\n]{1,32}\|)>",
+    re.IGNORECASE,
+)
+_EMPHASIS_TOKEN_RE = re.compile(
+    r"(\*\*[^*\n]+?\*\*|(?<!\*)\*(?!\s)[^*\n]+?(?<!\s)\*(?!\*))"
+)
+
+
 def _sanitize_pua(text: str) -> str:
-    """Map Wingdings / Symbol Private Use Area (PUA) characters to standard Unicode."""
+    """
+    Map Wingdings / Symbol Private Use Area (PUA) characters to standard Unicode,
+    and defensively strip any stray inline HTML tags, LLM special tokens, or broken Greek hyphens.
+    """
     for pua, repl in _PUA_MAP.items():
         text = text.replace(pua, repl)
-    return re.sub(r"[\ue000-\uf8ff]", "• ", text)
+    text = re.sub(r"[\ue000-\uf8ff]", "• ", text)
+    text = _EXPORT_SPECIAL_TOKEN_RE.sub("", text)
+    text = _EXPORT_HTML_TAG_RE.sub("", text)
+    try:
+        from backend.typography import fix_broken_hyphens
+        text = fix_broken_hyphens(text)
+    except Exception:
+        pass
+    return text
+
+
+def _split_emphasis_runs(text: str) -> list[tuple[str, bool, bool]]:
+    """
+    Splits a paragraph into (segment_text, is_bold, is_italic) tuples for real typographic rendering
+    of markdown *italic* and **bold** spans without ever leaving raw asterisks in exported books.
+    """
+    if not text or "*" not in text:
+        return [(text, False, False)] if text else []
+    runs: list[tuple[str, bool, bool]] = []
+    pos = 0
+    for m in _EMPHASIS_TOKEN_RE.finditer(text):
+        if m.start() > pos:
+            runs.append((text[pos:m.start()], False, False))
+        tok = m.group(1)
+        if tok.startswith("**") and tok.endswith("**") and len(tok) > 4:
+            runs.append((tok[2:-2], True, False))
+        elif tok.startswith("*") and tok.endswith("*") and len(tok) > 2:
+            runs.append((tok[1:-1], False, True))
+        else:
+            runs.append((tok, False, False))
+        pos = m.end()
+    if pos < len(text):
+        runs.append((text[pos:], False, False))
+    return runs
+
+
+def _emphasis_to_html(text: str) -> str:
+    """Escapes HTML and converts *italic* / **bold** markdown spans into <em> / <strong> tags."""
+    out = []
+    for seg, is_bold, is_italic in _split_emphasis_runs(text):
+        esc = html.escape(seg)
+        if is_bold:
+            out.append(f"<strong>{esc}</strong>")
+        elif is_italic:
+            out.append(f"<em>{esc}</em>")
+        else:
+            out.append(esc)
+    return "".join(out)
 
 
 def _is_chapter_heading(line: str) -> bool:
@@ -319,9 +382,14 @@ def export_docx(text: str, out_path: Path, layout: str = "standard", cover_image
                 p.paragraph_format.line_spacing = 1.4
                 p.paragraph_format.space_after = Pt(4)
                 p.paragraph_format.first_line_indent = Inches(0) if is_first else Inches(0.28)
-                run = p.add_run(para)
-                run.font.name = "Georgia"
-                run.font.size = Pt(11.5)
+                for seg, is_bold, is_italic in _split_emphasis_runs(para):
+                    run = p.add_run(seg)
+                    run.font.name = "Georgia"
+                    run.font.size = Pt(11.5)
+                    if is_bold:
+                        run.bold = True
+                    if is_italic:
+                        run.italic = True
                 is_first = False
 
         doc.save(str(out_path))
@@ -383,7 +451,23 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
         "C:/Windows/Fonts/arial.ttf",
     ]
+    italic_candidates = [
+        "C:/Windows/Fonts/georgiai.ttf",
+        "C:/Windows/Fonts/timesi.ttf",
+        "C:/Windows/Fonts/palai.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+        "C:/Windows/Fonts/ariali.ttf",
+    ]
+    bold_candidates = [
+        "C:/Windows/Fonts/georgiab.ttf",
+        "C:/Windows/Fonts/timesbd.ttf",
+        "C:/Windows/Fonts/palab.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ]
     font_path = next((f for f in serif_candidates if os.path.exists(f)), None)
+    italic_font_path = next((f for f in italic_candidates if os.path.exists(f)), font_path)
+    bold_font_path = next((f for f in bold_candidates if os.path.exists(f)), font_path)
 
     # 6" x 9" trade paperback size (ideal for iPad & e-readers)
     width = 432.0
@@ -404,12 +488,20 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
             pass
 
     fname = "book_serif" if font_path else "helv"
+    fname_it = "book_serif_it" if italic_font_path else fname
+    fname_bd = "book_serif_bd" if bold_font_path else fname
     font_obj = pymupdf.Font(fontfile=font_path) if font_path else pymupdf.Font("helv")
+    font_obj_it = pymupdf.Font(fontfile=italic_font_path) if italic_font_path else font_obj
+    font_obj_bd = pymupdf.Font(fontfile=bold_font_path) if bold_font_path else font_obj
 
     def new_book_page():
         pg = doc.new_page(width=width, height=height)
         if font_path:
             pg.insert_font(fontname=fname, fontfile=font_path)
+        if italic_font_path:
+            pg.insert_font(fontname=fname_it, fontfile=italic_font_path)
+        if bold_font_path:
+            pg.insert_font(fontname=fname_bd, fontfile=bold_font_path)
         return pg, margin_top
 
     chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
@@ -443,31 +535,70 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
                 is_first = True
                 continue
 
-            words = para.split()
-            line_words: list[str] = []
+            # Tokenize paragraph into styled words (word, style_code: 'r'|'i'|'b')
+            styled_words: list[tuple[str, str]] = []
+            for seg, is_bold, is_italic in _split_emphasis_runs(para):
+                st = "b" if is_bold else ("i" if is_italic else "r")
+                for w in seg.split():
+                    styled_words.append((w, st))
+
+            def _word_font(st: str):
+                if st == "i":
+                    return fname_it, font_obj_it
+                if st == "b":
+                    return fname_bd, font_obj_bd
+                return fname, font_obj
+
+            def _measure_styled_line(items: list[tuple[str, str]]) -> float:
+                total_w = 0.0
+                space_w = font_obj.text_length(" ", fontsize=body_size)
+                for idx_w, (w_txt, w_st) in enumerate(items):
+                    _, fobj_w = _word_font(w_st)
+                    total_w += fobj_w.text_length(w_txt, fontsize=body_size)
+                    if idx_w > 0:
+                        total_w += space_w
+                return total_w
+
+            def _draw_styled_line(target_page, start_x: float, y_pos: float, items: list[tuple[str, str]]):
+                # Merge consecutive words of identical style for clean text extraction & kerning
+                if not items:
+                    return
+                groups: list[tuple[str, str]] = []
+                for w_txt, w_st in items:
+                    if groups and groups[-1][1] == w_st:
+                        groups[-1] = (groups[-1][0] + " " + w_txt, w_st)
+                    else:
+                        groups.append((w_txt, w_st))
+                cx = start_x
+                space_w = font_obj.text_length(" ", fontsize=body_size)
+                for g_idx, (g_txt, g_st) in enumerate(groups):
+                    if g_idx > 0:
+                        cx += space_w
+                    fn_g, fo_g = _word_font(g_st)
+                    target_page.insert_text(pymupdf.Point(cx, y_pos), g_txt, fontsize=body_size, fontname=fn_g, color=(0.12, 0.12, 0.12))
+                    cx += fo_g.text_length(g_txt, fontsize=body_size)
+
+            line_words: list[tuple[str, str]] = []
             first_line = True
 
-            for w in words:
+            for w_item in styled_words:
                 curr_indent = (0.0 if is_first else indent) if first_line else 0.0
                 avail_w = max_line_w - curr_indent
-                test_str = " ".join(line_words + [w])
-                if font_obj.text_length(test_str, fontsize=body_size) <= avail_w:
-                    line_words.append(w)
+                if not line_words or _measure_styled_line(line_words + [w_item]) <= avail_w:
+                    line_words.append(w_item)
                 else:
                     if y + line_height > content_bottom:
                         page, y = new_book_page()
-                    line_str = " ".join(line_words)
-                    page.insert_text(pymupdf.Point(margin_x + curr_indent, y), line_str, fontsize=body_size, fontname=fname, color=(0.12, 0.12, 0.12))
+                    _draw_styled_line(page, margin_x + curr_indent, y, line_words)
                     y += line_height
-                    line_words = [w]
+                    line_words = [w_item]
                     first_line = False
 
             if line_words:
                 curr_indent = (0.0 if is_first else indent) if first_line else 0.0
                 if y + line_height > content_bottom:
                     page, y = new_book_page()
-                line_str = " ".join(line_words)
-                page.insert_text(pymupdf.Point(margin_x + curr_indent, y), line_str, fontsize=body_size, fontname=fname, color=(0.12, 0.12, 0.12))
+                _draw_styled_line(page, margin_x + curr_indent, y, line_words)
                 y += line_height
 
             y += 4.5
@@ -694,7 +825,7 @@ p {
                     is_first = True
                 else:
                     cls = ' class="first-para"' if is_first else ""
-                    parts.append(f"<p{cls}>{html.escape(para)}</p>")
+                    parts.append(f"<p{cls}>{_emphasis_to_html(para)}</p>")
                     is_first = False
 
             c.content = "\n".join(parts)

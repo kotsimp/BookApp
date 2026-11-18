@@ -36,6 +36,12 @@ COMIC_FONTS = [
     "C:/Windows/Fonts/arial.ttf",         # Arial
 ]
 
+CONDENSED_COMIC_FONTS = [
+    "C:/Windows/Fonts/arialn.ttf",       # Arial Narrow (ideal fallback for super-dense Greek balloons)
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+]
+
 
 def _get_comic_font_path() -> str:
     """Returns the best available comic font supporting Greek characters."""
@@ -43,6 +49,237 @@ def _get_comic_font_path() -> str:
         if os.path.exists(p):
             return p
     return "C:/Windows/Fonts/arial.ttf"
+
+
+def _get_condensed_comic_font_path() -> str:
+    """Returns a narrow/condensed Unicode Greek font for dense speech balloons."""
+    for p in CONDENSED_COMIC_FONTS:
+        if os.path.exists(p):
+            return p
+    return _get_comic_font_path()
+
+
+_GREEK_UPPER_TONOS_MAP = str.maketrans("ΆΈΉΊΌΎΏάέήίόύώ", "ΑΕΗΙΟΥΩΑΕΗΙΟΥΩ")
+
+
+def sanitize_comic_dialogue(text: str, target_lang: str = "greek") -> str:
+    """
+    Cleans and standardizes translated comic speech balloon dialogue:
+    - Removes stray HTML tags, LLM tokens, markdown asterisks (*...*), and stray trailing backslashes
+    - Fixes broken hyphenated words ('ΠΛΗΜ- ΜΥΡΙΣΕΙ' -> 'ΠΛΗΜΜΥΡΙΣΕΙ')
+    - Restores missing Greek elision apostrophes ('Σ ΑΥΤΗΝ' -> \"Σ' ΑΥΤΗΝ\", 'ΓΙ ΑΥΤΟ' -> \"ΓΙ' ΑΥΤΟ\")
+    - Converts English '?' / '?!' / '??!!' to Greek ';' / ';!' / ';;!!'
+    - Applies Greek final-nu rules and guillemets («...»)
+    - Fixes stray lowercase letters inside ALL-CAPS comic balloons (e.g. 'ΕΝΑς' -> 'ΕΝΑΣ')
+    """
+    if not text or not text.strip():
+        return ""
+    s = text.strip()
+
+    from backend.ai_polisher import sanitize_ai_output
+    s = sanitize_ai_output(s)
+
+    # Strip stray markdown emphasis asterisks (*word* or leading * in comic balloons)
+    s = re.sub(r"\*+([^*\n]+?)\*+", r"\1", s)
+    s = re.sub(r"(?:^|\s)\*(?=\S)", lambda m: m.group(0).replace("*", ""), s)
+    # Strip stray unescaped trailing backslash from malformed JSON escapes
+    s = re.sub(r"\\+\s*$", "", s)
+    # Collapse accidental internal newlines inside a single balloon sentence into spaces
+    s = re.sub(r"[ \t]*\r?\n[ \t]*", " ", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+
+    if target_lang.lower().startswith(("gr", "el")):
+        from backend.typography import format_greek_typography
+        # Format quotes, final-nu, elision apostrophes, broken hyphens, and Greek question marks
+        s = format_greek_typography(
+            s,
+            enable_quotes=True,
+            enable_dialogue_dashes=False,
+            enable_final_nu=True,
+            enable_punctuation=True,
+        )
+        # Convert standalone comic exclamation/question balloons like '??!!' or '?!' to Greek ';'
+        if re.fullmatch(r'[«»"\'\s]*\?+[!?]*[«»"\'\s]*', s):
+            s = s.replace("?", ";")
+        # If the balloon is predominantly ALL-CAPS (>= 75% uppercase Greek letters),
+        # fix stray lowercase characters like 'ΕΝΑς' -> 'ΕΝΑΣ'
+        alpha_chars = [ch for ch in s if ch.isalpha()]
+        if alpha_chars:
+            upper_ratio = sum(1 for ch in alpha_chars if ch.isupper()) / len(alpha_chars)
+            if upper_ratio >= 0.75:
+                # Uppercase while preserving disjunctive 'Ή' and dialytika 'Ϊ', 'Ϋ'
+                tokens = s.split(" ")
+                fixed_tokens = []
+                for tok in tokens:
+                    if tok in ("ή", "Ή"):
+                        fixed_tokens.append("Ή")
+                    else:
+                        up = tok.upper()
+                        # Remove tonos on uppercase Greek letters except standalone 'Ή' and dialytika 'Ϊ'/'Ϋ'
+                        fixed_tokens.append(up.translate(_GREEK_UPPER_TONOS_MAP))
+                s = " ".join(fixed_tokens)
+
+    return s.strip()
+
+
+def _comic_items_have_corruption(items: List[Dict[str, Any]], target_lang: str = "greek") -> bool:
+    """
+    Detects mixed-script or exotic-script token corruption (e.g. Armenian 'ΚՈΠΩΣΗ',
+    Cyrillic 'ΗΜΑΣΤАН', Latin-in-Greek 'Τous', 'ΣΥΡIAKΕΣ', 'AΠΟΣΤΟΛΗ') in Vision JSON output.
+    """
+    if not items or not target_lang.lower().startswith(("gr", "el")):
+        return False
+    from backend.ai_polisher import detect_greek_output_issues
+    combined_tr = "\n".join(
+        str(it.get("translated_text") or it.get("translation") or it.get("greek_text") or "")
+        for it in items
+        if isinstance(it, dict)
+    )
+    combined_src = "\n".join(
+        str(it.get("original_text") or "")
+        for it in items
+        if isinstance(it, dict)
+    )
+    if not combined_tr.strip():
+        return False
+    issues = detect_greek_output_issues(combined_tr, source_text=combined_src)
+    return any(i.startswith("mixed_script") or i == "cot_leak" for i in issues)
+
+
+def _wrap_text_to_width(text: str, font_obj: fitz.Font, fontsize: float, max_width: float) -> List[str]:
+    """Wraps text cleanly into lines fitting within max_width, hyphenating only overlong single words."""
+    words = text.split()
+    if not words:
+        return []
+    lines: List[str] = []
+    curr = ""
+    for w in words:
+        cand = f"{curr} {w}".strip() if curr else w
+        if font_obj.text_length(cand, fontsize=fontsize) <= max_width:
+            curr = cand
+            continue
+        if curr:
+            lines.append(curr)
+            curr = ""
+        # Check if single word fits on its own line
+        if font_obj.text_length(w, fontsize=fontsize) <= max_width:
+            curr = w
+        else:
+            # Break overlong single word cleanly so text NEVER overflows or disappears
+            piece = ""
+            for ch in w:
+                test_p = piece + ch
+                if font_obj.text_length(test_p + "-", fontsize=fontsize) <= max_width or not piece:
+                    piece = test_p
+                else:
+                    lines.append(piece + "-")
+                    piece = ch
+            curr = piece
+    if curr:
+        lines.append(curr)
+    return lines
+
+
+def _fit_and_draw_balloon_text(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    font_path: str,
+    bg_rgb: Tuple[float, float, float],
+    text_color: Tuple[float, float, float],
+    max_fontsize: float = 13.0,
+    draw_bg: bool = True,
+) -> bool:
+    """
+    Deterministically fits, horizontally & vertically centers, and draws Greek comic dialogue
+    inside a speech balloon. Progressively shrinks font size, tightens line spacing, switches
+    to condensed font if needed, and gently expands the box so balloons NEVER render blank.
+    """
+    if not text or not text.strip():
+        return False
+
+    page_w, page_h = page.rect.width, page.rect.height
+    condensed_path = _get_condensed_comic_font_path()
+    primary_font = fitz.Font(fontfile=font_path)
+    condensed_font = fitz.Font(fontfile=condensed_path) if condensed_path != font_path else primary_font
+
+    # Candidate layout strategies: (font_path, font_name, font_obj, pad_expand_x, pad_expand_y, sizes, line_mult)
+    strategies = [
+        (font_path, "comic", primary_font, 0.0, 0.0, [13, 12, 11, 10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5, 5.0], 1.12),
+        (font_path, "comic", primary_font, 4.0, 3.0, [6.5, 6.0, 5.5, 5.0, 4.5], 1.08),
+        (condensed_path, "comic_narrow", condensed_font, 5.0, 4.0, [6.5, 6.0, 5.5, 5.0, 4.5, 4.0], 1.06),
+        (condensed_path, "comic_narrow", condensed_font, 10.0, 8.0, [5.0, 4.5, 4.0, 3.5, 3.0], 1.04),
+    ]
+
+    chosen = None
+    for fpath, fname, fobj, ex_x, ex_y, sizes, line_mult in strategies:
+        box = fitz.Rect(
+            max(1.0, rect.x0 - ex_x),
+            max(1.0, rect.y0 - ex_y),
+            min(page_w - 1.0, rect.x1 + ex_x),
+            min(page_h - 1.0, rect.y1 + ex_y),
+        )
+        inner_w = max(8.0, box.width - 3.0)
+        inner_h = max(8.0, box.height - 2.0)
+        for fs in sizes:
+            if fs > max_fontsize:
+                continue
+            lines = _wrap_text_to_width(text, fobj, fs, inner_w)
+            line_h = fs * line_mult
+            total_h = len(lines) * line_h
+            if total_h <= inner_h:
+                chosen = (fpath, fname, fobj, box, fs, lines, line_h)
+                break
+        if chosen is not None:
+            break
+
+    # Absolute last-resort guarantee: expand box height to hold 3.0pt condensed text so text NEVER vanishes
+    if chosen is None:
+        fpath, fname, fobj = condensed_path, "comic_narrow", condensed_font
+        fs = 3.0
+        line_mult = 1.04
+        line_h = fs * line_mult
+        box = fitz.Rect(
+            max(1.0, rect.x0 - 10.0),
+            max(1.0, rect.y0 - 6.0),
+            min(page_w - 1.0, rect.x1 + 10.0),
+            min(page_h - 1.0, rect.y1 + 6.0),
+        )
+        inner_w = max(10.0, box.width - 3.0)
+        lines = _wrap_text_to_width(text, fobj, fs, inner_w)
+        needed_h = len(lines) * line_h + 3.0
+        if needed_h > box.height:
+            extra = (needed_h - box.height) / 2.0
+            box = fitz.Rect(
+                box.x0,
+                max(1.0, box.y0 - extra),
+                box.x1,
+                min(page_h - 1.0, box.y1 + extra),
+            )
+        chosen = (fpath, fname, fobj, box, fs, lines, line_h)
+
+    fpath, fname, fobj, final_box, fs, lines, line_h = chosen
+
+    if draw_bg:
+        page.draw_rect(final_box, color=bg_rgb, fill=bg_rgb, overlay=True)
+
+    page.insert_font(fontname=fname, fontfile=fpath)
+    total_h = len(lines) * line_h
+    start_y = final_box.y0 + max(1.0, (final_box.height - total_h) / 2.0) + fs * 0.85
+
+    for idx, ln in enumerate(lines):
+        lw = fobj.text_length(ln, fontsize=fs)
+        tx = final_box.x0 + max(1.0, (final_box.width - lw) / 2.0)
+        ty = start_y + idx * line_h
+        page.insert_text(
+            fitz.Point(tx, ty),
+            ln,
+            fontname=fname,
+            fontsize=fs,
+            color=text_color,
+            overlay=True,
+        )
+    return True
 
 
 def _sample_balloon_bg_color(page: fitz.Page, rect: fitz.Rect) -> Tuple[float, float, float]:
@@ -178,7 +415,15 @@ async def _ai_polish_comic_balloons(
         }
     }
 
-    for model in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]:
+    for model in [
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+    ]:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             req = urllib.request.Request(
@@ -187,22 +432,28 @@ async def _ai_polish_comic_balloons(
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
             )
             loop = asyncio.get_event_loop()
-            resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=12).read().decode("utf-8"))
+            resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
             data = json.loads(resp_raw)
-            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            from backend.ai_polisher import _extract_gemini_text_and_reason
+            raw_text, _ = _extract_gemini_text_and_reason(data)
+            if not raw_text:
+                continue
             res_list = json.loads(raw_text)
-            polished_map = {item["id"]: item.get("polished", "").strip() for item in res_list if "id" in item}
+            polished_map = {
+                item["id"]: sanitize_comic_dialogue(item.get("polished", "").strip(), "greek")
+                for item in res_list if "id" in item
+            }
 
             results = []
             for i, b in enumerate(balloons):
                 item_id = i + 1
                 pol = polished_map.get(item_id)
-                results.append(pol if pol else b["draft"])
+                results.append(pol if pol else sanitize_comic_dialogue(b["draft"], "greek"))
             return results
         except Exception as ex:
             logger.debug(f"AI Polish attempt with {model} failed: {ex}")
 
-    return [b["draft"] for b in balloons]
+    return [sanitize_comic_dialogue(b["draft"], "greek") for b in balloons]
 
 
 async def _translate_page_vector(
@@ -228,7 +479,8 @@ async def _translate_page_vector(
             continue
         try:
             tr = await _translate_with_retry(orig, source_lang, target_lang)
-            tr = apply_glossary(tr, target_lang)
+            tr = apply_glossary(tr, target_lang, style="comic")
+            tr = sanitize_comic_dialogue(tr, target_lang)
             translated_balloons.append(tr)
             page_dialogues.append(tr)
         except Exception as ex:
@@ -248,8 +500,10 @@ async def _translate_page_vector(
             logger.warning(f"AI Polish on comic page skipped: {ex}")
 
     # 2. Redact original text in balloons with matching background fill
+    bg_colors = []
     for c in clusters:
         bg_col = _sample_balloon_bg_color(page, c["rect"])
+        bg_colors.append(bg_col)
         for ob in c["original_boxes"]:
             # 2.5px padding to cleanly cover descenders and ascenders
             pad_box = fitz.Rect(ob.x0 - 2.5, ob.y0 - 2.5, ob.x1 + 2.5, ob.y1 + 2.5)
@@ -258,41 +512,28 @@ async def _translate_page_vector(
     # Apply redactions - images=PDF_REDACT_IMAGE_NONE guarantees the illustrations stay untouched!
     page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
-    # 3. Typeset Greek translated text inside each balloon
+    # 3. Typeset Greek translated text inside each balloon with guaranteed non-blank fit
     for i, c in enumerate(clusters):
         greek_text = translated_balloons[i]
         if not greek_text.strip():
             continue
 
         bbox = c["rect"]
-        # Allow slight padding inside balloon
         target_box = fitz.Rect(bbox.x0 - 3, bbox.y0 - 2, bbox.x1 + 3, bbox.y1 + 2)
+        bg_col = bg_colors[i]
+        luminance = 0.299 * bg_col[0] + 0.587 * bg_col[1] + 0.114 * bg_col[2]
+        text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
 
-        # Dynamic smart font size fitting (from 16pt down to 5.5pt in fine increments)
-        fitted = False
-        for fs in [16, 15, 14, 13, 12, 11, 10, 9.5, 9, 8.5, 8, 7.5, 7, 6.5, 6, 5.5]:
-            rc = page.insert_textbox(
-                target_box,
-                greek_text,
-                fontname="comic",
-                fontfile=font_path,
-                fontsize=fs,
-                align=fitz.TEXT_ALIGN_CENTER,
-            )
-            if rc >= 0:
-                fitted = True
-                break
-
-        if not fitted:
-            # Fallback to 5.5pt if text is unusually dense or lengthy
-            page.insert_textbox(
-                target_box,
-                greek_text,
-                fontname="comic",
-                fontfile=font_path,
-                fontsize=5.5,
-                align=fitz.TEXT_ALIGN_CENTER,
-            )
+        _fit_and_draw_balloon_text(
+            page,
+            target_box,
+            greek_text,
+            font_path=font_path,
+            bg_rgb=bg_col,
+            text_color=text_color,
+            max_fontsize=15.0,
+            draw_bg=False,
+        )
 
     return page_dialogues
 
@@ -301,17 +542,19 @@ _CACHED_VISION_MODEL: Optional[str] = None
 _DEAD_VISION_MODELS: set[str] = set()
 
 VISION_MODELS_PRIORITY = [
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
+    # Full Flash models FIRST for accurate Greek spelling, grammar & zero mixed-script glitches
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3.8-flash",
-    "gemini-flash-latest",
+    # Flash-Lite models as fallback
     "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
 ]
 
 
@@ -441,7 +684,7 @@ async def _detect_comic_balloons_vision_async(
     cache_key = None
     try:
         from backend.database import compute_cache_key, db_get_cached_translation
-        cache_key = compute_cache_key(img_hash, source_lang, target_lang, engine="gemini_comic_vision")
+        cache_key = compute_cache_key(img_hash, source_lang, target_lang, engine="gemini_comic_vision_v2")
         cached = db_get_cached_translation(cache_key)
         if cached:
             parsed = json.loads(cached)
@@ -454,10 +697,22 @@ async def _detect_comic_balloons_vision_async(
         pass
 
     img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-    tgt_name = "Greek" if target_lang.lower().startswith(("gr", "el")) else target_lang
+    is_greek_target = target_lang.lower().startswith(("gr", "el"))
+    tgt_name = "Greek" if is_greek_target else target_lang
+    greek_rules = (
+        "STRICT GREEK LOCALIZATION RULES:\n"
+        "- Translate into natural, idiomatic, grammatically & orthographically flawless Modern Greek (correct gender agreement, declensions, and spelling — NO literal English calques and NO spelling typos).\n"
+        "- Keep dialogue CONCISE so it fits comfortably inside each speech balloon.\n"
+        "- Use CONSISTENT comic lettering: ALL CAPS Greek without tonos accents (keep only dialytika Ϊ/Ϋ and disjunctive Ή) whenever the original balloon is uppercase.\n"
+        "- Use Greek question mark ';' (NEVER '?') and Greek guillemets '«...»' ONLY when quoting someone inside speech.\n"
+        "- NEVER use markdown asterisks (*...*), HTML tags, or non-Greek letters (Latin/Cyrillic/Armenian) spliced inside Greek words.\n"
+        if is_greek_target
+        else ""
+    )
     prompt = (
         "You are an expert graphic novel and comic book localization engine. "
         "Detect ALL dialogue text, speech balloons, thought bubbles, and narration caption boxes on this comic page. "
+        f"{greek_rules}"
         "Return a STRICT JSON list of objects:\n"
         "[\n"
         "  {\n"
@@ -471,6 +726,8 @@ async def _detect_comic_balloons_vision_async(
         "If the page has ONLY artwork and NO text at all, return []."
     )
 
+    from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason
+
     base_payload = {
         "contents": [{
             "role": "user",
@@ -480,9 +737,11 @@ async def _detect_comic_balloons_vision_async(
             ]
         }],
         "generationConfig": {
-            "temperature": 0.1,
-            "responseMimeType": "application/json"
-        }
+            "temperature": 0.15,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 8192,
+        },
+        "safetySettings": _LITERARY_SAFETY_SETTINGS,
     }
 
     owns_session = session is None
@@ -494,12 +753,26 @@ async def _detect_comic_balloons_vision_async(
     if not vision_models:
         _DEAD_VISION_MODELS.clear()
         vision_models = list(VISION_MODELS_PRIORITY)
-    if _CACHED_VISION_MODEL and _CACHED_VISION_MODEL in vision_models:
+    if _CACHED_VISION_MODEL and _CACHED_VISION_MODEL in vision_models and "lite" not in _CACHED_VISION_MODEL.lower():
         vision_models = [_CACHED_VISION_MODEL] + [m for m in vision_models if m != _CACHED_VISION_MODEL]
 
     detected_items: List[Dict[str, Any]] = []
+    fallback_corrupted_items: Optional[List[Dict[str, Any]]] = None
     succeeded = False
     last_error = ""
+
+    def _clean_items(items_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        cleaned_list = []
+        for it in items_list:
+            if not isinstance(it, dict):
+                continue
+            item_copy = dict(it)
+            for tk in ("translated_text", "translation", "greek_text"):
+                if isinstance(item_copy.get(tk), str) and item_copy[tk].strip():
+                    item_copy[tk] = sanitize_comic_dialogue(item_copy[tk], target_lang)
+            cleaned_list.append(item_copy)
+        return cleaned_list
+
     try:
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         # Up to 2 rounds so transient 429/503 spikes can recover cleanly
@@ -511,35 +784,40 @@ async def _detect_comic_balloons_vision_async(
                 if model in _DEAD_VISION_MODELS:
                     continue
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-                # Only attach thinkingBudget=0 to 2.5-flash models (3.x models handle latency natively)
-                use_no_thinking = "2.5-flash" in model
+                m_low = model.lower()
+                use_no_thinking = "2.5-flash" in m_low
                 req_payload = (
                     {
-                        "contents": base_payload["contents"],
+                        **base_payload,
                         "generationConfig": {
                             **base_payload["generationConfig"],
                             "thinkingConfig": {"thinkingBudget": 0},
                         },
                     }
                     if use_no_thinking
-                    else base_payload
+                    else dict(base_payload)
                 )
                 try:
-                    async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as resp:
+                    async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=45)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            cand_list = data.get("candidates", [])
-                            if not cand_list:
-                                last_error = f"{model}: empty candidates"
+                            text_resp, finish_reason = _extract_gemini_text_and_reason(data)
+                            if not text_resp:
+                                last_error = f"{model}: empty parts ({finish_reason})"
                                 continue
-                            parts = cand_list[0].get("content", {}).get("parts", [])
-                            if not parts:
-                                last_error = f"{model}: empty parts"
-                                continue
-                            text_resp = parts[0].get("text", "")
                             parsed = _parse_vision_json(text_resp)
                             if parsed is not None:
-                                _CACHED_VISION_MODEL = model
+                                # Quality gate: if mixed-script corruption detected (e.g. Armenian/Cyrillic/Latin in Greek),
+                                # save as last-resort fallback and try next Vision model first
+                                if _comic_items_have_corruption(parsed, target_lang):
+                                    logger.warning(f"Vision model {model} produced mixed-script Greek corruption; trying next model...")
+                                    if fallback_corrupted_items is None:
+                                        fallback_corrupted_items = _clean_items(parsed)
+                                    last_error = f"{model}: mixed-script corruption"
+                                    continue
+                                parsed = _clean_items(parsed)
+                                if "lite" not in m_low:
+                                    _CACHED_VISION_MODEL = model
                                 detected_items = parsed
                                 succeeded = True
                                 if cache_key and len(detected_items) > 0:
@@ -551,7 +829,7 @@ async def _detect_comic_balloons_vision_async(
                                             json.dumps(detected_items, ensure_ascii=False),
                                             source_lang,
                                             target_lang,
-                                            engine="gemini_comic_vision",
+                                            engine="gemini_comic_vision_v2",
                                         )
                                     except Exception:
                                         pass
@@ -569,14 +847,23 @@ async def _detect_comic_balloons_vision_async(
                             if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
                                 logger.error(f"Gemini API key is invalid: {err_detail}")
                                 raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
-                            if resp.status == 400 and "thinking" in err_detail.lower() and req_payload is not base_payload:
-                                async with session.post(url, json=base_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as retry_resp:
+                            if resp.status == 400 and ("thinking" in err_detail.lower() or "safety" in err_detail.lower()):
+                                retry_payload = {
+                                    "contents": base_payload["contents"],
+                                    "generationConfig": {
+                                        "temperature": 0.15,
+                                        "responseMimeType": "application/json",
+                                    },
+                                }
+                                async with session.post(url, json=retry_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=45)) as retry_resp:
                                     if retry_resp.status == 200:
                                         data = await retry_resp.json()
-                                        text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
+                                        text_resp, _ = _extract_gemini_text_and_reason(data)
                                         parsed = _parse_vision_json(text_resp)
                                         if parsed is not None:
-                                            _CACHED_VISION_MODEL = model
+                                            parsed = _clean_items(parsed)
+                                            if "lite" not in m_low:
+                                                _CACHED_VISION_MODEL = model
                                             detected_items = parsed
                                             succeeded = True
                                             if cache_key and len(detected_items) > 0:
@@ -588,7 +875,7 @@ async def _detect_comic_balloons_vision_async(
                                                         json.dumps(detected_items, ensure_ascii=False),
                                                         source_lang,
                                                         target_lang,
-                                                        engine="gemini_comic_vision",
+                                                        engine="gemini_comic_vision_v2",
                                                     )
                                                 except Exception:
                                                     pass
@@ -616,6 +903,10 @@ async def _detect_comic_balloons_vision_async(
         if owns_session:
             await session.close()
 
+    if not succeeded and fallback_corrupted_items is not None:
+        detected_items = fallback_corrupted_items
+        succeeded = True
+
     if status_out is not None:
         status_out["succeeded"] = succeeded
         status_out["error"] = last_error if not succeeded else ""
@@ -630,8 +921,9 @@ def _render_vision_balloons_on_page(
     page: fitz.Page,
     detected_items: List[Dict[str, Any]],
     font_path: str,
+    target_lang: str = "greek",
 ) -> List[str]:
-    """Covers detected scanned balloon text with opaque matching background fill and renders Greek comic dialogue."""
+    """Covers detected scanned balloon text with opaque matching background fill and renders centered Greek comic dialogue."""
     if not detected_items:
         return []
 
@@ -642,12 +934,13 @@ def _render_vision_balloons_on_page(
         box = _extract_box_2d(item)
         if not box:
             continue
-        greek_text = (
+        raw_greek_text = (
             item.get("translated_text")
             or item.get("translation")
             or item.get("greek_text")
             or ""
         ).strip()
+        greek_text = sanitize_comic_dialogue(raw_greek_text, target_lang)
         if not greek_text:
             continue
         ymin, xmin, ymax, xmax = box
@@ -667,40 +960,20 @@ def _render_vision_balloons_on_page(
         luminance = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
         text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
 
-        # Draw opaque filled rectangle over scanned raster text pixels (preserves surrounding artwork)
+        # Ensure original box is always covered even if _fit_and_draw_balloon_text draws an expanded rect
         page.draw_rect(rect, color=bg_rgb, fill=bg_rgb, overlay=True)
 
+        _fit_and_draw_balloon_text(
+            page,
+            rect,
+            greek_text,
+            font_path=font_path,
+            bg_rgb=bg_rgb,
+            text_color=text_color,
+            max_fontsize=13.0,
+            draw_bg=True,
+        )
         page_dialogues.append(greek_text)
-
-        # Dynamic fit-to-box Greek comic typesetting
-        placed = False
-        for fs in [13, 12, 11, 10, 9, 8, 7, 6, 5.5, 5]:
-            rc = page.insert_textbox(
-                rect,
-                greek_text,
-                fontname="comic",
-                fontfile=font_path,
-                fontsize=fs,
-                color=text_color,
-                align=fitz.TEXT_ALIGN_CENTER,
-                overlay=True,
-            )
-            if rc >= 0:
-                placed = True
-                break
-        if not placed:
-            expanded = fitz.Rect(max(0, rect.x0 - 4), max(0, rect.y0 - 4), min(w, rect.x1 + 4), min(h, rect.y1 + 4))
-            page.draw_rect(expanded, color=bg_rgb, fill=bg_rgb, overlay=True)
-            page.insert_textbox(
-                expanded,
-                greek_text,
-                fontname="comic",
-                fontfile=font_path,
-                fontsize=5.0,
-                color=text_color,
-                align=fitz.TEXT_ALIGN_CENTER,
-                overlay=True,
-            )
 
     return page_dialogues
 
@@ -896,7 +1169,7 @@ async def translate_comic_document(
         # Apply detected redactions and Greek text rendering cleanly on the PDF document
         for p_idx, items in sorted(vision_results.items()):
             if items:
-                rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path)
+                rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path, target_lang=target_lang)
                 all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
 
         if failed_vision_pages == 0 and cp_file.exists():

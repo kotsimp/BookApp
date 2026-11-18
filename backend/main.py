@@ -516,6 +516,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 source_lang=source_lang,
                 target_lang=target_lang,
                 output_path=output_path,
+                style="literature" if layout == "literature" else None,
             )
             if is_job_cancelled(job_id):
                 return

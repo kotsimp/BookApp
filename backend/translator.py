@@ -266,6 +266,7 @@ async def translate_document(
     target_lang: str,
     output_path: str,
     progress_callback: Optional[Callable] = None,
+    style: Optional[str] = None,
 ) -> str:
     """
     Translates a document file from source_lang to target_lang.
@@ -357,7 +358,7 @@ async def translate_document(
     update_job(job_id, current_step="Writing translated file...", progress=95)
     output_text = "\n".join(output_lines)
     from backend.glossary import apply_glossary
-    output_text = apply_glossary(output_text, target_lang)
+    output_text = apply_glossary(output_text, target_lang, style=style)
     if target_lang.lower() in ("greek", "el"):
         from backend.typography import format_greek_typography
         output_text = format_greek_typography(output_text)

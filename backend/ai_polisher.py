@@ -35,7 +35,9 @@ STYLE_PROMPTS = {
         "   - Διόρθωσε όλα τα γραμματικά, συντακτικά και πτωτικά λάθη. "
         "4. ΔΙΑΤΗΡΗΣΗ ΔΟΜΗΣ & ΔΕΙΚΤΩΝ: "
         "   - Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων, τα κενά σκηνών (π.χ. * * *) και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
-        "5. Μην προσθέτεις εισαγωγικά σχόλια, προοίμια ή επεξηγηματικές σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
+        "5. ΚΑΘΑΡΟΤΗΤΑ ΕΞΟΔΟΥ (ΑΥΣΤΗΡΟ): "
+        "   - ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (π.χ. <i>, </i>, <bos>), σημειώσεις επιμελητή (π.χ. [Σημείωση...]), σκέψεις/σχόλια ανάλυσης ή ξένους χαρακτήρες (λατινικούς, κυριλλικούς, εβραϊκούς κ.λπ.) μέσα σε ελληνικές λέξεις. "
+        "   - Μην προσθέτεις εισαγωγικά σχόλια, προοίμια ή επεξηγηματικές σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
     ),
     "natural": (
         "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
@@ -143,20 +145,215 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
+    # Full Flash models FIRST: dramatically higher Greek accuracy & zero multilingual subword bleed
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3.8-flash",
-    "gemini-flash-latest",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-pro-latest",
+    # Flash-Lite models as secondary fallback only
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
 ]
+
+# Permissive safety settings for literary/sci-fi/historical translation so fictional violence
+# or body horror does not trigger spurious PROHIBITED_CONTENT refusals.
+_LITERARY_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
+]
+
+
+class _TruncatedOutputError(RuntimeError):
+    """Raised when Gemini finishes with MAX_TOKENS so the caller can split the batch and retry."""
+
+
+_HTML_INLINE_TAG_RE = re.compile(
+    r"</?(?:i|b|em|strong|u|s|span|p|br|div|font|sup|sub|small|big|mark|del|ins|a|h[1-6])\b[^>]*>",
+    re.IGNORECASE,
+)
+_LLM_SPECIAL_TOKEN_RE = re.compile(
+    r"<(?:/?(?:bos|eos|pad|unk|sep|cls|mask|start_of_turn|end_of_turn|thought|think)|\|[^|\n]{1,32}\|)>",
+    re.IGNORECASE,
+)
+_EDITOR_NOTE_RE = re.compile(
+    r"\[(?:Σημείωση\s+(?:επιμελητή|μεταφραστή|εκδότη)|Editor'?s?\s+note|Translator'?s?\s+note|Note)\s*:[^\]]*\]",
+    re.IGNORECASE,
+)
+_COT_BLOCK_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"\*\s*\*?(?:Refining|Drafting|Thinking|Analysis|Checking|Review|Verification)\s*:.*|"
+    r"\d+\.\s*\*\*(?:Review|Final\s+Polish|Analyze|Translate|Check|Draft)[^*]*\*\*.*|"
+    r"\*\*(?:Review\s+against|Final\s+Polish|Self-Check|Verification)\b.*|"
+    r"\*\s*(?:No\s+introductory\s+notes|Page\s+markers|Glossary|Entity\s+Dossier|Tone|Style)[^?]*\?\s*Checked\.?.*|"
+    r"Proceed\s+to\s+output\s+(?:pure\s+)?translated\s+text\.?.*"
+    r")$",
+    re.IGNORECASE,
+)
+_LEAKED_PROMPT_HEADER_RE = re.compile(
+    r"^---\s*(?:ΠΡΟΗΓΟΥΜΕΝΟ\s+ΑΠΟΣΠΑΣΜΑ|ΠΡΩΤΟΤΥΠΟ\s+ΚΕΙΜΕΝΟ\s+ΑΝΑΦΟΡΑΣ|ΠΡΟΣΧΕΔΙΟ\s+ΕΛΛΗΝΙΚΗΣ\s+ΜΕΤΑΦΡΑΣΗΣ|ΚΕΙΜΕΝΟ\s+ΠΡΟΣ\s+ΕΠΙΜΕΛΕΙΑ)[^\n]*---\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Exotic scripts that should NEVER appear inside translated Greek prose unless present in source
+_EXOTIC_SCRIPT_RE = re.compile(
+    r"[\u0400-\u04ff\u0530-\u058f\u0590-\u05ff\u0600-\u06ff\u0900-\u0e7f\u2e80-\u9fff\uac00-\ud7af\ufffd]"
+)
+_GREEK_CHAR_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]")
+_LATIN_LETTER_RE = re.compile(r"[A-Za-z\u00c0-\u024f]")
+
+
+def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
+    """
+    Extracts non-thought text and finishReason from a Gemini generateContent JSON payload.
+    Strictly ignores Gemini 2.5/3.x 'thought: true' reasoning parts so chain-of-thought never leaks.
+    """
+    cand_list = result.get("candidates") or []
+    if not cand_list:
+        return "", ""
+    cand = cand_list[0] or {}
+    finish_reason = str(cand.get("finishReason") or "")
+    parts = (cand.get("content") or {}).get("parts") or []
+    text_parts = []
+    for p in parts:
+        if not isinstance(p, dict):
+            continue
+        if p.get("thought") is True:
+            continue
+        t = p.get("text")
+        if isinstance(t, str) and t:
+            text_parts.append(t)
+    return "".join(text_parts).strip(), finish_reason
+
+
+def sanitize_ai_output(text: str) -> str:
+    """
+    Defensively removes LLM artifacts from generated/polished text:
+    - HTML/XML inline tags ('εισπ</i>νευστική' -> 'εισπνευστική')
+    - Special LLM tokens ('<bos>', '<eos>', '<|endoftext|>')
+    - Bracketed editor/translator meta-notes ('[Σημείωση επιμελητή: ...]')
+    - Leaked chain-of-thought / self-review lines ('**Review against Rules...**', 'Proceed to output...')
+    - Markdown code fences wrapping prose
+    - Broken hyphenated Greek words ('υποσχέ- θηκαν' -> 'υποσχέθηκαν')
+    """
+    if not text:
+        return text
+
+    cleaned = text.strip()
+    # Strip outer markdown code fence if the model wrapped the whole output
+    cleaned = re.sub(r"^```(?:markdown|text|el|greek)?\s*\n?", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+
+    # Strip LLM special tokens and leaked inline HTML tags
+    cleaned = _LLM_SPECIAL_TOKEN_RE.sub("", cleaned)
+    cleaned = _HTML_INLINE_TAG_RE.sub("", cleaned)
+    cleaned = _EDITOR_NOTE_RE.sub("", cleaned)
+    cleaned = _LEAKED_PROMPT_HEADER_RE.sub("", cleaned)
+
+    # Remove Chain-of-Thought / self-review blocks (from first leaked review heading to end or per-line)
+    out_lines: list[str] = []
+    in_cot_tail = False
+    for ln in cleaned.splitlines():
+        if re.search(r"\*\*Review\s+against\s+Rules|\*\*Final\s+Polish\s*:\*\*|Proceed\s+to\s+output\s+(?:pure\s+)?translated\s+text", ln, re.IGNORECASE):
+            in_cot_tail = True
+            continue
+        if in_cot_tail:
+            # Stop skipping once a real Greek page marker or substantial Greek paragraph resumes
+            if re.match(r"^\s*={3,}\s*PAGE\s+\d+\s*={3,}\s*$", ln):
+                in_cot_tail = False
+                out_lines.append(ln)
+            continue
+        if _COT_BLOCK_LINE_RE.match(ln):
+            continue
+        out_lines.append(ln)
+    cleaned = "\n".join(out_lines)
+
+    # Collapse spaces left behind by removed editor notes (without breaking paragraph newlines)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+    try:
+        from backend.typography import fix_broken_hyphens
+        cleaned = fix_broken_hyphens(cleaned)
+    except Exception:
+        pass
+
+    return cleaned.strip()
+
+
+def detect_greek_output_issues(
+    text: str,
+    source_text: str = "",
+    expected_pages: Optional[list[int]] = None,
+) -> list[str]:
+    """
+    Quality gate for Greek AI-translated/polished batches.
+    Returns a list of issue codes (empty list means clean):
+    - 'mixed_script': Greek words corrupted with Latin/Cyrillic/Hebrew/Arabic/Armenian/Bengali/CJK chars
+    - 'cot_leak': leftover English reasoning / review chatter
+    - 'missing_pages': expected '=== PAGE X ===' markers dropped
+    - 'truncated': output severely shorter than source or cut off mid-word
+    """
+    issues: list[str] = []
+    if not text or not text.strip():
+        return ["empty"]
+
+    # 1. Mixed-script / exotic-script corruption check (classic Flash-Lite failure mode)
+    src_has_exotic = bool(_EXOTIC_SCRIPT_RE.search(source_text or ""))
+    mixed_count = 0
+    exotic_count = 0
+    for m in re.finditer(r"[^\s,;.:!?«»\"'()\[\]—–\-/\\*<>]+", text):
+        tok = m.group(0)
+        has_gr = bool(_GREEK_CHAR_RE.search(tok))
+        has_lat = bool(_LATIN_LETTER_RE.search(tok))
+        has_ex = bool(_EXOTIC_SCRIPT_RE.search(tok))
+        if has_gr and (has_lat or has_ex):
+            mixed_count += 1
+        elif has_ex and not src_has_exotic:
+            exotic_count += 1
+    if mixed_count >= 1 or exotic_count >= 1:
+        issues.append(f"mixed_script({mixed_count}+{exotic_count})")
+
+    # 2. Residual CoT / English meta-commentary check
+    if re.search(
+        r"Proceed\s+to\s+output\s+(?:pure\s+)?translated\s+text|Review\s+against\s+Rules\s+and\s+Dossier|No\s+introductory\s+notes\s+or\s+chatter\?",
+        text,
+        re.IGNORECASE,
+    ):
+        issues.append("cot_leak")
+
+    # 3. Missing page markers check
+    if expected_pages and len(expected_pages) >= 2:
+        found_pages = {int(x) for x in re.findall(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text)}
+        missing = [p for p in expected_pages if p not in found_pages]
+        if missing:
+            issues.append(f"missing_pages({missing})")
+
+    # 4. Truncation check (severe length drop or mid-word cutoff)
+    clean_src = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "", source_text or "").strip()
+    clean_out = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "", text).strip()
+    if len(clean_src) >= 400:
+        ratio = len(clean_out) / max(1, len(clean_src))
+        if ratio < 0.48:
+            issues.append(f"truncated(ratio={ratio:.2f})")
+        elif (
+            ratio < 0.85
+            and clean_src[-1] in '.!?»"”…):;'
+            and clean_out
+            and clean_out[-1] not in '.!?»"”…):;—-*'
+            and bool(_GREEK_CHAR_RE.search(clean_out[-1]))
+        ):
+            issues.append(f"truncated_midword(ratio={ratio:.2f})")
+
+    return issues
 
 
 def _parse_pages_dict(text: str) -> dict[int, str]:
@@ -185,7 +382,7 @@ async def _extract_entity_dossier(
 ) -> str:
     """
     Extracts a concise glossary of recurring characters, places, and sci-fi/technical terms
-    to ensure uniform transliteration across all batches of a book or long document.
+    to ensure uniform transliteration and grammatical gender across all batches of a book.
     """
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         return "- Keeton -> Κίτον\n- Theseus -> Θησέας\n- Rorschach -> Ρόρσαχ"
@@ -195,7 +392,9 @@ async def _extract_entity_dossier(
         "εντόπισε τα κυριότερα επαναλαμβανόμενα κύρια ονόματα (χαρακτήρες, διαστημόπλοια, εξωγήινες οντότητες, "
         "τοπωνύμια) και εξειδικευμένους όρους. Δημιούργησε ένα συνοπτικό Μητρώο Ονομάτων & Ορολογίας (Entity Dossier) "
         "με την ορθή, ενιαία απόδοσή τους στα Ελληνικά (φωνητική μεταγραφή ή απόδοση). "
-        "Μορφή κάθε γραμμής: '- Original Name -> Ελληνική Απόδοση'. "
+        "ΚΡΙΣΙΜΟ: 1) Για κάθε χαρακτήρα σημείωσε το ορθό γραμματικό γένος (ο/η) ώστε να μην αλλάζει στην πορεία του βιβλίου. "
+        "2) ΜΗΝ συγχέεις διαφορετικούς χαρακτήρες που έχουν το ίδιο μικρό όνομα (αναφέρε τους με πλήρες ονοματεπώνυμο). "
+        "Μορφή κάθε γραμμής: '- Original Name -> Ελληνική Απόδοση (ο/η όπου ισχύει)'. "
         "Περιόρισε το μητρώο στους 20-30 πιο κρίσιμους όρους. Μην προσθέτεις εισαγωγικά σχόλια."
     )
     try:
@@ -337,9 +536,9 @@ async def polish_text_with_gemini(
                 "Διατήρησε αυστηρή συνέπεια στην ονομασία και φωνητική απόδοση των παραπάνω όρων σε όλο το κείμενο."
             )
 
-        # Inject contextually-relevant user glossary rules
+        # Inject contextually-relevant user glossary rules (style-aware: excludes IT/DevOps terms for literature)
         from backend.glossary import load_glossary, apply_glossary
-        glossary_items = load_glossary()
+        glossary_items = load_glossary(style=style)
         if glossary_items:
             full_context_lower = (text + "\n" + (original_text or "")).lower()
             # Prioritize terms that actually appear in the source or draft text
@@ -378,12 +577,13 @@ async def polish_text_with_gemini(
                 else:
                     pages.append((curr_marker, p_strip))
 
-            # Smart Multi-Page Batching: group ~5 pages (or ~7,500 chars) per Gemini call for optimal latency
+            # Smart Multi-Page Batching: group ~3 pages (or ~5,500 chars) per Gemini call
+            # to stay well inside token & Greek attention limits without truncation
             batches = []
             curr_b = []
             curr_chars = 0
-            MAX_BATCH_CHARS = 7500
-            MAX_BATCH_PAGES = 5
+            MAX_BATCH_CHARS = 5500
+            MAX_BATCH_PAGES = 3
 
             for m, c in pages:
                 item_len = len(m) + len(c) + 4
@@ -413,36 +613,29 @@ async def polish_text_with_gemini(
             if completed > 0:
                 await _run_progress(completed, total_batches)
 
-            async def _polish_batch(b_idx: int, batch_items: list[tuple[str, str]]) -> None:
-                nonlocal completed, first_error
-                if polished_batches[b_idx]:
-                    return  # Already restored from checkpoint
-
+            async def _polish_items_reliably(
+                batch_items: list[tuple[str, str]],
+                prev_snippet: str = "",
+                depth: int = 0,
+            ) -> str:
                 draft_batch_text = "\n\n".join(
                     f"{m}\n\n{c}" if m else c for m, c in batch_items
                 )
-
-                # Bilingual Source Anchoring: align original pages for this batch
+                expected_page_nums = []
                 source_batch_parts = []
-                if orig_pages and use_source_anchoring:
-                    for m, _ in batch_items:
-                        pm = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", m)
-                        if pm:
-                            pn = int(pm.group(1))
-                            if pn in orig_pages:
-                                source_batch_parts.append(f"=== PAGE {pn} ===\n{orig_pages[pn]}")
+                for m, _ in batch_items:
+                    pm = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", m)
+                    if pm:
+                        pn = int(pm.group(1))
+                        expected_page_nums.append(pn)
+                        if orig_pages and use_source_anchoring and pn in orig_pages:
+                            source_batch_parts.append(f"=== PAGE {pn} ===\n{orig_pages[pn]}")
 
-                # Build input content with source reference and rolling context
                 content_components = []
-                if b_idx > 0:
-                    prev_draft = batches[b_idx - 1][-1][1]
-                    paras = [p.strip() for p in prev_draft.split("\n\n") if p.strip()]
-                    if paras:
-                        snippet = paras[-1][:350]
-                        content_components.append(
-                            f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ & ΡΟΗ - ΜΗΝ ΤΟ ΣΥΜΠΕΡΙΛΑΒΕΙΣ ΣΤΗΝ ΕΞΟΔΟ) ---\n[... {snippet}]"
-                        )
-
+                if prev_snippet:
+                    content_components.append(
+                        f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ & ΡΟΗ - ΜΗΝ ΤΟ ΣΥΜΠΕΡΙΛΑΒΕΙΣ ΣΤΗΝ ΕΞΟΔΟ) ---\n[... {prev_snippet}]"
+                    )
                 if source_batch_parts:
                     orig_source_block = "\n\n".join(source_batch_parts)
                     content_components.append(
@@ -455,7 +648,6 @@ async def polish_text_with_gemini(
                     content_components.append(draft_batch_text)
 
                 prompt_content = "\n\n".join(content_components)
-
                 batch_instruction = system_instruction
                 if source_batch_parts:
                     batch_instruction += (
@@ -465,9 +657,84 @@ async def polish_text_with_gemini(
                         "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το τελικό διορθωμένο ελληνικό κείμενο, διατηρώντας ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων === PAGE X ===."
                     )
 
+                meta: dict[str, Any] = {}
+                try:
+                    polished = await _call_gemini_api(
+                        prompt_content.strip(),
+                        key,
+                        batch_instruction,
+                        session=session,
+                        temperature=target_temp,
+                        meta_out=meta,
+                    )
+                except _TruncatedOutputError:
+                    if len(batch_items) > 1 and depth < 2:
+                        mid = len(batch_items) // 2
+                        logger.warning(f"Batch hit MAX_TOKENS; splitting {len(batch_items)} pages into {mid}+{len(batch_items)-mid}...")
+                        left = await _polish_items_reliably(batch_items[:mid], prev_snippet, depth + 1)
+                        right = await _polish_items_reliably(batch_items[mid:], batch_items[mid - 1][1][-300:], depth + 1)
+                        return f"{left}\n\n{right}"
+                    raise
+
+                # Quality gate: detect mixed-script corruption, missing page markers, or truncation
+                issues = detect_greek_output_issues(
+                    polished,
+                    source_text=draft_batch_text,
+                    expected_pages=expected_page_nums if len(expected_page_nums) >= 2 else None,
+                )
+                if issues:
+                    logger.warning(f"Polish quality gate flagged issues {issues} (model={meta.get('model')})")
+                    needs_split = any(i.startswith(("missing_pages", "truncated")) for i in issues)
+                    if needs_split and len(batch_items) > 1 and depth < 2:
+                        mid = len(batch_items) // 2
+                        left = await _polish_items_reliably(batch_items[:mid], prev_snippet, depth + 1)
+                        right = await _polish_items_reliably(batch_items[mid:], batch_items[mid - 1][1][-300:], depth + 1)
+                        return f"{left}\n\n{right}"
+                    # Retry once on an alternative model excluding the one that produced corruption
+                    bad_model = meta.get("model")
+                    if bad_model and not key.startswith(("AQ.Test", "AIzaTest")):
+                        try:
+                            retry_meta: dict[str, Any] = {}
+                            retried = await _call_gemini_api(
+                                prompt_content.strip(),
+                                key,
+                                batch_instruction,
+                                session=session,
+                                temperature=max(0.1, target_temp - 0.1),
+                                exclude_models={bad_model},
+                                bypass_cache=True,
+                                meta_out=retry_meta,
+                            )
+                            retry_issues = detect_greek_output_issues(
+                                retried,
+                                source_text=draft_batch_text,
+                                expected_pages=expected_page_nums if len(expected_page_nums) >= 2 else None,
+                            )
+                            if len(retry_issues) < len(issues):
+                                logger.info(f"Quality retry succeeded on {retry_meta.get('model')} (issues: {issues} -> {retry_issues})")
+                                return retried
+                        except Exception as rex:
+                            logger.debug(f"Quality retry failed: {rex}")
+                return polished
+
+            async def _polish_batch(b_idx: int, batch_items: list[tuple[str, str]]) -> None:
+                nonlocal completed, first_error
+                if polished_batches[b_idx]:
+                    return  # Already restored from checkpoint
+
+                draft_batch_text = "\n\n".join(
+                    f"{m}\n\n{c}" if m else c for m, c in batch_items
+                )
+                prev_snippet = ""
+                if b_idx > 0:
+                    prev_draft = batches[b_idx - 1][-1][1]
+                    paras = [p.strip() for p in prev_draft.split("\n\n") if p.strip()]
+                    if paras:
+                        prev_snippet = paras[-1][:350]
+
                 async with sem:
                     try:
-                        polished = await _call_gemini_api(prompt_content.strip(), key, batch_instruction, session=session, temperature=target_temp)
+                        polished = await _polish_items_reliably(batch_items, prev_snippet=prev_snippet)
                         polished_batches[b_idx] = polished
                         checkpoint_data["batches"][str(b_idx)] = polished
                         _save_checkpoint()
@@ -507,7 +774,9 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            return apply_glossary("\n\n".join(final_batches), "greek")
+            final_res = apply_glossary("\n\n".join(final_batches), "greek", style=style)
+            from backend.typography import format_greek_typography
+            return format_greek_typography(final_res)
 
         # For un-paginated text (e.g. Audiobook / DOCX), chunk long inputs (~6000 chars) and polish
         if len(text) > 4000:
@@ -574,7 +843,7 @@ async def polish_text_with_gemini(
                 except Exception:
                     pass
 
-            final_res = apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek")
+            final_res = apply_glossary("\n\n".join(p for p in polished_chunks if p), "greek", style=style)
             from backend.typography import format_greek_typography
             return format_greek_typography(final_res)
 
@@ -587,7 +856,7 @@ async def polish_text_with_gemini(
             )
         polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
         from backend.typography import format_greek_typography
-        return format_greek_typography(apply_glossary(polished_single, "greek"))
+        return format_greek_typography(apply_glossary(polished_single, "greek", style=style))
 
 
 # Alias for concise invocation
@@ -600,30 +869,40 @@ async def _call_gemini_api(
     system_prompt: str,
     session: Optional[aiohttp.ClientSession] = None,
     temperature: float = 0.25,
+    exclude_models: Optional[set[str]] = None,
+    bypass_cache: bool = False,
+    meta_out: Optional[dict[str, Any]] = None,
 ) -> str:
-    """Invokes Gemini generateContent with cache, auto-discovery prioritizing ultra-fast Flash models."""
+    """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, and MAX_TOKENS protection."""
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
         if "--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n" in content_text:
             draft_part = content_text.split("--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n")[-1]
-            return f"[Επιμελημένο AI]: {draft_part.strip()}"
-        return f"[Επιμελημένο AI]: {content_text}"
+            return sanitize_ai_output(f"[Επιμελημένο AI]: {draft_part.strip()}")
+        return sanitize_ai_output(f"[Επιμελημένο AI]: {content_text}")
 
-    # Check cache first
+    # Check cache first (unless explicitly bypassed during a quality retry)
     cache_key = None
-    try:
-        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
-        cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish", extra=f"{system_prompt[:50]}:{temperature}")
-        cached_result = db_get_cached_translation(cache_key)
-        if cached_result is not None:
-            logger.info("Retrieved AI polished chunk directly from SQLite cache.")
-            return cached_result
-    except Exception as ex:
-        logger.debug(f"Polish cache check skipped: {ex}")
+    if not bypass_cache:
+        try:
+            from backend.database import compute_cache_key, db_get_cached_translation
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v2", extra=f"{system_prompt[:50]}:{temperature}")
+            cached_result = db_get_cached_translation(cache_key)
+            if cached_result is not None:
+                logger.info("Retrieved AI polished chunk directly from SQLite cache.")
+                return sanitize_ai_output(cached_result)
+        except Exception as ex:
+            logger.debug(f"Polish cache check skipped: {ex}")
+    else:
+        try:
+            from backend.database import compute_cache_key
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v2", extra=f"{system_prompt[:50]}:{temperature}")
+        except Exception:
+            pass
 
     global _CACHED_WORKING_MODEL
 
-    payload = {
+    base_payload = {
         "contents": [
             {
                 "role": "user",
@@ -634,34 +913,44 @@ async def _call_gemini_api(
         ],
         "generationConfig": {
             "temperature": temperature,
-            "maxOutputTokens": 8192,
-        }
+            "maxOutputTokens": 16384,
+        },
+        "safetySettings": _LITERARY_SAFETY_SETTINGS,
     }
 
     # Reuse caller's session if provided, otherwise open a temporary one
     owns_session = session is None
     if owns_session:
-        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60))
     try:
         candidates = []
 
-        # If a fast working model was already cached (and is not slow gemma), try it first
-        if _CACHED_WORKING_MODEL and not _CACHED_WORKING_MODEL.startswith("gemma"):
+        # If a full (non-lite, non-gemma) working model was already cached, try it first
+        if (
+            _CACHED_WORKING_MODEL
+            and not _CACHED_WORKING_MODEL.startswith("gemma")
+            and "lite" not in _CACHED_WORKING_MODEL.lower()
+        ):
             candidates.append(_CACHED_WORKING_MODEL)
 
         discovered = await _get_available_models(api_key, session)
         if discovered:
-            # 1. Preferred Flash models first
+            # 1. Preferred full Flash models first, then Flash-Lite
             for pref in PREFERRED_FLASH_MODELS:
                 if pref in discovered and pref not in candidates:
                     candidates.append(pref)
 
-            # 2. Other non-gemma models
+            # 2. Other non-gemma, non-lite models
+            for m in discovered:
+                if not m.startswith("gemma") and "lite" not in m.lower() and m not in candidates:
+                    candidates.append(m)
+
+            # 3. Remaining non-gemma (lite) models
             for m in discovered:
                 if not m.startswith("gemma") and m not in candidates:
                     candidates.append(m)
 
-            # 3. Gemma models as last resort
+            # 4. Gemma models as last resort
             for m in discovered:
                 if m.startswith("gemma") and m not in candidates:
                     candidates.append(m)
@@ -670,48 +959,68 @@ async def _call_gemini_api(
                 if fb not in candidates:
                     candidates.append(fb)
 
+        if exclude_models:
+            filtered = [m for m in candidates if m not in exclude_models]
+            if filtered:
+                candidates = filtered
+
         last_error = None
+        saw_truncation = False
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,
         }
         for model in candidates:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            # Build model-specific payload: disable hidden thinking tokens on 2.5 Flash for 3x-4x speedup
-            use_no_thinking = ("2.5-flash" in model or "flash-latest" in model) and "pro" not in model
-            req_payload = payload
-            if use_no_thinking:
-                req_payload = {
-                    "contents": payload["contents"],
+            # Disable hidden thinking on Flash models (2.5 & 3.x) so output budget isn't eaten by chain-of-thought
+            m_low = model.lower()
+            use_no_thinking = (
+                "flash" in m_low
+                and "pro" not in m_low
+                and not m_low.startswith("gemma")
+                and ("2.5" in m_low or "3" in m_low or "latest" in m_low)
+            )
+            req_payload: dict[str, Any] = (
+                {
+                    **base_payload,
                     "generationConfig": {
-                        **payload["generationConfig"],
+                        **base_payload["generationConfig"],
                         "thinkingConfig": {"thinkingBudget": 0},
                     },
                 }
+                if use_no_thinking
+                else dict(base_payload)
+            )
 
             max_attempts = 2
             for attempt in range(max_attempts):
                 try:
-                    req_timeout = aiohttp.ClientTimeout(total=45)
+                    req_timeout = aiohttp.ClientTimeout(total=60)
                     async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
                         if resp.status == 200:
                             result = await resp.json()
-                            cand_list = result.get("candidates", [])
-                            if not cand_list:
+                            raw_text, finish_reason = _extract_gemini_text_and_reason(result)
+                            if not raw_text:
+                                logger.warning(f"Model {model} candidate returned no content parts (finishReason: {finish_reason or 'UNKNOWN'})")
                                 break
-                            parts = cand_list[0].get("content", {}).get("parts", [])
-                            if not parts:
-                                logger.warning(f"Model {model} candidate returned no content parts (finishReason: {cand_list[0].get('finishReason')})")
-                                break
-                            polished = parts[0].get("text", "").strip()
+                            if finish_reason == "MAX_TOKENS":
+                                logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
+                                saw_truncation = True
+                                raise _TruncatedOutputError(f"Model {model} hit MAX_TOKENS")
+                            polished = sanitize_ai_output(raw_text)
                             if not polished:
                                 break
-                            _CACHED_WORKING_MODEL = model
+                            # Only pin full non-lite Flash models as the cached primary model
+                            if "lite" not in m_low and not m_low.startswith("gemma"):
+                                _CACHED_WORKING_MODEL = model
+                            if meta_out is not None:
+                                meta_out["model"] = model
+                                meta_out["finish_reason"] = finish_reason
                             logger.info(f"Gemini API success using model: {model}")
-                            if cache_key:
+                            if cache_key and not detect_greek_output_issues(polished):
                                 try:
                                     from backend.database import db_set_cached_translation
-                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish")
+                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v2")
                                 except Exception:
                                     pass
                             return polished
@@ -724,7 +1033,6 @@ async def _call_gemini_api(
                                 _CACHED_WORKING_MODEL = None
                             break
                         elif resp.status in (500, 502, 503, 504):
-                            # High demand / server overloaded: Fail over immediately to the next candidate model
                             err_text = await resp.text()
                             last_error = f"Gemini API error ({resp.status}): {err_text}"
                             logger.info(f"Model {model} overloaded/unavailable ({resp.status}). Immediately trying next candidate...")
@@ -741,19 +1049,27 @@ async def _call_gemini_api(
                             break
                         else:
                             err_text = await resp.text()
-                            # If model rejected thinkingConfig, retry cleanly without it
-                            if resp.status == 400 and "thinking" in err_text.lower() and req_payload is not payload:
-                                req_payload = payload
+                            # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
+                            if resp.status == 400 and "thinking" in err_text.lower() and "thinkingConfig" in req_payload.get("generationConfig", {}):
+                                req_payload = {
+                                    **req_payload,
+                                    "generationConfig": {
+                                        k: v for k, v in req_payload["generationConfig"].items() if k != "thinkingConfig"
+                                    },
+                                }
+                                continue
+                            if resp.status == 400 and "safety" in err_text.lower() and "safetySettings" in req_payload:
+                                req_payload = {k: v for k, v in req_payload.items() if k != "safetySettings"}
                                 continue
                             last_error = f"Gemini API error ({resp.status}): {err_text}"
                             if resp.status == 400 and "API_KEY_INVALID" in err_text:
                                 raise PermissionError(last_error)
                             logger.warning(f"Model {model} failed: {last_error}")
                             break
-                except PermissionError:
+                except (PermissionError, _TruncatedOutputError):
                     raise
                 except asyncio.TimeoutError:
-                    logger.warning(f"Model {model} timed out after 45s. Switching immediately to next candidate...")
+                    logger.warning(f"Model {model} timed out after 60s. Switching immediately to next candidate...")
                     if _CACHED_WORKING_MODEL == model:
                         _CACHED_WORKING_MODEL = None
                     break
@@ -765,6 +1081,8 @@ async def _call_gemini_api(
                     if attempt < max_attempts - 1:
                         await asyncio.sleep(1.0)
 
+        if saw_truncation:
+            raise _TruncatedOutputError(last_error or "Gemini output truncated by MAX_TOKENS.")
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:
         if owns_session:
@@ -824,7 +1142,9 @@ async def translate_and_polish_direct_with_gemini(
         f"(σε ένα ενιαίο βήμα μετάφρασης + επιμέλειας), τηρώντας αυστηρά τις εξής αρχές:\n"
         f"{base_style_prompt}\n"
         f"ΚΡΙΣΙΜΟ: Διατήρησε ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων (=== PAGE X ===) ακριβώς στις θέσεις τους. "
-        f"Μην παραλείπεις καμία παράγραφο ή πρόταση. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς σχόλια."
+        f"Μην παραλείπεις καμία παράγραφο ή πρόταση. ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (<i>, </i>, <bos>), "
+        f"σημειώσεις επιμελητή ([Σημείωση...]), σκέψεις ανάλυσης ή ξένα γράμματα (λατινικά/κυριλλικά/εβραϊκά) μέσα σε ελληνικές λέξεις. "
+        f"Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς σχόλια."
     )
 
     # Disk checkpoint support for instant resume
@@ -846,12 +1166,12 @@ async def translate_and_polish_direct_with_gemini(
         except Exception:
             pass
 
-    # Group pages into ~7,500-char / max 5-page batches
+    # Group pages into ~5,500-char / max 3-page batches for high Greek fidelity & zero MAX_TOKENS truncation
     batches: list[list[tuple[int, str]]] = []
     curr_b: list[tuple[int, str]] = []
     curr_chars = 0
-    MAX_BATCH_CHARS = 7500
-    MAX_BATCH_PAGES = 5
+    MAX_BATCH_CHARS = 5500
+    MAX_BATCH_PAGES = 3
 
     for p in pages:
         p_num = p["page"]
@@ -915,8 +1235,8 @@ async def translate_and_polish_direct_with_gemini(
                 f"{entity_dossier}\n"
             )
 
-        # Inject matching glossary terms
-        glossary_items = load_glossary()
+        # Inject matching glossary terms (style-aware: excludes IT/DevOps terms for literature)
+        glossary_items = load_glossary(style=style)
         if glossary_items:
             lower_src = full_original.lower()
             matched = [(k, v) for k, v in glossary_items.items() if k.lower() in lower_src][:50]
@@ -926,6 +1246,85 @@ async def translate_and_polish_direct_with_gemini(
                     "\n\n--- ΓΛΩΣΣΑΡΙΟ ΧΡΗΣΤΗ (GLOSSARY RULES) ---\n"
                     f"{g_lines}\n"
                 )
+
+        is_target_greek = target_lang.lower() in ("greek", "el")
+
+        async def _translate_items_reliably(
+            b_items: list[tuple[int, str]],
+            prev_tail: str = "",
+            depth: int = 0,
+        ) -> str:
+            batch_src = "\n\n".join(f"=== PAGE {pn} ===\n{txt}" for pn, txt in b_items)
+            expected_pnums = [pn for pn, txt in b_items if txt.strip()]
+            content_parts = []
+            if prev_tail:
+                content_parts.append(
+                    f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ - ΜΗΝ ΤΟ ΜΕΤΑΦΡΑΣΕΙΣ ΞΑΝΑ) ---\n[... {prev_tail}]"
+                )
+            content_parts.append(batch_src)
+            prompt_text = "\n\n".join(content_parts)
+
+            meta: dict[str, Any] = {}
+            try:
+                translated_b = await _call_gemini_api(
+                    prompt_text,
+                    api_key,
+                    system_instruction,
+                    session=session,
+                    temperature=target_temp,
+                    meta_out=meta,
+                )
+            except _TruncatedOutputError:
+                if len(b_items) > 1 and depth < 2:
+                    mid = len(b_items) // 2
+                    logger.warning(f"[{job_id}] Direct AI batch hit MAX_TOKENS; splitting {len(b_items)} pages into {mid}+{len(b_items)-mid}...")
+                    left = await _translate_items_reliably(b_items[:mid], prev_tail, depth + 1)
+                    right_tail = b_items[mid - 1][1][-300:] if b_items[mid - 1][1] else ""
+                    right = await _translate_items_reliably(b_items[mid:], right_tail, depth + 1)
+                    return f"{left}\n\n{right}"
+                raise
+
+            if is_target_greek and not api_key.startswith(("AQ.Test", "AIzaTest")):
+                issues = detect_greek_output_issues(
+                    translated_b,
+                    source_text=batch_src,
+                    expected_pages=expected_pnums if len(expected_pnums) >= 2 else None,
+                )
+                if issues:
+                    logger.warning(f"[{job_id}] Direct AI quality gate flagged {issues} (model={meta.get('model')})")
+                    needs_split = any(i.startswith(("missing_pages", "truncated")) for i in issues)
+                    if needs_split and len(b_items) > 1 and depth < 2:
+                        mid = len(b_items) // 2
+                        left = await _translate_items_reliably(b_items[:mid], prev_tail, depth + 1)
+                        right_tail = b_items[mid - 1][1][-300:] if b_items[mid - 1][1] else ""
+                        right = await _translate_items_reliably(b_items[mid:], right_tail, depth + 1)
+                        return f"{left}\n\n{right}"
+                    bad_model = meta.get("model")
+                    if bad_model:
+                        try:
+                            retry_meta: dict[str, Any] = {}
+                            retried = await _call_gemini_api(
+                                prompt_text,
+                                api_key,
+                                system_instruction,
+                                session=session,
+                                temperature=max(0.1, target_temp - 0.1),
+                                exclude_models={bad_model},
+                                bypass_cache=True,
+                                meta_out=retry_meta,
+                            )
+                            retry_issues = detect_greek_output_issues(
+                                retried,
+                                source_text=batch_src,
+                                expected_pages=expected_pnums if len(expected_pnums) >= 2 else None,
+                            )
+                            if len(retry_issues) < len(issues):
+                                logger.info(f"[{job_id}] Quality retry succeeded on {retry_meta.get('model')} ({issues} -> {retry_issues})")
+                                return retried
+                        except Exception as rex:
+                            logger.debug(f"[{job_id}] Quality retry failed: {rex}")
+
+            return translated_b
 
         async def _worker(b_idx: int, b_items: list[tuple[int, str]]):
             nonlocal completed, pages_done
@@ -941,35 +1340,39 @@ async def translate_and_polish_direct_with_gemini(
                 pages_done += len(b_items)
                 return
 
-            batch_src = "\n\n".join(f"=== PAGE {pn} ===\n{txt}" for pn, txt in b_items)
-            content_parts = []
+            prev_tail = ""
             if b_idx > 0:
                 prev_txt = batches[b_idx - 1][-1][1]
                 if prev_txt:
-                    content_parts.append(
-                        f"--- ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ (ΜΟΝΟ ΓΙΑ ΣΥΝΕΧΕΙΑ - ΜΗΝ ΤΟ ΜΕΤΑΦΡΑΣΕΙΣ ΞΑΝΑ) ---\n[... {prev_txt[-300:]}]"
-                    )
-            content_parts.append(batch_src)
-            prompt_text = "\n\n".join(content_parts)
+                    prev_tail = prev_txt[-300:]
 
             async with sem:
                 if is_job_cancelled(job_id):
                     raise asyncio.CancelledError("Translation cancelled by user.")
-                try:
-                    translated_b = await _call_gemini_api(
-                        prompt_text,
-                        api_key,
-                        system_instruction,
-                        session=session,
-                        temperature=target_temp,
-                    )
+                last_ex: Optional[Exception] = None
+                translated_b = ""
+                # Retry once after a short cooldown if transient 429/503 hit all models
+                for retry_round in range(2):
+                    try:
+                        translated_b = await _translate_items_reliably(b_items, prev_tail=prev_tail)
+                        last_ex = None
+                        break
+                    except PermissionError:
+                        raise
+                    except Exception as ex:
+                        last_ex = ex
+                        if retry_round == 0 and any(k in str(ex) for k in ("429", "503", "500", "timed out")):
+                            logger.info(f"[{job_id}] Direct AI batch {b_idx+1}/{total_batches} transient error, cooling down 4s before retry...")
+                            await asyncio.sleep(4.0)
+                            continue
+                        break
+
+                if last_ex is None and translated_b:
                     results[b_idx] = translated_b
                     checkpoint_data["batches"][str(b_idx)] = translated_b
                     _save_cp()
-                except PermissionError:
-                    raise
-                except Exception as ex:
-                    logger.warning(f"[{job_id}] Direct AI batch {b_idx+1}/{total_batches} failed: {ex}")
+                else:
+                    logger.warning(f"[{job_id}] Direct AI batch {b_idx+1}/{total_batches} failed: {last_ex}")
                     # Fallback to standard translator for just this batch
                     from backend.translator import _translate_with_retry
                     fallback_parts = []
@@ -1000,7 +1403,8 @@ async def translate_and_polish_direct_with_gemini(
             pass
 
     final_text = "\n\n".join(r.strip() for r in results if r and r.strip())
-    final_text = apply_glossary(final_text, target_lang)
+    final_text = sanitize_ai_output(final_text)
+    final_text = apply_glossary(final_text, target_lang, style=style)
     if target_lang.lower() in ("greek", "el"):
         from backend.typography import format_greek_typography
         final_text = format_greek_typography(final_text)
