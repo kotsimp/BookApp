@@ -353,7 +353,11 @@ def apply_settings_to_queued_items(
                 item.ai_polish = bool(ai_polish)
         else:
             if layout_clean == "comic":
-                layout_clean = "literature" if item.file_type == "epub" else "standard"
+                # Preserve existing book layout (e.g. 'literature') instead of clobbering it to 'standard'
+                if item.layout_mode in ("literature", "standard"):
+                    layout_clean = item.layout_mode
+                else:
+                    layout_clean = "literature" if item.file_type == "epub" else "standard"
             if fmt_clean in ("cbz", "cbr"):
                 fmt_clean = "pdf"
             item.layout_mode = layout_clean

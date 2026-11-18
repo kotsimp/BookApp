@@ -125,10 +125,18 @@ function removeFile(prefix) {
     if (genreHint) genreHint.style.display = 'none';
     const covGroup = document.getElementById('tr-cover-group');
     if (covGroup) covGroup.style.display = 'none';
+    const prevLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
     setGraphicNovelLock(false);
-    const stdBtn = document.getElementById('layout-standard');
-    if (stdBtn) selectLayout('standard', stdBtn);
-    updateFormatAvailability('standard', '');
+    // When promoting a single file into the Batch Queue, preserve non-comic layout (e.g. Literature)
+    if (!hasQueue || prevLayout === 'comic') {
+      const stdBtn = document.getElementById('layout-standard');
+      if (stdBtn) selectLayout('standard', stdBtn);
+      updateFormatAvailability('standard', '');
+    } else {
+      const keepBtn = document.getElementById(`layout-${prevLayout}`);
+      if (keepBtn) selectLayout(prevLayout, keepBtn);
+      updateFormatAvailability(prevLayout, '');
+    }
     if (hasQueue) {
       syncPrimaryStartButtonWithQueue(_batchQueueState);
     }
