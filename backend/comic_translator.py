@@ -459,7 +459,7 @@ async def _ai_polish_comic_balloons(
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
             )
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             resp_raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
             data = json.loads(resp_raw)
             from backend.ai_polisher import _extract_gemini_text_and_reason
@@ -568,6 +568,13 @@ async def _translate_page_vector(
 
 _CACHED_VISION_MODEL: Optional[str] = None
 _DEAD_VISION_MODELS: set[str] = set()
+
+
+def reset_vision_model_cache() -> None:
+    """Resets cached Gemini Vision model state (e.g. when user updates or deletes their API key)."""
+    global _CACHED_VISION_MODEL
+    _CACHED_VISION_MODEL = None
+    _DEAD_VISION_MODELS.clear()
 
 VISION_MODELS_PRIORITY = [
     # Full Flash models FIRST for accurate Greek spelling, grammar & zero mixed-script glitches
@@ -1038,6 +1045,7 @@ async def translate_comic_document(
 
     # Handle CBZ files (convert image archive to temporary PDF)
     temp_pdf_to_clean: Optional[Path] = None
+    temp_extract_dir_to_clean: Optional[Path] = None
     actual_pdf_path = file_path
 
     if file_type in ("cbz", "zip") or Path(file_path).suffix.lower() in (".cbz", ".zip"):
@@ -1045,6 +1053,7 @@ async def translate_comic_document(
         update_job(job_id, current_step="Extracting comic archive (CBZ)...", progress=5)
         extract_dir = Path("temp") / f"cbz_{job_id}"
         extract_dir.mkdir(parents=True, exist_ok=True)
+        temp_extract_dir_to_clean = extract_dir
 
         with zipfile.ZipFile(file_path, "r") as zf:
             zf.extractall(extract_dir)
@@ -1057,20 +1066,25 @@ async def translate_comic_document(
         ])
 
         if not image_files:
+            import shutil
+            shutil.rmtree(extract_dir, ignore_errors=True)
             raise ValueError("No comic page images found in uploaded CBZ archive.")
 
-        # Build PDF from extracted images
+        # Build PDF from extracted images (explicitly closing every PyMuPDF handle)
         cbz_pdf = fitz.open()
-        for img_p in image_files:
-            img_doc = fitz.open(str(img_p))
-            pdf_bytes = img_doc.convert_to_pdf()
-            page_pdf = fitz.open("pdf", pdf_bytes)
-            page_rect = page_pdf[0].rect
-            new_p = cbz_pdf.new_page(width=page_rect.width, height=page_rect.height)
-            new_p.show_pdf_page(page_rect, page_pdf, 0)
+        try:
+            for img_p in image_files:
+                with fitz.open(str(img_p)) as img_doc:
+                    pdf_bytes = img_doc.convert_to_pdf()
+                with fitz.open("pdf", pdf_bytes) as page_pdf:
+                    page_rect = page_pdf[0].rect
+                    new_p = cbz_pdf.new_page(width=page_rect.width, height=page_rect.height)
+                    new_p.show_pdf_page(page_rect, page_pdf, 0)
 
-        temp_pdf_to_clean = Path("temp") / f"cbz_converted_{job_id}.pdf"
-        cbz_pdf.save(str(temp_pdf_to_clean))
+            temp_pdf_to_clean = Path("temp") / f"cbz_converted_{job_id}.pdf"
+            cbz_pdf.save(str(temp_pdf_to_clean))
+        finally:
+            cbz_pdf.close()
         actual_pdf_path = str(temp_pdf_to_clean)
 
     # Open document with PyMuPDF
@@ -1239,12 +1253,15 @@ async def translate_comic_document(
     full_dialogue_text = "\n".join(dialogue_script_lines)
     Path(output_path).write_text(full_dialogue_text, encoding="utf-8")
 
-    # Clean up temporary CBZ converted PDF if created
+    # Clean up temporary CBZ converted PDF and extracted image folder if created
     if temp_pdf_to_clean and temp_pdf_to_clean.exists():
         try:
             temp_pdf_to_clean.unlink(missing_ok=True)
         except Exception:
             pass
+    if temp_extract_dir_to_clean and temp_extract_dir_to_clean.exists():
+        import shutil
+        shutil.rmtree(temp_extract_dir_to_clean, ignore_errors=True)
 
     update_job(
         job_id,

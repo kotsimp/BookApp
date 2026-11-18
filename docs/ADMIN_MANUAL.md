@@ -51,14 +51,14 @@
 
 ### Βασικές Τεχνολογίες Backend:
 * **FastAPI + Uvicorn:** Υψηλής απόδοσης ασύγχρονος Web server.
-* **SQLite Database Layer (`data/bookapp.db`):** Μόνιμη αποθήκευση κατάστασης εργασιών και πλήρων μεταδεδομένων ρυθμίσεων (`output_format`, `layout_mode`, `source_lang`, `target_lang`, `ai_polish`, `reading_direction`, `total_pages`, `done_pages`) σε WAL mode (Write-Ahead Logging) με thread-safe κλειδώματα, αυτόματη αποκατάσταση ορφανών `running` jobs κατά την εκκίνηση (`db_reset_orphaned_running_jobs`) και self-healing `file_path` (`_heal_file_path`) για μηδενική απώλεια δεδομένων μετά από επανεκκινήσεις.
-* **Smart Batch Queue Engine (`backend/queue_manager.py`):** Σειριακή μηχανή μαζικής μετάφρασης ενοποιημένη στο Upload Card με όριο `MAX_QUEUE_ITEMS = 20` αρχεία ανά παρτίδα (και `MAX_UPLOAD_SIZE_BYTES = 250 MB` ανά αρχείο). Υποστηρίζει δυναμικό συγχρονισμό ρυθμίσεων στο `POST /api/queue/start` (`apply_settings_to_queued_items`), προστασία μικτών παρτίδων (Comics vs Books), απομονωμένο child `asyncio.Task` ανά αρχείο (ώστε η ακύρωση του ενεργού στοιχείου να συνεχίζει αυτόματα στο επόμενο), `POST /api/queue/{job_id}/retry`, `Pause/Resume`, `Auto-Start` και εξαγωγή ενιαίου ZIP (`GET /api/queue/download-all`).
-* **Upload Validation Guard (`POST /api/upload`):** Άμεση απόρριψη κενών αρχείων (`0 bytes`), αρχείων >250 MB (`HTTP 413`) και κατεστραμμένων/μετονομασμένων αρχείων ελέγχοντας magic headers (`PK` για `.docx`/`.epub`/`.cbz`/`.zip`, `%PDF` για `.pdf`) με unique UUID temp filenames για αποφυγή συγκρούσεων σε multi-file uploads.
-* **Semantic Translation & Polish Cache:** Σημασιολογική προσωρινή μνήμη μεταφράσεων και AI Polish βασισμένη σε κατακερματισμό περιεχομένου (SHA-256). Επαναλαμβανόμενες φράσεις και παράγραφοι επιστρέφονται ακαριαία (0ms) χωρίς κατανάλωση εξωτερικού API quota, με ζωντανά στατιστικά επιτυχιών (`GET /api/cache/stats`).
-* **Storage Auto-Cleanup Garbage Collector (`backend/storage_cleaner.py`):** Αυτόματος μηχανισμός εκκαθάρισης προσωρινών τμημάτων ήχου και εξαγωγών παλαιότερων των 48 ωρών, προστατεύοντας τα τελικά αρχεία εξόδου. Προσβάσιμος και μέσω `POST /api/admin/cleanup`.
-* **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`):** Εντοπισμός μπαλονιών διαλόγου, inpainting φόντου, έξυπνη κλιμάκωση γραμματοσειράς `fit-to-box` (έως 5.5pt), υποστήριξη ιαπωνικής φοράς ανάγνωσης Manga (RTL: top-to-bottom, right-to-left) και εξαγωγή σε PDF, CBZ, CBR και Fixed-Layout EPUB.
-* **Greek Editorial Typography Engine (`backend/typography.py`):** Αυτόματη μετατροπή εισαγωγικών σε «...», διαλόγων σε em-dash (`—`), αυτόματη επιβολή του κανόνα του τελικού «ν» (`δε/δεν`, `μη/μην`) και διόρθωση στίξης.
-* **Auto-Genre & Style Detector (`backend/genre_detector.py`):** Ευρετική και γλωσσική ανάλυση κειμένου (`POST /api/detect-genre`) για αυτόματη ανίχνευση λογοτεχνίας, ποίησης, τεχνικών ή διοικητικών κειμένων.
+* **SQLite Database Layer (`data/bookapp.db`):** Μόνιμη αποθήκευση κατάστασης εργασιών (συμπεριλαμβανομένων ακυρώσεων `cancelled` και αυτόνομου AI Polish), πλήρων μεταδεδομένων ρυθμίσεων (`output_format`, `layout_mode`, `source_lang`, `target_lang`, `ai_polish`, `reading_direction`, `total_pages`, `done_pages`) σε WAL mode (Write-Ahead Logging) με thread-safe κλειδώματα, αυτόματη αποκατάσταση ορφανών `running` jobs κατά την εκκίνηση (`db_reset_orphaned_running_jobs`), ανάκτηση `.cbz`/`.cbr`/`.m4b` από το δίσκο και self-healing `file_path` (`_heal_file_path`) για μηδενική απώλεια δεδομένων μετά από επανεκκινήσεις.
+* **Smart Batch Queue Engine (`backend/queue_manager.py`):** Σειριακή μηχανή μαζικής μετάφρασης ενοποιημένη στο Upload Card με όριο `MAX_QUEUE_ITEMS = 20` αρχεία ανά παρτίδα (και `MAX_UPLOAD_SIZE_BYTES = 250 MB` ανά αρχείο). Υποστηρίζει δυναμικό συγχρονισμό ρυθμίσεων στο `POST /api/queue/start` (`apply_settings_to_queued_items`), προστασία μικτών παρτίδων (Comics vs Books), απομονωμένο child `asyncio.Task` ανά αρχείο (με καθαρή διάκριση ακύρωσης μεμονωμένου job vs server shutdown), `POST /api/queue/{job_id}/retry`, `Pause/Resume`, `Auto-Start` και εξαγωγή ενιαίου ZIP (`GET /api/queue/download-all`).
+* **Upload Validation & Path Hygiene Guard (`POST /api/upload`):** Εξυγίανση ονόματος αρχείου (`Path(filename).name`) κατά path traversal, άμεση απόρριψη κενών αρχείων (`0 bytes`), αρχείων >250 MB (`HTTP 413`) και κατεστραμμένων/μετονομασμένων αρχείων ελέγχοντας magic headers (`PK` για `.docx`/`.epub`/`.cbz`/`.zip`, `%PDF` για `.pdf`) με unique UUID temp filenames.
+* **Semantic Translation, Polish & Vision Cache (v2):** Σημασιολογική προσωρινή μνήμη βασισμένη σε SHA-256 (`google`, `gemini_polish_v2`, `gemini_comic_vision_v2`) που απορρίπτει αλλοιωμένα ή περικομμένα αποτελέσματα πριν την αποθήκευση, με ζωντανά στατιστικά (`GET /api/cache/stats`).
+* **Storage Auto-Cleanup Garbage Collector (`backend/storage_cleaner.py`):** Αυτόματος μηχανισμός εκκαθάρισης προσωρινών τμημάτων ήχου, `tts_tmp_*` (M4B), `cbz_*` εξαγωγών και εξαγωγών παλαιότερων των 48 ωρών, προστατεύοντας τα τελικά αρχεία εξόδου (`POST /api/admin/cleanup`).
+* **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`):** Προτεραιότητα σε πλήρη Flash Vision μοντέλα (`VISION_MODELS_PRIORITY`), `maxOutputTokens: 8192`, φιλτράρισμα `thought: true`, ανίχνευση mixed-script αλλοιώσεων με αυτόματο failover, `sanitize_comic_dialogue()`, **two-pass non-blank balloon renderer** (`_plan_balloon_layout` + `_draw_planned_balloon_text` με κλιμάκωση έως `3.0pt`, ακέραιες λέξεις, fallback σε `arialn.ttf` και κάθετο/οριζόντιο κεντράρισμα), υποστήριξη Manga RTL, καθαρισμό προσωρινών φακέλων CBZ και `reset_vision_model_cache()` κατά την αλλαγή API key.
+* **Greek Editorial Typography Engine (`backend/typography.py`):** Αυτόματη μετατροπή εισαγωγικών σε «...», διαλόγων σε em-dash (`—`), κανόνας τελικού «ν» με ακριβή διάκριση στερητικού `μη` (επίθετα/μετοχές/ουσιαστικά/επιρρήματα) έναντι ρηματικού `μην`, συνένωση σπασμένων ενωτικών (`fix_broken_hyphens`), αποκατάσταση αποστρόφων (`fix_greek_elision_apostrophes`) και διόρθωση ελληνικών ερωτηματικών (`;`, `;!`, `;;!!`).
+* **Auto-Genre & Style Detector (`backend/genre_detector.py`):** Ευρετική και γλωσσική ανάλυση κειμένου με υποστήριξη μονολεκτικών και πολυλεκτικών φράσεων (`POST /api/detect-genre`) για αυτόματη ανίχνευση λογοτεχνίας, ποίησης, τεχνικών, διοικητικών ή comic εγγράφων με ακριβή αντιστοίχιση κατηγορίας γλωσσαρίου (`technical`, `literary`, `general`).
 * **Multi-Voice TTS Engine & M4B Exporter (`backend/tts_engine.py`):** Παραγωγή πολυφωνικών audiobooks (Αφηγητής + Διάλογοι), ενσωμάτωση εξωφύλλου και ετικετών ID3v2/MP4 μέσω `mutagen`, άμεση ακρόαση δειγμάτων (`GET /api/tts/preview`) και εξαγωγή σε `.m4b`.
 * **Server-Sent Events (SSE):** Μηχανισμός ζωντανής ενημέρωσης προόδου (0–100%) χωρίς polling.
 * **PyMuPDF (fitz):** Εξαγωγή κειμένου, αναγνώριση διάταξης και παραγωγή PDF με ελληνικές TrueType γραμματοσειρές (Arial/Calibri/Georgia).
@@ -69,17 +69,17 @@
 * **Wingdings / PUA Glyph Normalizer:** Αυτόματη μετατροπή συμβόλων Private Use Area (`\ue000`–`\uf8ff`) σε πρότυπες Unicode κουκίδες (`•`) και native στυλ `List Bullet`.
 * **Interactive Translation Editor:** Αμφίδρομη ανάγνωση και ενημέρωση μεταφρασμένου κειμένου (`GET`/`PUT /api/jobs/{job_id}/text`) με αυτόματο re-exporting, άμεση ανάγνωση pre-extracted `*_original.txt` και διατήρηση του αρχικού `file_type` κατά το disk recovery.
 * **Robust Translator Engine (HTTP POST & Validation):** Αποστολή αιτημάτων μετάφρασης μέσω HTTP POST στο Google GTX client API (`https://translate.googleapis.com/translate_a/single`), εξαλείφοντας περιορισμούς μήκους URI. Αυτόματος έλεγχος ελληνικών χαρακτήρων (`has_greek_text`) με εκθετικό backoff για αποτροπή σιωπηλών επιστροφών στα Αγγλικά.
-* **Optimized AI Polisher (Gemini):** Ασύγχρονη επιμέλεια και διόρθωση μέσω Google Gemini API (`POST /api/polish`) με smart multi-page batching (~5 σελίδες / 10.000 χαρακτήρες ανά κλήση) και concurrency limiter (`MAX_CONCURRENT_REQUESTS = 2`). Περιλαμβάνει:
+* **Optimized AI Polisher & Single-Pass Translator (Gemini):** Ασύγχρονη επιμέλεια και απευθείας μετάφραση μέσω Google Gemini API (`POST /api/polish` & Single-Pass) με **προτεραιότητα στα πλήρη Flash μοντέλα** έναντι Flash-Lite, `maxOutputTokens: 16384`, `thinkingBudget: 0` (2.5 & 3.x Flash), `safetySettings: BLOCK_ONLY_HIGH`, smart multi-page batching (`5.500 chars / max 3 σελίδες`) και `Semaphore(5)`. Περιλαμβάνει:
+  * **Output Sanitizer & Quality Gate (`sanitize_ai_output` + `detect_greek_output_issues`):** Φιλτράρισμα `thought: true` parts, αφαίρεση leaked HTML tags (`</i>`), special tokens (`<bos>`), σημειώσεων επιμελητή & CoT chatter, ανίχνευση mixed-script αλλοιώσεων με αυτόματο retry σε άλλο μοντέλο και **αυτόματη διάσπαση batch (split-and-retry)** σε `MAX_TOKENS`, χαμένους δείκτες σελίδων ή περικοπή.
   * **Source-Anchored Verification:** Δίγλωσση σύγκριση ανά σελίδα του ελληνικού προσχεδίου με το πρωτότυπο αγγλικό κείμενο για εξάλειψη παρερμηνειών και αγγλισμών.
-  * **Audiobook Script Polish & Spoken Phonetics:** Φωνητική μεταγραφή ξένων ονομάτων και ακρωνυμίων σε ελληνικούς χαρακτήρες (π.χ. `Keeton` ➔ `Κίτον`, `Theseus` ➔ `Θησέας`, `DNA` ➔ `Ντι-Εν-Έι`), πλήρης ολογράφως ανάπτυξη αριθμών/ετών/ποσοστών και αφαίρεση μη εκφωνήσιμων συμβόλων για άψογη εκφώνηση από νευρωνικές φωνές TTS (Nestoras/Athina).
-  * **Entity & Character Consistency Dossier:** Αυτόματη εξαγωγή και διοχέτευση μητρώου όρων και ονομάτων σε όλες τις επιμέρους παρτίδες για απόλυτη συνέπεια σε όλο το βιβλίο.
-  * **Rolling Context Window & Smart Real-Time Checkpointing:** Συνεχής ροή ανάμεσα σε διαδοχικές παρτίδες και αποθήκευση προόδου στο δίσκο (`.polish_checkpoint.json`) για μηδενική απώλεια tokens και άμεση συνέχιση σε περίπτωση επανεκκίνησης ή διακοπής.
-  * **Concurrency & Rate Limit Protection:** Μειώνει τις κλήσεις κατά 80% για συμβατότητα με το δωρεάν όριο (15 RPM) του Google AI Studio, διαθέτοντας dynamic exponential backoff (12s–48s) σε HTTP 429 και 5 εξειδικευμένα στυλ.
-* **Cover Image Management:** Πλήρης υποστήριξη εξαγωγής και διαχείρισης εξωφύλλων (`GET/HEAD /api/cover/{job_id}`, `POST /api/cover/{job_id}`, `DELETE /api/cover/{job_id}`). Αυτόματη ανίχνευση από πρωτότυπα PDF/EPUB/DOCX, προβολή μικρογραφίας, χειροκίνητη αντικατάσταση και πλήρης απομόνωση από τα candidate files λήψης (ώστε να μην κατεβαίνει εικόνα αντί για βιβλίο).
-* **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων (όπως Gemini API key) στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings`.
-* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia serif) και reflowable Kindle/iPad EPUB με TOC. Αφαιρεί running headers/footers και αριθμούς σελίδων από το κείμενο, απομονώνει τίτλους κεφαλαίων και παραθέματα, ενώνει σπασμένες προτάσεις ανάμεσα σε σελίδες και ενσωματώνει αυθεντικό εξώφυλλο στην 1η σελίδα.
-* **Multi-Page Front Matter Preservation:** Καθαρισμός κεφαλίδων σε επίπεδο γραμμής (`_clean_page_blocks`), διασφαλίζοντας ότι πίνακες περιεχομένων, προμετωπίδες (epigraphs) και πρόλογοι στις αρχικές σελίδες του βιβλίου διατηρούνται 100% ακέραιοι χωρίς απόρριψη μπλοκ κειμένου.
-* **Custom Glossary Engine:** Αποθήκευση και αντικατάσταση ορολογίας με regex word boundaries (`GET`/`POST`/`DELETE /api/glossary`).
+  * **Audiobook Script Polish & Spoken Phonetics:** Φωνητική μεταγραφή ξένων ονομάτων και ακρωνυμίων σε ελληνικούς χαρακτήρες (π.χ. `Keeton` ➔ `Κίτον`, `Theseus` ➔ `Θησέας`, `DNA` ➔ `Ντι-Εν-Έι`), πλήρης ολογράφως ανάπτυξη αριθμών/ετών/ποσοστών και αφαίρεση μη εκφωνήσιμων συμβόλων.
+  * **Entity & Character Consistency Dossier:** Αυτόματη εξαγωγή μητρώου όρων/ονομάτων με γραμματικό γένος (`ο/η`) και διάκριση ομώνυμων χαρακτήρων.
+  * **Rolling Context Window & Smart Real-Time Checkpointing:** Αποθήκευση προόδου στο δίσκο (`.polish_checkpoint.json` / `.direct_ai_checkpoint.json`) και ενοποιημένο `POLISH_STATUS` μέσω `get_polish_job_status()` / `update_polish_job_status()`.
+* **Cover Image Management:** Πλήρης υποστήριξη εξαγωγής (με καθαρό κλείσιμο PDF handles μέσω context manager) και διαχείρισης εξωφύλλων (`GET/HEAD /api/cover/{job_id}`, `POST /api/cover/{job_id}`, `DELETE /api/cover/{job_id}`).
+* **Persistent Settings Manager:** Αποθήκευση και διαγραφή ρυθμίσεων στο `config/settings.json` μέσω `GET`/`POST`/`DELETE /api/settings` (με ταυτόχρονο reset τόσο του text όσο και του comic vision model cache).
+* **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia + Georgia Italic/Bold για πραγματικά `*πλάγια*`/`**έντονα**`) και reflowable Kindle/iPad EPUB (`<em>`/`<strong>`) με TOC.
+* **Multi-Page Front Matter Preservation:** Καθαρισμός κεφαλίδων σε επίπεδο γραμμής (`_clean_page_blocks`), διασφαλίζοντας ότι πίνακες περιεχομένων, προμετωπίδες (epigraphs) και πρόλογοι στις αρχικές σελίδες διατηρούνται 100% ακέραιοι.
+* **Style-Aware Categorized Glossary Engine:** Κατηγοριοποιημένη ορολογία (`technical`, `literary`, `general`) με hyphen-safe word boundaries (`(?<![\w-])` / `(?![\w-])`), αυτόματο αποκλεισμό IT όρων σε λογοτεχνία/comics/audiobooks και προστασία αγγλικών βιβλιογραφικών γραμμών (`GET`/`POST`/`DELETE /api/glossary`).
 
 ---
 
@@ -91,7 +91,7 @@
 * **macOS:** macOS 11 Big Sur ή νεότερο.
 
 ### Λογισμικό
-* **Python 3.9 έως 3.12** εγκατεστημένη στο σύστημα με `pip` και `venv`.
+* **Python 3.9 έως 3.15** εγκατεστημένη στο σύστημα με `pip` και `venv` (πλήρης συμβατότητα με `asyncio.get_running_loop()`).
 * **Git** (για λήψη και ενημέρωση του κώδικα).
 
 ### Δικτυακές Απαιτήσεις (Firewall / Network Rules)
@@ -288,17 +288,17 @@ BookApp/
 
 ## 6. Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)
 
-Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **29 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 40 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη) και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
+Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **30 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 40 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη), αυτόματο καθαρισμό test sessions μετά την ολοκλήρωση και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
 
 ```bash
-# Εκτέλεση όλων των 29 suites (Full Suite):
+# Εκτέλεση όλων των 30 suites (Full Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Ταχεία εκτέλεση (static/unit/regression/queue/benchmark suites σε ~30s):
+# Ταχεία εκτέλεση (25 local static/unit/regression/quality/queue/benchmark suites σε ~40s):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
-Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **29 σουίτες δοκιμών**:
+Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **30 σουίτες δοκιμών**:
 1. `test_ai_polish_advanced.py`: Δίγλωσση επιμέλεια, Audiobook phonetics, consistency dossier & checkpoints.
 2. `test_ai_polisher_deep.py`: Όλα τα 6 στυλ επιμέλειας, temperatures, multi-page splitting, cache invalidation.
 3. `test_api.py`: Ολοκληρωμένοι έλεγχοι REST endpoints, upload, translation & streaming.
@@ -328,8 +328,9 @@ BookApp/
 27. `test_tts_audiobook_deep.py`: Κατάλογος φωνών, prosody, συνένωση chunks, ακύρωση in-flight.
 28. `test_typography_and_genre.py`: Ελληνική τυπογραφία, κανόνας τελικού «ν», αυτόματη ανίχνευση είδους.
 29. `test_smart_batch_queue.py`: Πλήρης κύκλος ζωής Smart Batch Queue (`/api/queue/*`), όριο 20 αρχείων, συγχρονισμός ρυθμίσεων στο `/queue/start` σε μικτές παρτίδες (Comic + Book), απομονωμένη ακύρωση running item, Pause/Resume, Retry (`/queue/{id}/retry`), validation (400/404/0-byte DOCX), History-Delete sync, λήψη ενιαίου ZIP (`/api/queue/download-all`) και ανθεκτική ανάκτηση κακοσχηματισμένου Vision JSON (`_parse_vision_json`).
+30. `test_translation_quality_fixes.py`: Ολοκληρωμένος έλεγχος ποιότητας ελληνικής μετάφρασης, αφαίρεσης HTML/LLM tokens/CoT leaks, ανίχνευσης mixed-script αλλοιώσεων & περικοπών, προτεραιότητας Full Flash μοντέλων, στερητικού `μη` vs ρηματικού `μην`, απομόνωσης τεχνικού γλωσσαρίου από λογοτεχνία & σύνθετες λέξεις, απόδοσης πλάγιων γραμμάτων σε PDF/DOCX/EPUB και two-pass non-blank comic balloon rendering.
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`29/29 PASS (100% επιτυχία · 40/40 FastAPI endpoints)`**.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`30/30 PASS (25/25 σε --fast · 40/40 FastAPI endpoints)`** και αυτόματο καθαρισμό test sessions.
 
 ---
 
@@ -351,3 +352,5 @@ BookApp/
 | **Νευρωνική φωνή Edge-TTS κομπιάζει σε ξένα ονόματα ή διαβάζει αριθμούς ως ψηφία** | Η φωνή `Nestoras` διαβάζει αγγλικούς χαρακτήρες γράμμα-γράμμα ή κομπιάζει σε λατινικά ακρωνύμια (`DNA`, `AI`). | Χρησιμοποιήστε την επιλογή **AI Polish for Spoken Audio (style="audiobook")**, η οποία μεταγράφει φωνητικά τα ξένα ονόματα σε ελληνικά (`Κίτον`, `Θησέας`, `Ρόρσαχ`), αναπτύσσει ολογράφως τους αριθμούς (`δύο χιλιάδες έξι`) και αφαιρεί δείκτες σελίδων και υποσημειώσεις. |
 | **Σφάλμα `no such file: ...temp/uploads/tmp/...` κατά το Resume από Session History** | Παλαιότερη έκδοση του `db_save_job` δεν ενημέρωνε το `file_path` στο `ON CONFLICT DO UPDATE`. | Έχει επιλυθεί πλήρως: το `database.py` ενημερώνει πλέον `file_path`, και ο `job_manager.py` διαθέτει αυτόματο `_heal_file_path()` από `temp/uploads/{job_id}/`. |
 | **Σφάλμα `Package not found` σε `.docx` αρχείο** | Το ανεβασμένο αρχείο ήταν 0 bytes (κενό) ή μετονομασμένο παλιό `.doc`. | Έχει επιλυθεί: το `POST /api/upload` απορρίπτει αμέσως κενά (0 bytes) ή μη έγκυρα `.docx`/`.epub`/`.cbz`/`.pdf` αρχεία με σαφές μήνυμα σφάλματος. |
+| **Άδεια λευκά μπαλόνια σε Graphic Novels** | Πυκνά ελληνικά κείμενα δεν χωρούσαν στα `5.0pt` με `insert_textbox` και παραλείπονταν αθόρυβα. | Έχει επιλυθεί πλήρως: ο νέος two-pass renderer (`_plan_balloon_layout` + `_draw_planned_balloon_text`) σχεδιάζει πρώτα όλα τα φόντα και έπειτα όλα τα κεντραρισμένα κείμενα με προσαρμογή έως `3.0pt` και fallback σε `arialn.ttf`. |
+| **HTML tags (`</i>`), `<bos>`, CoT leaks ή ξένα γράμματα (`□□`) σε AI Polish** | Χρήση Flash-Lite μοντέλων και απουσία φιλτραρίσματος `thought: true` / `MAX_TOKENS`. | Έχει επιλυθεί πλήρως: προτεραιότητα σε πλήρη Flash μοντέλα, `maxOutputTokens: 16384`, `sanitize_ai_output()`, `detect_greek_output_issues()`, split-on-truncation και φρέσκια v2 cache. |

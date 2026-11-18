@@ -94,7 +94,7 @@ class TestNewAPIEndpoints(unittest.TestCase):
         status, data = http_post_json("/detect-genre", {"sample_text": "POW! BAM!", "file_type": "cbz"})
         self.assertEqual(status, 200)
         self.assertEqual(data["genre"], "comic")
-        self.assertEqual(data["glossary_category"], "literature")
+        self.assertEqual(data["glossary_category"], "literary")
 
         # 1d. Empty text fallback
         status, data = http_post_json("/detect-genre", {"text": ""})

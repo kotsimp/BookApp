@@ -145,8 +145,10 @@ async def _translate_with_retry(
 
     # Check SQLite semantic translation cache first
     cache_key = None
+    _db_set_cached = None
     try:
         from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        _db_set_cached = db_set_cached_translation
         cache_key = compute_cache_key(text, source_lang, target_lang, engine="google")
         cached_res = db_get_cached_translation(cache_key)
         if cached_res is not None:
@@ -154,7 +156,7 @@ async def _translate_with_retry(
     except Exception as ex:
         logger.debug(f"Cache check skipped: {ex}")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     now = time.time()
 
     # 1. Direct GTX client API via POST (skipped immediately during 429 cooldown)
@@ -171,10 +173,9 @@ async def _translate_with_retry(
                         logger.warning(f"GTX returned untranslated text on attempt {attempt+1}/{retries}, retrying...")
                         await asyncio.sleep(0.6 * (attempt + 1))
                         continue
-                    if cache_key:
+                    if cache_key and _db_set_cached:
                         try:
-                            from backend.database import db_set_cached_translation
-                            db_set_cached_translation(cache_key, text, result, source_lang, target_lang, engine="google")
+                            _db_set_cached(cache_key, text, result, source_lang, target_lang, engine="google")
                         except Exception:
                             pass
                     return result
@@ -194,10 +195,9 @@ async def _translate_with_retry(
     if session is not None and len(text) <= 480:
         mm_res = await _translate_mymemory_async(session, text, source_lang, target_lang)
         if mm_res:
-            if cache_key:
+            if cache_key and _db_set_cached:
                 try:
-                    from backend.database import db_set_cached_translation
-                    db_set_cached_translation(cache_key, text, mm_res, source_lang, target_lang, engine="google")
+                    _db_set_cached(cache_key, text, mm_res, source_lang, target_lang, engine="google")
                 except Exception:
                     pass
             return mm_res
@@ -217,10 +217,9 @@ async def _translate_with_retry(
                 logger.info("Attempting fallback via deep_translator...")
                 result = await loop.run_in_executor(None, deep_trans.translate, text)
                 if result and result.strip():
-                    if cache_key:
+                    if cache_key and _db_set_cached:
                         try:
-                            from backend.database import db_set_cached_translation
-                            db_set_cached_translation(cache_key, text, result, source_lang, target_lang, engine="google")
+                            _db_set_cached(cache_key, text, result, source_lang, target_lang, engine="google")
                         except Exception:
                             pass
                     return result
@@ -234,7 +233,7 @@ async def _translate_with_retry(
         import os
         from backend.settings_manager import get_setting
         gemini_key = (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-        if gemini_key and not gemini_key.startswith("AQ.Test"):
+        if gemini_key and not gemini_key.startswith(("AQ.Test", "AIzaTest")):
             from backend.ai_polisher import _call_gemini_api
             tgt_label = "Greek" if target_lang.lower().startswith(("gr", "el")) else "English"
             src_label = "English" if source_lang.lower().startswith("en") else "Greek"
@@ -244,10 +243,9 @@ async def _translate_with_retry(
             )
             gem_res = await _call_gemini_api(text, gemini_key, prompt, session=session, temperature=0.2)
             if gem_res and gem_res.strip():
-                if cache_key:
+                if cache_key and _db_set_cached:
                     try:
-                        from backend.database import db_set_cached_translation
-                        db_set_cached_translation(cache_key, text, gem_res, source_lang, target_lang, engine="google")
+                        _db_set_cached(cache_key, text, gem_res, source_lang, target_lang, engine="google")
                     except Exception:
                         pass
                 return gem_res.strip()

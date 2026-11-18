@@ -54,7 +54,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
         return {
             "genre": "comic",
             "suggested_style": "literature",
-            "glossary_category": "literature",
+            "glossary_category": "literary",
             "confidence": 1.0,
             "reason": "Graphic novel / comic archive detected.",
         }
@@ -84,18 +84,24 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
             return {
                 "genre": "poetry",
                 "suggested_style": "poetry",
-                "glossary_category": "literature",
+                "glossary_category": "literary",
                 "confidence": round(min(0.95, ratio_short * 1.1), 2),
                 "reason": f"Detected poetic verse structure: {len(short_lines)}/{total_lines} short rhythmic lines.",
             }
 
-    # 2. Tokenize lower-case words for keyword density
-    words = re.findall(r"\b[\wΆ-ώa-zA-Z]{3,}\b", clean.lower())
+    # 2. Tokenize lower-case words + support multi-word phrases for keyword density
+    clean_lower = clean.lower()
+    words = re.findall(r"\b[\wΆ-ώa-zA-Z]{3,}\b", clean_lower)
     total_words = max(1, len(words))
 
-    tech_matches = sum(1 for w in words if w in TECHNICAL_KEYWORDS)
-    formal_matches = sum(1 for w in words if w in FORMAL_KEYWORDS)
-    lit_matches = sum(1 for w in words if w in LITERATURE_KEYWORDS)
+    def _count_keyword_hits(keywords: set[str]) -> int:
+        single_hits = sum(1 for w in words if w in keywords)
+        phrase_hits = sum(clean_lower.count(kw) for kw in keywords if " " in kw)
+        return single_hits + phrase_hits
+
+    tech_matches = _count_keyword_hits(TECHNICAL_KEYWORDS)
+    formal_matches = _count_keyword_hits(FORMAL_KEYWORDS)
+    lit_matches = _count_keyword_hits(LITERATURE_KEYWORDS)
 
     # Count dialogue cues (lines starting with dialogue dash —, -, or quotation marks «, ")
     dialogue_lines = [
@@ -122,7 +128,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
         return {
             "genre": "formal",
             "suggested_style": "formal",
-            "glossary_category": "technical",
+            "glossary_category": "general",
             "confidence": round(min(0.95, 0.6 + formal_score * 0.1), 2),
             "reason": f"Detected administrative and formal document terminology ({formal_matches} matches).",
         }
@@ -131,7 +137,7 @@ def detect_genre_and_style(sample_text: str, file_type: str = "") -> Dict[str, A
         return {
             "genre": "literature",
             "suggested_style": "literature",
-            "glossary_category": "literature",
+            "glossary_category": "literary",
             "confidence": round(min(0.95, 0.65 + dialogue_ratio * 0.5), 2),
             "reason": f"Detected literary dialogue structures and narrative verbs ({len(dialogue_lines)} dialogue cues).",
         }

@@ -137,6 +137,8 @@ def load_glossary(category: Optional[str] = None, style: Optional[str] = None) -
 
     if category and category.lower() not in ("all", "*"):
         cat_key = category.lower()
+        if cat_key == "literature":
+            cat_key = "literary"
         return dict(terms_by_cat.get(cat_key, {}))
 
     style_low = (style or "").lower()

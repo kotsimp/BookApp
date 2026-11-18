@@ -24,17 +24,17 @@ def extract_cover_image(file_path: Optional[Union[str, Path]]) -> Optional[bytes
     if ext == ".pdf":
         try:
             import pymupdf
-            doc = pymupdf.open(str(p))
-            if len(doc) == 0:
-                return None
-            p0 = doc[0]
-            imgs = p0.get_images()
-            text_len = len(p0.get_text().strip())
-            # A cover page typically has images and little/no textual prose (< 150 chars),
-            # or has an image covering most of the page.
-            if imgs or text_len < 150:
-                pix = p0.get_pixmap(dpi=150)
-                return pix.tobytes("jpeg")
+            with pymupdf.open(str(p)) as doc:
+                if len(doc) == 0:
+                    return None
+                p0 = doc[0]
+                imgs = p0.get_images()
+                text_len = len(p0.get_text().strip())
+                # A cover page typically has images and little/no textual prose (< 150 chars),
+                # or has an image covering most of the page.
+                if imgs or text_len < 150:
+                    pix = p0.get_pixmap(dpi=150)
+                    return pix.tobytes("jpeg")
         except Exception:
             pass
 

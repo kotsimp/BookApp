@@ -292,9 +292,17 @@ async def _process_queue_loop(
                 if job and job.status in ("done", "error", "cancelled"):
                     next_item.status = job.status
                     next_item.error = job.error
+                elif not job:
+                    next_item.status = "cancelled"
                 else:
                     next_item.status = "done"
             except asyncio.CancelledError:
+                cur_task = asyncio.current_task()
+                if cur_task is not None and cur_task.cancelling() > 0:
+                    # Outer queue loop itself is being cancelled (e.g. server shutdown)
+                    if not item_task.done():
+                        item_task.cancel()
+                    raise
                 next_item.status = "cancelled"
                 logger.info(f"[Queue] Job {next_item.job_id} cancelled; continuing queue.")
             except Exception as ex:

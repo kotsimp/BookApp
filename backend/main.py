@@ -28,6 +28,7 @@ from backend.translator import translate_document
 from backend.tts_engine import generate_audiobook, get_available_voices
 from backend.exporter import export_text
 from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
+from backend.ai_polisher import POLISH_STATUS
 # ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
@@ -216,10 +217,11 @@ def _detect_document_language(file_path: str, file_type: str) -> Optional[str]:
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload a document and create a job. Returns job_id."""
-    ext = Path(file.filename).suffix.lower()
+    safe_filename = Path(file.filename or "document").name
+    ext = Path(safe_filename).suffix.lower()
 
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type '{ext}'. Supported: PDF, DOCX, EPUB.")
+        raise HTTPException(400, f"Unsupported file type '{ext}'. Supported: PDF, DOCX, EPUB, CBZ, ZIP.")
 
     if ext == ".doc":
         raise HTTPException(400, (
@@ -227,13 +229,13 @@ async def upload_file(file: UploadFile = File(...)):
             "Please save/convert your file as .docx using Microsoft Word or LibreOffice."
         ))
 
-    file_type = _get_file_type(file.filename)
+    file_type = _get_file_type(safe_filename)
     content = await file.read()
 
     if not content:
         raise HTTPException(
             400,
-            f"Το αρχείο '{file.filename}' είναι κενό (0 bytes) και δεν περιέχει δεδομένα.",
+            f"Το αρχείο '{safe_filename}' είναι κενό (0 bytes) και δεν περιέχει δεδομένα.",
         )
 
     MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024  # 250 MB per file
@@ -241,13 +243,13 @@ async def upload_file(file: UploadFile = File(...)):
         size_mb = len(content) / (1024 * 1024)
         raise HTTPException(
             413,
-            f"Το αρχείο '{file.filename}' ({size_mb:.1f} MB) υπερβαίνει το μέγιστο όριο των 250 MB.",
+            f"Το αρχείο '{safe_filename}' ({size_mb:.1f} MB) υπερβαίνει το μέγιστο όριο των 250 MB.",
         )
 
     if ext in (".docx", ".epub", ".cbz", ".zip") and not content[:2] == b"PK":
         raise HTTPException(
             400,
-            f"Το αρχείο '{file.filename}' δεν είναι έγκυρο αρχείο {ext.upper()} "
+            f"Το αρχείο '{safe_filename}' δεν είναι έγκυρο αρχείο {ext.upper()} "
             f"(ενδέχεται να είναι κατεστραμμένο ή παλιό .doc που μετονομάστηκε). "
             f"Ανοίξτε το και αποθηκεύστε το ξανά ως {ext}.",
         )
@@ -255,13 +257,13 @@ async def upload_file(file: UploadFile = File(...)):
     if ext == ".pdf" and b"%PDF" not in content[:1024]:
         raise HTTPException(
             400,
-            f"Το αρχείο '{file.filename}' δεν είναι έγκυρο αρχείο PDF (κατεστραμμένη επικεφαλίδα).",
+            f"Το αρχείο '{safe_filename}' δεν είναι έγκυρο αρχείο PDF (κατεστραμμένη επικεφαλίδα).",
         )
 
     # Save upload (unique prefix avoids filename collisions during multi-file drops)
     job_dir = UPLOAD_DIR / "tmp"
     job_dir.mkdir(exist_ok=True)
-    tmp_path = job_dir / f"{uuid.uuid4().hex}_{file.filename}"
+    tmp_path = job_dir / f"{uuid.uuid4().hex}_{safe_filename}"
 
     async with aiofiles.open(tmp_path, "wb") as out:
         await out.write(content)
@@ -269,14 +271,14 @@ async def upload_file(file: UploadFile = File(...)):
     # Create job
     job = create_job(
         file_path=str(tmp_path),
-        file_name=file.filename,
+        file_name=safe_filename,
         file_type=file_type,
     )
 
     # Move file to job-specific dir
     job_upload_dir = UPLOAD_DIR / job.job_id
     job_upload_dir.mkdir(exist_ok=True)
-    final_path = job_upload_dir / file.filename
+    final_path = job_upload_dir / safe_filename
     shutil.move(str(tmp_path), str(final_path))
     update_job(job.job_id, file_path=str(final_path))
 
@@ -481,7 +483,12 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
 
             translated_txt = await translate_docx_in_place(
-                file_path, str(final_docx_path), source_lang, target_lang, docx_prog
+                file_path,
+                str(final_docx_path),
+                source_lang,
+                target_lang,
+                docx_prog,
+                style="literature" if layout == "literature" else None,
             )
             if is_job_cancelled(job_id):
                 return
@@ -500,7 +507,12 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 update_job(job_id, current_step=msg, progress=pct, done_chunks=done, total_chunks=total)
 
             translated_txt = await translate_epub_in_place(
-                file_path, str(final_epub_path), source_lang, target_lang, epub_prog
+                file_path,
+                str(final_epub_path),
+                source_lang,
+                target_lang,
+                epub_prog,
+                style="literature",
             )
             if is_job_cancelled(job_id):
                 return
@@ -527,15 +539,16 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
-        # Mark job complete
+        # Mark job complete (preserve real batch/page totals)
+        final_total = max(int(getattr(job, "total_chunks", 0) or 0), 1)
         update_job(job_id,
             status="done",
             progress=100,
             current_step=f"Exported {fmt.upper()} (Formatting Preserved)",
             output_path=str(final_path),
             output_format=fmt,
-            done_chunks=1,
-            total_chunks=1,
+            done_chunks=final_total,
+            total_chunks=final_total,
         )
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Translation task was cancelled.")
@@ -1156,9 +1169,11 @@ async def get_app_settings():
 async def update_app_settings(req: SettingsRequest):
     from backend.settings_manager import save_setting
     from backend.ai_polisher import reset_model_cache
+    from backend.comic_translator import reset_vision_model_cache
     if req.gemini_api_key is not None:
         save_setting("gemini_api_key", req.gemini_api_key.strip())
         reset_model_cache()
+        reset_vision_model_cache()
     return {"status": "ok"}
 
 
@@ -1168,8 +1183,10 @@ async def delete_app_setting(key: str):
         raise HTTPException(400, f"Unsupported setting key '{key}'.")
     from backend.settings_manager import delete_setting
     from backend.ai_polisher import reset_model_cache
+    from backend.comic_translator import reset_vision_model_cache
     delete_setting(key)
     reset_model_cache()
+    reset_vision_model_cache()
     return {"status": "deleted", "key": key}
 
 
@@ -1177,13 +1194,11 @@ async def delete_app_setting(key: str):
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------
 
-POLISH_STATUS: dict[str, dict] = {}
-
-
 @app.get("/api/polish/status/{job_id}")
 async def get_polish_status(job_id: str):
     """Returns current real-time progress of AI Polish for a given job."""
-    return POLISH_STATUS.get(job_id, {"current": 0, "total": 1, "percent": 0, "status": "idle"})
+    from backend.ai_polisher import get_polish_job_status
+    return get_polish_job_status(job_id)
 
 
 @app.post("/api/polish")
@@ -1266,23 +1281,27 @@ async def polish_translation(req: PolishRequest):
         original_text = None
         effective_bilingual = False
 
+    from backend.ai_polisher import get_polish_job_status, update_polish_job_status
+
     def on_progress(current: int, total: int):
         pct = int((current / max(1, total)) * 100)
-        POLISH_STATUS[req.job_id] = {
-            "current": current,
-            "total": total,
-            "percent": pct,
-            "status": "running",
-            "step": f"Polishing batch {current} of {total}...",
-        }
+        update_polish_job_status(
+            req.job_id,
+            current=current,
+            total=total,
+            percent=pct,
+            status="running",
+            step=f"Polishing batch {current} of {total}...",
+        )
 
-    POLISH_STATUS[req.job_id] = {
-        "current": 0,
-        "total": 1,
-        "percent": 0,
-        "status": "running",
-        "step": "Connecting to Gemini Flash AI...",
-    }
+    update_polish_job_status(
+        req.job_id,
+        current=0,
+        total=1,
+        percent=0,
+        status="running",
+        step="Connecting to Gemini Flash AI...",
+    )
 
     try:
         polished = await polish_text_with_gemini(
@@ -1294,22 +1313,24 @@ async def polish_translation(req: PolishRequest):
             use_source_anchoring=effective_bilingual,
             progress_callback=on_progress,
         )
-        total_p = POLISH_STATUS.get(req.job_id, {}).get("total", 1)
-        POLISH_STATUS[req.job_id] = {
-            "current": total_p,
-            "total": total_p,
-            "percent": 100,
-            "status": "done",
-            "step": "AI Polishing complete!",
-        }
+        total_p = get_polish_job_status(req.job_id).get("total", 1)
+        update_polish_job_status(
+            req.job_id,
+            current=total_p,
+            total=total_p,
+            percent=100,
+            status="done",
+            step="AI Polishing complete!",
+        )
     except Exception as e:
-        POLISH_STATUS[req.job_id] = {
-            "current": 0,
-            "total": 1,
-            "percent": 0,
-            "status": "error",
-            "step": str(e),
-        }
+        update_polish_job_status(
+            req.job_id,
+            current=0,
+            total=1,
+            percent=0,
+            status="error",
+            step=str(e),
+        )
         logger.error(f"AI Polishing failed: {e}", exc_info=True)
         raise HTTPException(500, f"AI Polishing failed: {str(e)}")
 
@@ -1318,24 +1339,29 @@ async def polish_translation(req: PolishRequest):
     txt_file = out_dir / f"{stem}_translated_greek.txt"
     txt_file.write_text(polished, encoding="utf-8")
     base_name = txt_file.stem
-    fmt = (job.output_format if job else "docx") or "docx"
+    fmt = ((job.output_format if job else "docx") or "docx").lower().lstrip(".")
     layout = (req.layout_mode or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
     export_path = export_text(polished, out_dir, fmt, base_name, layout=layout)
 
-    # Refresh other standard formats on-demand
-    for ext in [".pdf", ".epub", ".docx"]:
+    # Refresh other standard formats on-demand (without redundantly re-exporting fmt)
+    for other_fmt in ("pdf", "epub", "docx"):
+        if other_fmt == fmt:
+            continue
         try:
-            export_text(polished, out_dir, ext.lstrip("."), base_name, layout=layout)
+            export_text(polished, out_dir, other_fmt, base_name, layout=layout)
         except Exception:
             pass
 
     if job:
-        job.status = "done"
-        job.progress = 100
-        job.output_path = str(export_path)
-        job.output_format = fmt
-        job.layout_mode = layout
-        job.current_step = "AI Polishing complete!"
+        update_job(
+            req.job_id,
+            status="done",
+            progress=100,
+            output_path=str(export_path),
+            output_format=fmt,
+            layout_mode=layout,
+            current_step="AI Polishing complete!",
+        )
 
     return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
 
@@ -1460,7 +1486,6 @@ async def _execute_queue_item(q_item):
         layout_mode=q_item.layout_mode,
         reading_direction=q_item.reading_direction,
         ai_polish=q_item.ai_polish,
-        api_key=q_item.api_key,
     )
     await _run_translation(
         q_item.job_id,

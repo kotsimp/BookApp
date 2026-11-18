@@ -155,7 +155,7 @@ def is_job_cancelled(job_id: str) -> bool:
 
 
 def cancel_job(job_id: str) -> bool:
-    """Cancels a running job and its active asyncio task."""
+    """Cancels a running job and its active asyncio task, persisting cancelled state to SQLite."""
     job = _jobs.get(job_id)
     task = _active_tasks.pop(job_id, None)
     if task and not task.done():
@@ -164,6 +164,11 @@ def cancel_job(job_id: str) -> bool:
         job.status = "cancelled"
         job.current_step = "🛑 Cancelled by user."
         job.updated_at = time.time()
+        try:
+            from backend.database import db_save_job
+            db_save_job(_job_to_db_dict(job))
+        except Exception:
+            pass
         _notify_subscribers(job)
         return True
     return False
@@ -175,6 +180,12 @@ def clear_job_cancellation(job_id: str) -> None:
     if job and job.status == "cancelled":
         job.status = "idle"
         job.error = None
+        job.updated_at = time.time()
+        try:
+            from backend.database import db_save_job
+            db_save_job(_job_to_db_dict(job))
+        except Exception:
+            pass
 
 
 def create_job(file_path: str, file_name: str, file_type: str) -> Job:
@@ -228,14 +239,14 @@ def get_job(job_id: str) -> Optional[Job]:
         out_dir = base_temp / "outputs" / job_id
         up_dir = base_temp / "uploads" / job_id
         if out_dir.exists():
-            # Exclude images (like cover_image.jpg) - only genuine document outputs
+            # Exclude images (like cover_image.jpg) - only genuine document/comic/audiobook outputs
             files = [
                 f for f in out_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".txt"]
+                if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".cbz", ".cbr", ".mp3", ".m4b", ".txt"]
             ]
             if files:
-                # Prefer final export or mp3 over intermediate txt
-                preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3"]]
+                # Prefer final export or audio over intermediate txt
+                preferred = [f for f in files if f.suffix.lower() in [".docx", ".pdf", ".epub", ".cbz", ".cbr", ".mp3", ".m4b"]]
                 files_to_pick = preferred if preferred else files
                 files_to_pick.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_file = files_to_pick[0]
@@ -248,7 +259,7 @@ def get_job(job_id: str) -> Optional[Job]:
 
                 file_name = up_file.name if up_file else out_file.name
                 file_type = (up_file.suffix if up_file else out_file.suffix).lstrip(".").lower()
-                mode = "audiobook" if out_file.suffix.lower() == ".mp3" else "translate"
+                mode = "audiobook" if out_file.suffix.lower() in (".mp3", ".m4b") else "translate"
                 mtime = out_file.stat().st_mtime
                 job = Job(
                     job_id=job_id,

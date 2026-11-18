@@ -5,7 +5,6 @@ Supports Greek (el-GR) and English (en-US) with multiple voice options.
 
 import asyncio
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -52,8 +51,6 @@ DEFAULT_PITCHES = {
     "standard": "+0Hz",
     "fast": "+0Hz",
 }
-default_rates = DEFAULT_RATES
-default_pitches = DEFAULT_PITCHES
 
 
 def split_into_voice_segments(
@@ -199,7 +196,6 @@ async def synthesize_voice_preview(
     text: Optional[str] = None,
 ) -> str:
     """Synthesizes a short 2-3 second voice preview MP3 and returns its path."""
-    import edge_tts
     base_temp = Path(__file__).resolve().parent.parent / "temp" / "previews"
     base_temp.mkdir(parents=True, exist_ok=True)
     out_file = base_temp / f"preview_{voice_code}.mp3"
@@ -238,7 +234,7 @@ async def export_audiobook_m4b(
             m4b_path
         ]
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True))
             return m4b_path
         except Exception as e:
@@ -485,16 +481,9 @@ async def generate_audiobook(
             cover_image_path=cover_img,
         )
 
-    # Cleanup temp files
-    for f in chunk_files:
-        try:
-            os.remove(f)
-        except Exception:
-            pass
-    try:
-        temp_dir.rmdir()
-    except Exception:
-        pass
+    # Cleanup temp directory completely (including full_concat.mp3 created for M4B export)
+    import shutil
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
     update_job(job_id,
                status="done",
