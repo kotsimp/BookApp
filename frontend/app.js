@@ -40,12 +40,15 @@ function handleDragLeave(e, zoneId) {
 
 function handleDrop(e, inputId, prefix) {
   e.preventDefault();
-  const zoneId = prefix + '-upload-zone';
-  document.getElementById(zoneId).classList.remove('dragover');
-  const files = Array.from(e.dataTransfer.files || []);
+  e.stopPropagation();
+  const cardEl = document.getElementById(prefix + '-upload-card');
+  if (cardEl) cardEl.classList.remove('dragover');
+  const zoneEl = document.getElementById(prefix + '-upload-zone');
+  if (zoneEl) zoneEl.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer?.files || []);
   if (files.length === 0) return;
-  const queueOpen = prefix === 'tr' && document.getElementById('tr-queue-card')?.style.display === 'block';
-  if (prefix === 'tr' && (files.length > 1 || queueOpen)) {
+  const shouldBatch = prefix === 'tr' && (files.length > 1 || _batchQueueState.total_count > 0 || Boolean(state.tr.jobId));
+  if (shouldBatch) {
     enqueueMultipleFiles(files);
   } else {
     processFile(files[0], prefix);
@@ -55,8 +58,8 @@ function handleDrop(e, inputId, prefix) {
 function handleFileSelect(e, prefix) {
   const files = Array.from(e.target.files || []);
   if (files.length === 0) return;
-  const queueOpen = prefix === 'tr' && document.getElementById('tr-queue-card')?.style.display === 'block';
-  if (prefix === 'tr' && (files.length > 1 || queueOpen)) {
+  const shouldBatch = prefix === 'tr' && (files.length > 1 || _batchQueueState.total_count > 0 || Boolean(state.tr.jobId));
+  if (shouldBatch) {
     enqueueMultipleFiles(files);
     e.target.value = '';
   } else {
@@ -105,7 +108,9 @@ function removeFile(prefix) {
     selEl.classList.remove('visible');
     selEl.style.display = '';
   }
-  document.getElementById(`${prefix}-upload-zone`).style.display = '';
+  const hasQueue = (prefix === 'tr' && _batchQueueState.total_count > 0);
+  const upZone = document.getElementById(`${prefix}-upload-zone`);
+  if (upZone) upZone.style.display = hasQueue ? 'none' : '';
   setActionButtonsEnabled(prefix, false);
   resetProgress(prefix, false);
   if (prefix === 'ab') {
@@ -116,10 +121,17 @@ function removeFile(prefix) {
     if (useTranslated) useTranslated.checked = false;
   }
   if (prefix === 'tr') {
+    const genreHint = document.getElementById('tr-genre-hint');
+    if (genreHint) genreHint.style.display = 'none';
+    const covGroup = document.getElementById('tr-cover-group');
+    if (covGroup) covGroup.style.display = 'none';
     setGraphicNovelLock(false);
     const stdBtn = document.getElementById('layout-standard');
     if (stdBtn) selectLayout('standard', stdBtn);
     updateFormatAvailability('standard', '');
+    if (hasQueue) {
+      syncPrimaryStartButtonWithQueue(_batchQueueState);
+    }
   }
   // Reset file input
   const inp = document.getElementById(`${prefix}-file-input`);
@@ -223,9 +235,11 @@ async function uploadFile(prefix, file) {
     document.getElementById(`${prefix}-file-meta`).textContent =
       `${(file.size / 1024 / 1024).toFixed(1)} MB · ${pages}${data.file_type.toUpperCase()} · Ready`;
 
-    document.getElementById(`${prefix}-start-btn`).disabled = false;
-    const addQBtn = document.getElementById('tr-add-queue-btn');
-    if (prefix === 'tr' && addQBtn) addQBtn.disabled = false;
+    const startBtn = document.getElementById(`${prefix}-start-btn`);
+    if (startBtn) {
+      startBtn.disabled = false;
+      if (prefix === 'tr') startBtn.textContent = '🌐 Start Translation';
+    }
     const directBtn = document.getElementById('tr-direct-polish-btn');
     if (directBtn) directBtn.disabled = false;
     toast(`✅ "${file.name}" uploaded successfully.`, 'success');
@@ -677,7 +691,13 @@ function selectVoice(name, card) {
 // ── Start Translation ──────────────────────────────────────
 async function startTranslation() {
   const jobId = state.tr.jobId;
-  if (!jobId) { toast('Please upload a document first.', 'error'); return; }
+  if (!jobId) {
+    if (_batchQueueState.total_count > 0) {
+      return startBatchQueue();
+    }
+    toast('Please upload a document first.', 'error');
+    return;
+  }
 
   const sourceLang = document.getElementById('tr-source-lang').value;
   const targetLang = document.getElementById('tr-target-lang').value;
@@ -997,10 +1017,13 @@ async function cancelJob(prefix) {
 // ── UI Helpers ─────────────────────────────────────────────
 function setActionButtonsEnabled(prefix, enabled) {
   const startBtn = document.getElementById(`${prefix}-start-btn`);
-  if (startBtn) startBtn.disabled = !enabled;
+  if (startBtn) {
+    startBtn.disabled = !enabled;
+    if (prefix === 'tr' && state.tr.jobId) {
+      startBtn.textContent = '🌐 Start Translation';
+    }
+  }
   if (prefix === 'tr') {
-    const addQBtn = document.getElementById('tr-add-queue-btn');
-    if (addQBtn) addQBtn.disabled = !enabled;
     const directBtn = document.getElementById('tr-direct-polish-btn');
     if (directBtn) directBtn.disabled = !enabled || Boolean(state.tr.isComic);
   }
@@ -2052,22 +2075,21 @@ function setupSyncScroll() {
   });
 }
 
-// ── Smart Batch Queue ──────────────────────────────────────
+// ── Smart Batch Queue (Unified in Upload Card, Max 20 Files) ─
+const MAX_BATCH_FILES = 20;
 let _queuePollTimer = null;
+let _batchQueueState = {
+  items: [],
+  is_running: false,
+  paused: false,
+  auto_start: false,
+  done_count: 0,
+  queued_count: 0,
+  total_count: 0,
+  max_items: MAX_BATCH_FILES,
+};
 
-function handleQueueDrop(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  const card = document.getElementById('tr-queue-card');
-  if (card) card.classList.remove('dragover');
-  const files = Array.from(e.dataTransfer?.files || []);
-  if (files.length > 0) {
-    enqueueMultipleFiles(files);
-  }
-}
-
-async function enqueueMultipleFiles(files) {
-  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+function _readCurrentTranslationSettings() {
   const srcLang = document.getElementById('tr-source-lang')?.value || 'english';
   const tgtLang = document.getElementById('tr-target-lang')?.value || 'greek';
   const chosenFmt = document.getElementById('tr-output-format')?.value || 'pdf';
@@ -2076,13 +2098,93 @@ async function enqueueMultipleFiles(files) {
   const apiKey = localStorage.getItem('gemini_api_key') || null;
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
+  return { srcLang, tgtLang, chosenFmt, chosenLayout, aiPolish, apiKey, readingDirection };
+}
 
-  if (files.length > 1) {
-    toast(`⏳ Φόρτωση ${files.length} αρχείων στην Smart Batch Queue...`, 'info');
+function syncPrimaryStartButtonWithQueue(q) {
+  const trStartBtn = document.getElementById('tr-start-btn');
+  const directPolishBtn = document.getElementById('tr-direct-polish-btn');
+  if (!trStartBtn || state.tr.jobId) return;
+
+  if (!q || !q.items || q.items.length === 0) {
+    trStartBtn.disabled = true;
+    trStartBtn.textContent = '🌐 Start Translation';
+    if (directPolishBtn) directPolishBtn.disabled = true;
+    return;
+  }
+
+  if (directPolishBtn) directPolishBtn.disabled = true;
+  if (q.queued_count > 0 && (!q.is_running || q.paused)) {
+    trStartBtn.disabled = false;
+    trStartBtn.textContent = q.paused
+      ? `▶️ Resume Batch Queue (${q.queued_count} left)`
+      : `▶️ Start Batch Translation (${q.queued_count} files)`;
+  } else if (q.is_running) {
+    trStartBtn.disabled = true;
+    trStartBtn.textContent = `⏳ Translating Batch (${q.done_count}/${q.total_count})...`;
+  } else {
+    trStartBtn.disabled = true;
+    trStartBtn.textContent = `✅ Batch Complete (${q.done_count}/${q.total_count})`;
+  }
+}
+
+async function enqueueMultipleFiles(files) {
+  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+  const cfg = _readCurrentTranslationSettings();
+  const maxItems = _batchQueueState.max_items || MAX_BATCH_FILES;
+
+  // If a single file is already selected in the Upload Card, seamlessly promote it into the queue first
+  let promotedExisting = false;
+  if (state.tr.jobId) {
+    const existingJobId = state.tr.jobId;
+    const isComic = Boolean(state.tr.isComic) || cfg.chosenLayout === 'comic';
+    const isScanned = Boolean(state.tr.isScanned);
+    let itemFmt = cfg.chosenFmt;
+    let itemLayout = isComic ? 'comic' : cfg.chosenLayout;
+    if (isComic && ['txt', 'docx', 'doc'].includes(itemFmt)) itemFmt = 'pdf';
+    if (!isComic && ['cbz', 'cbr'].includes(itemFmt)) itemFmt = 'pdf';
+    try {
+      const promoteRes = await fetch(`${API}/queue/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: existingJobId,
+          source_lang: cfg.srcLang,
+          target_lang: cfg.tgtLang,
+          output_format: itemFmt,
+          layout_mode: itemLayout,
+          reading_direction: cfg.readingDirection,
+          ai_polish: (isComic && isScanned) ? true : cfg.aiPolish,
+          api_key: cfg.apiKey || null,
+          is_comic: isComic,
+          is_scanned: isScanned,
+        }),
+      });
+      if (promoteRes.ok) {
+        promotedExisting = true;
+        _batchQueueState = await promoteRes.json();
+        removeFile('tr');
+      }
+    } catch (_) {}
+  }
+
+  const remainingSlots = Math.max(0, maxItems - (_batchQueueState.total_count || 0));
+  if (remainingSlots === 0) {
+    toast(`⚠️ Το όριο της ουράς είναι ${maxItems} αρχεία. Καθαρίστε ή αφαιρέστε κάποια για να προσθέσετε νέα.`, 'error');
+    await refreshBatchQueue();
+    return;
+  }
+
+  let filesToUpload = Array.from(files);
+  if (filesToUpload.length > remainingSlots) {
+    toast(`⚠️ Μέγιστο όριο ${maxItems} αρχεία ανά παρτίδα — θα προστεθούν τα πρώτα ${remainingSlots} αρχεία.`, 'info');
+    filesToUpload = filesToUpload.slice(0, remainingSlots);
+  } else if (filesToUpload.length > 1) {
+    toast(`⏳ Φόρτωση ${filesToUpload.length} αρχείων στην Smart Batch Queue...`, 'info');
   }
 
   let added = 0;
-  for (const file of files) {
+  for (const file of filesToUpload) {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!allowed.includes(ext)) {
       toast(`⚠️ Παράλειψη "${file.name}" (μη υποστηριζόμενο format).`, 'error');
@@ -2101,8 +2203,8 @@ async function enqueueMultipleFiles(files) {
 
       const isComic = Boolean(upData.is_comic) || ['.cbz', '.cbr', '.zip'].includes(ext);
       const isScanned = Boolean(upData.is_scanned);
-      let itemLayout = isComic ? 'comic' : chosenLayout;
-      let itemFmt = chosenFmt;
+      let itemLayout = isComic ? 'comic' : cfg.chosenLayout;
+      let itemFmt = cfg.chosenFmt;
       if (isComic) {
         if (['txt', 'docx', 'doc'].includes(itemFmt)) itemFmt = 'pdf';
       } else {
@@ -2116,13 +2218,13 @@ async function enqueueMultipleFiles(files) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           job_id: upData.job_id,
-          source_lang: srcLang,
-          target_lang: tgtLang,
+          source_lang: cfg.srcLang,
+          target_lang: cfg.tgtLang,
           output_format: itemFmt,
           layout_mode: itemLayout,
-          reading_direction: readingDirection,
-          ai_polish: (isComic && isScanned) ? true : aiPolish,
-          api_key: apiKey || null,
+          reading_direction: cfg.readingDirection,
+          ai_polish: (isComic && isScanned) ? true : cfg.aiPolish,
+          api_key: cfg.apiKey || null,
           is_comic: isComic,
           is_scanned: isScanned,
         }),
@@ -2138,57 +2240,11 @@ async function enqueueMultipleFiles(files) {
     }
   }
 
-  if (added > 0) {
-    toast(`📋 Προστέθηκαν ${added} αρχεία στην Smart Batch Queue!`, 'success');
+  if (added > 0 || promotedExisting) {
+    const totalAdded = added + (promotedExisting ? 1 : 0);
+    toast(`📋 Προστέθηκαν ${totalAdded} αρχεία στην Smart Batch Queue! Ρυθμίστε τις επιλογές από κάτω και πατήστε Start.`, 'success');
     await refreshBatchQueue();
     refreshHistory();
-  }
-}
-
-async function addCurrentFileToQueue() {
-  if (!state.tr.jobId) {
-    toast('Ανεβάστε πρώτα ένα αρχείο για να προστεθεί στην ουρά.', 'error');
-    return;
-  }
-  const srcLang = document.getElementById('tr-source-lang')?.value || 'english';
-  const tgtLang = document.getElementById('tr-target-lang')?.value || 'greek';
-  let outputFormat = document.getElementById('tr-output-format')?.value || 'pdf';
-  const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
-  const isComic = Boolean(state.tr.isComic) || layoutMode === 'comic';
-  const isScanned = Boolean(state.tr.isScanned);
-  if (isComic && ['txt', 'docx', 'doc'].includes(outputFormat)) outputFormat = 'pdf';
-  if (!isComic && ['cbz', 'cbr'].includes(outputFormat)) outputFormat = 'pdf';
-  const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
-  const apiKey = localStorage.getItem('gemini_api_key') || null;
-  const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
-  const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
-
-  try {
-    const res = await fetch(`${API}/queue/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        job_id: state.tr.jobId,
-        source_lang: srcLang,
-        target_lang: tgtLang,
-        output_format: outputFormat,
-        layout_mode: isComic ? 'comic' : layoutMode,
-        reading_direction: readingDirection,
-        ai_polish: (isComic && isScanned) ? true : aiPolish,
-        api_key: apiKey || null,
-        is_comic: isComic,
-        is_scanned: isScanned,
-      }),
-    });
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || 'Failed to add file to queue');
-    }
-    toast('📋 Προστέθηκε στην Smart Batch Queue!', 'success');
-    removeFile('tr');
-    await refreshBatchQueue();
-  } catch (err) {
-    toast(`❌ ${err.message}`, 'error');
   }
 }
 
@@ -2214,39 +2270,61 @@ async function refreshBatchQueue() {
 }
 
 function renderBatchQueue(q) {
+  _batchQueueState = q || { items: [], is_running: false, paused: false, auto_start: false, done_count: 0, queued_count: 0, total_count: 0, max_items: MAX_BATCH_FILES };
   const card = document.getElementById('tr-queue-card');
   const list = document.getElementById('tr-queue-list');
   const counter = document.getElementById('tr-queue-counter');
   const autoToggle = document.getElementById('queue-auto-start-toggle');
   const startBtn = document.getElementById('btn-queue-start');
   const pauseBtn = document.getElementById('btn-queue-pause');
+  const addMoreBtn = document.getElementById('btn-queue-add-more');
   const dlAllBtn = document.getElementById('btn-queue-download-all');
+  const upZone = document.getElementById('tr-upload-zone');
+  const genreHint = document.getElementById('tr-genre-hint');
 
   if (!card || !list) return;
-  if (!q.items || q.items.length === 0) {
+  const maxItems = _batchQueueState.max_items || MAX_BATCH_FILES;
+
+  if (!_batchQueueState.items || _batchQueueState.items.length === 0) {
     card.style.display = 'none';
+    if (counter) counter.style.display = 'none';
+    if (upZone && !state.tr.jobId) upZone.style.display = '';
+    syncPrimaryStartButtonWithQueue(_batchQueueState);
     return;
   }
 
   card.style.display = 'block';
+  if (upZone && !state.tr.jobId) upZone.style.display = 'none';
+  if (genreHint && !state.tr.jobId) genreHint.style.display = 'none';
+
   if (counter) {
-    const pauseNote = (q.is_running && q.paused) ? ' · ⏸️ Pausing after current...' : (q.paused ? ' · ⏸️ Paused' : '');
-    counter.textContent = `${q.done_count} / ${q.total_count} completed${pauseNote}`;
+    counter.style.display = 'inline-block';
+    const pauseNote = (q.is_running && q.paused) ? ' · ⏸️ Pausing...' : (q.paused ? ' · ⏸️ Paused' : '');
+    counter.textContent = `${q.done_count} / ${q.total_count} done (max ${maxItems})${pauseNote}`;
   }
   if (autoToggle) autoToggle.checked = Boolean(q.auto_start);
 
   if (startBtn) {
     const canStartOrResume = q.queued_count > 0 && (!q.is_running || q.paused);
     startBtn.style.display = canStartOrResume ? 'inline-flex' : 'none';
-    startBtn.textContent = q.paused ? '▶️ Resume Queue' : '▶️ Start Queue';
+    startBtn.textContent = q.paused ? '▶️ Resume Queue' : `▶️ Start Batch (${q.queued_count})`;
   }
   if (pauseBtn) {
     pauseBtn.style.display = (q.is_running && !q.paused) ? 'inline-flex' : 'none';
+  }
+  if (addMoreBtn) {
+    const atLimit = q.total_count >= maxItems;
+    addMoreBtn.disabled = atLimit;
+    addMoreBtn.textContent = atLimit
+      ? `⚠️ Limit Reached (${q.total_count}/${maxItems})`
+      : `➕ Add More Files (${q.total_count}/${maxItems})`;
   }
   if (dlAllBtn) {
     dlAllBtn.style.display = q.done_count > 0 ? 'inline-flex' : 'none';
     dlAllBtn.href = `${API}/queue/download-all`;
   }
+
+  syncPrimaryStartButtonWithQueue(q);
 
   const statusLabels = {
     queued: '⏳ Queued',
@@ -2316,12 +2394,27 @@ async function retryQueueItem(jobId) {
 }
 
 async function startBatchQueue() {
+  const cfg = _readCurrentTranslationSettings();
   try {
-    const res = await fetch(`${API}/queue/start`, { method: 'POST' });
-    if (res.ok) {
-      toast('▶️ Η Smart Batch Queue ξεκίνησε (σειριακή εκτέλεση).', 'info');
-      await refreshBatchQueue();
+    const res = await fetch(`${API}/queue/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_lang: cfg.srcLang,
+        target_lang: cfg.tgtLang,
+        output_format: cfg.chosenFmt,
+        layout_mode: cfg.chosenLayout,
+        reading_direction: cfg.readingDirection,
+        ai_polish: cfg.aiPolish,
+        api_key: cfg.apiKey || null,
+      }),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Failed to start batch queue');
     }
+    toast('▶️ Η Smart Batch Queue ξεκίνησε με τις επιλεγμένες ρυθμίσεις (σειριακή εκτέλεση).', 'info');
+    await refreshBatchQueue();
   } catch (err) {
     toast(`❌ ${err.message}`, 'error');
   }

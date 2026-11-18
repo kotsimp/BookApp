@@ -62,28 +62,33 @@
        ════════════════════════════════════ -->
   <section id="tab-translate" class="tab-content active" role="tabpanel" aria-labelledby="btn-translate">
 
-    <!-- Upload Card -->
-    <div class="card animate-in">
-      <div class="card-title">
-        <span class="card-title-icon">📄</span>
-        Upload Document
+    <!-- Unified Upload & Smart Batch Queue Card -->
+    <div class="card animate-in" id="tr-upload-card"
+         ondragover="handleDragOver(event, 'tr-upload-card')"
+         ondragleave="handleDragLeave(event, 'tr-upload-card')"
+         ondrop="handleDrop(event, 'tr-file-input', 'tr')">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:16px">
+        <div class="card-title" style="margin:0">
+          <span class="card-title-icon">📄</span>
+          Upload Document(s)
+          <span id="tr-queue-counter" style="display:none; font-size:0.78rem; font-weight:600; padding:3px 10px; border-radius:20px; background:rgba(124,58,237,0.15); color:var(--violet-light); margin-left:8px">0 / 20</span>
+        </div>
+        <span style="font-size:0.76rem; color:var(--text-muted)">1 αρχείο ή έως 20 αρχεία (Smart Batch Queue)</span>
       </div>
 
       <div class="upload-zone" id="tr-upload-zone"
            onclick="document.getElementById('tr-file-input').click()"
-           ondragover="handleDragOver(event, 'tr-upload-zone')"
-           ondragleave="handleDragLeave(event, 'tr-upload-zone')"
-           ondrop="handleDrop(event, 'tr-file-input', 'tr')"
            role="button" tabindex="0"
-           aria-label="Upload document for translation">
+           aria-label="Upload one or multiple documents for translation">
         <span class="upload-icon">📂</span>
         <h3>Drop your document(s) here</h3>
-        <p>Click to browse 1 file or drop multiple files for Smart Batch Queue</p>
+        <p>Click to select 1 or multiple files (up to 20 files for Smart Batch Queue)</p>
         <div class="file-types">
           <span class="file-badge">PDF</span>
           <span class="file-badge">DOCX</span>
           <span class="file-badge">EPUB</span>
           <span class="file-badge" style="border-color:var(--violet, #7c3aed); color:var(--violet-light, #a78bfa)">CBZ / COMIC</span>
+          <span class="file-badge" style="border-color:rgba(16,185,129,0.45); color:var(--emerald)">MAX 20 FILES</span>
         </div>
         <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.zip" multiple hidden onchange="handleFileSelect(event, 'tr')" />
       </div>
@@ -94,9 +99,45 @@
           <div class="file-info-name" id="tr-file-name">filename.pdf</div>
           <div class="file-info-meta" id="tr-file-meta">Loading...</div>
         </div>
+        <button type="button" class="btn-sm btn-outline" id="btn-single-add-more" onclick="document.getElementById('tr-file-input').click()" title="Προσθέστε κι άλλα αρχεία για μαζική μετάφραση (έως 20)" style="border-color:rgba(16,185,129,0.45); color:var(--emerald); white-space:nowrap">
+          ➕ Add More
+        </button>
         <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
       </div>
       <div id="tr-genre-hint" class="genre-badge-hint" style="display:none"></div>
+
+      <!-- Embedded Smart Batch Queue (shown automatically when 2+ files are selected or queue has items) -->
+      <div id="tr-queue-card" style="display:none; margin-top:4px; padding-top:4px">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px; padding:8px 12px; background:rgba(124,58,237,0.08); border:1px solid rgba(124,58,237,0.25); border-radius:10px">
+          <div style="font-size:0.82rem; color:var(--text-secondary)">
+            📋 <strong>Smart Batch Queue:</strong> Οι ρυθμίσεις από κάτω εφαρμόζονται σε όλα τα αρχεία σε αναμονή (με αυτόματη προστασία για Comics).
+          </div>
+          <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:0.82rem; color:var(--text-primary); white-space:nowrap">
+            <input type="checkbox" id="queue-auto-start-toggle" onchange="toggleQueueAutoStart()" style="width:15px; height:15px; accent-color:var(--emerald)" />
+            <span>⚡ Auto-Start</span>
+          </label>
+        </div>
+
+        <div id="tr-queue-list" class="queue-list"></div>
+
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center">
+          <button type="button" class="btn btn-primary" id="btn-queue-start" onclick="startBatchQueue()" style="padding:10px 18px; font-size:0.9rem">
+            ▶️ Start Batch
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-queue-pause" onclick="pauseBatchQueue()" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--amber); color:var(--amber)">
+            ⏸️ Pause Queue
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-queue-add-more" onclick="document.getElementById('tr-file-input').click()" style="padding:10px 16px; font-size:0.88rem">
+            ➕ Add More Files
+          </button>
+          <a class="btn btn-secondary" id="btn-queue-download-all" href="#" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--emerald); color:var(--emerald); text-decoration:none" download="BookApp_Batch_Translated.zip">
+            📦 Download All (ZIP)
+          </a>
+          <button type="button" class="btn btn-secondary" id="btn-queue-clear" onclick="clearBatchQueue()" style="margin-left:auto; padding:10px 14px; font-size:0.85rem; color:var(--rose); border-color:rgba(244,63,94,0.35)">
+            🗑️ Clear Queue
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Options Card -->
@@ -242,9 +283,6 @@
         <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled style="flex:1; min-width:190px">
           🌐 Start Translation
         </button>
-        <button class="btn btn-secondary" id="tr-add-queue-btn" onclick="addCurrentFileToQueue()" disabled style="min-width:165px; border-color:var(--emerald); color:var(--emerald); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:6px" title="Προσθήκη στην Ουρά (Smart Batch Queue)">
-          ➕ Add to Queue
-        </button>
         <button class="btn btn-secondary" id="tr-direct-polish-btn" onclick="openDirectPolishModal()" disabled style="flex:1; min-width:190px; border-color:var(--violet); color:var(--violet); font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px">
           ✨ AI Polish (Χωρίς Μετάφραση)
         </button>
@@ -252,44 +290,6 @@
       <div style="text-align:center; margin-top:12px">
         <button type="button" id="tr-direct-editor-btn" class="btn-text" onclick="openDirectEditor()" style="color:var(--text-secondary); font-size:0.85rem; text-decoration:underline; background:none; border:none; cursor:pointer">
           ✏️ Ή ανοίξτε τον Editor για επικόλληση / απευθείας έλεγχο κειμένου (Paste / Write Directly)
-        </button>
-      </div>
-    </div>
-
-    <!-- Smart Batch Queue Card (shown automatically when 1+ files are queued or multiple files dropped) -->
-    <div class="card animate-in" id="tr-queue-card" style="display:none; border:1px solid rgba(124,58,237,0.35)"
-         ondragover="handleDragOver(event, 'tr-queue-card')"
-         ondragleave="handleDragLeave(event, 'tr-queue-card')"
-         ondrop="handleQueueDrop(event)">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
-        <div class="card-title" style="margin:0">
-          <span class="card-title-icon">📋</span>
-          Smart Batch Queue
-          <span id="tr-queue-counter" style="font-size:0.78rem; font-weight:600; padding:3px 10px; border-radius:20px; background:rgba(124,58,237,0.15); color:var(--violet-light); margin-left:8px">0 / 0</span>
-        </div>
-        <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:0.84rem; color:var(--text-secondary)">
-          <input type="checkbox" id="queue-auto-start-toggle" onchange="toggleQueueAutoStart()" style="width:16px; height:16px; accent-color:var(--emerald)" />
-          <span>⚡ Auto-Start Queue (Αυτόματη Σειριακή Εκτέλεση)</span>
-        </label>
-      </div>
-
-      <div id="tr-queue-list" class="queue-list"></div>
-
-      <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center">
-        <button type="button" class="btn btn-primary" id="btn-queue-start" onclick="startBatchQueue()" style="padding:10px 18px; font-size:0.9rem">
-          ▶️ Start Queue
-        </button>
-        <button type="button" class="btn btn-secondary" id="btn-queue-pause" onclick="pauseBatchQueue()" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--amber); color:var(--amber)">
-          ⏸️ Pause Queue
-        </button>
-        <button type="button" class="btn btn-secondary" id="btn-queue-add-more" onclick="document.getElementById('tr-file-input').click()" style="padding:10px 16px; font-size:0.88rem">
-          ➕ Add More Files
-        </button>
-        <a class="btn btn-secondary" id="btn-queue-download-all" href="#" style="display:none; padding:10px 16px; font-size:0.88rem; border-color:var(--emerald); color:var(--emerald); text-decoration:none" download="BookApp_Batch_Translated.zip">
-          📦 Download All (ZIP)
-        </a>
-        <button type="button" class="btn btn-secondary" id="btn-queue-clear" onclick="clearBatchQueue()" style="margin-left:auto; padding:10px 14px; font-size:0.85rem; color:var(--rose); border-color:rgba(244,63,94,0.35)">
-          🗑️ Clear Queue
         </button>
       </div>
     </div>

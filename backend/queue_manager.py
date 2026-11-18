@@ -38,6 +38,7 @@ _queue_items: List[QueueItem] = []
 _queue_task: Optional[asyncio.Task] = None
 _queue_paused: bool = False
 _queue_auto_start: bool = False
+MAX_QUEUE_ITEMS: int = 20
 
 
 def get_queue_state() -> Dict[str, Any]:
@@ -100,6 +101,7 @@ def get_queue_state() -> Dict[str, Any]:
         "done_count": done_count,
         "queued_count": queued_count,
         "total_count": len(serialized),
+        "max_items": MAX_QUEUE_ITEMS,
     }
 
 
@@ -166,6 +168,12 @@ def add_to_queue(
             clear_job_cancellation(job_id)
             update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
             return existing
+
+    if len(_queue_items) >= MAX_QUEUE_ITEMS:
+        raise ValueError(
+            f"Το όριο της ουράς είναι {MAX_QUEUE_ITEMS} αρχεία ανά παρτίδα. "
+            f"Καθαρίστε ή αφαιρέστε κάποια ολοκληρωμένα αρχεία για να προσθέσετε νέα."
+        )
 
     item = QueueItem(
         job_id=job_id,
@@ -295,6 +303,57 @@ async def _process_queue_loop(
                 logger.error(f"[Queue] Job {next_item.job_id} failed: {ex}")
     finally:
         logger.info("Smart Batch Queue processor finished/idle.")
+
+
+def apply_settings_to_queued_items(
+    source_lang: Optional[str] = None,
+    target_lang: Optional[str] = None,
+    output_format: Optional[str] = None,
+    layout_mode: Optional[str] = None,
+    reading_direction: Optional[str] = None,
+    ai_polish: Optional[bool] = None,
+    api_key: Optional[str] = None,
+) -> int:
+    """Applies the user's latest Translation Settings to all currently 'queued' items
+    while strictly preserving per-item Comic vs Book safety rules.
+    """
+    if source_lang and target_lang and source_lang == target_lang:
+        raise ValueError("Source and target languages must be different.")
+
+    updated = 0
+    for item in _queue_items:
+        if item.status != "queued":
+            continue
+        if source_lang:
+            item.source_lang = source_lang
+        if target_lang:
+            item.target_lang = target_lang
+        if reading_direction:
+            item.reading_direction = reading_direction
+        if api_key is not None:
+            item.api_key = api_key or None
+
+        fmt_clean = (output_format or item.output_format or "pdf").lower().lstrip(".")
+        layout_clean = (layout_mode or item.layout_mode or "standard").lower()
+
+        if item.is_comic:
+            item.layout_mode = "comic"
+            item.output_format = "pdf" if fmt_clean in ("txt", "docx", "doc") else fmt_clean
+            if item.is_scanned:
+                item.ai_polish = True
+            elif ai_polish is not None:
+                item.ai_polish = bool(ai_polish)
+        else:
+            if layout_clean == "comic":
+                layout_clean = "literature" if item.file_type == "epub" else "standard"
+            if fmt_clean in ("cbz", "cbr"):
+                fmt_clean = "pdf"
+            item.layout_mode = layout_clean
+            item.output_format = fmt_clean
+            if ai_polish is not None:
+                item.ai_polish = bool(ai_polish)
+        updated += 1
+    return updated
 
 
 def start_queue(

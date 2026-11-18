@@ -442,6 +442,46 @@ class TestSmartBatchQueueAndVisionJson(unittest.TestCase):
 
                 st_end = queue_manager.get_queue_state()
                 self.assertEqual(st_end["done_count"], 2, f"Expected both j1 (retried) & j3 done, got: {st_end}")
+
+                # Scenario C: Max 20 files limit & apply_settings_to_queued_items mixed-batch safety!
+                queue_manager.clear_queue()
+                self.assertEqual(queue_manager.get_queue_state()["max_items"], 20)
+                extra_jids = []
+                try:
+                    for idx in range(21):
+                        ft = "cbz" if idx == 0 else "docx"
+                        fn = f"batch_limit_{idx}.{ft}"
+                        jx = create_job(f"temp/{fn}", fn, ft)
+                        extra_jids.append(jx.job_id)
+                        if idx < 20:
+                            queue_manager.add_to_queue(jx.job_id, "english", "greek", "txt", "standard", ai_polish=False)
+                        else:
+                            with self.assertRaises(ValueError):
+                                queue_manager.add_to_queue(jx.job_id, "english", "greek", "txt", "standard", ai_polish=False)
+
+                    # Apply updated Translation Settings (literature + pdf + ai_polish=True) to all 20 queued items
+                    updated_cnt = queue_manager.apply_settings_to_queued_items(
+                        source_lang="english",
+                        target_lang="greek",
+                        output_format="pdf",
+                        layout_mode="literature",
+                        ai_polish=True,
+                    )
+                    self.assertEqual(updated_cnt, 20)
+                    st_cap = queue_manager.get_queue_state()
+                    self.assertEqual(st_cap["total_count"], 20)
+                    # Item 0 (CBZ comic) must stay layout='comic', output_format='pdf'
+                    self.assertEqual(st_cap["items"][0]["layout_mode"], "comic")
+                    self.assertEqual(st_cap["items"][0]["output_format"], "pdf")
+                    # Item 1 (DOCX book) must update to layout='literature', output_format='pdf', ai_polish=True
+                    self.assertEqual(st_cap["items"][1]["layout_mode"], "literature")
+                    self.assertEqual(st_cap["items"][1]["output_format"], "pdf")
+                    self.assertTrue(st_cap["items"][1]["ai_polish"])
+                finally:
+                    queue_manager.clear_queue()
+                    for ejid in extra_jids:
+                        _jobs.pop(ejid, None)
+                        db_delete_job(ejid)
             finally:
                 queue_manager._queue_items.clear()
                 queue_manager._queue_items.extend(orig_items)

@@ -133,6 +133,16 @@ class QueueAutoStartRequest(BaseModel):
     auto_start: bool = False
 
 
+class QueueStartRequest(BaseModel):
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = None
+    output_format: Optional[str] = None
+    layout_mode: Optional[str] = None
+    reading_direction: Optional[str] = None
+    ai_polish: Optional[bool] = None
+    api_key: Optional[str] = None
+
+
 class UpdateTextRequest(BaseModel):
     translated_text: str
 
@@ -224,6 +234,14 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(
             400,
             f"Το αρχείο '{file.filename}' είναι κενό (0 bytes) και δεν περιέχει δεδομένα.",
+        )
+
+    MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024  # 250 MB per file
+    if len(content) > MAX_UPLOAD_SIZE_BYTES:
+        size_mb = len(content) / (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"Το αρχείο '{file.filename}' ({size_mb:.1f} MB) υπερβαίνει το μέγιστο όριο των 250 MB.",
         )
 
     if ext in (".docx", ".epub", ".cbz", ".zip") and not content[:2] == b"PK":
@@ -1510,9 +1528,24 @@ async def retry_batch_queue_item(job_id: str):
 
 
 @app.post("/api/queue/start")
-async def start_batch_queue():
-    """Starts or resumes serial execution of the Smart Batch Queue."""
-    from backend.queue_manager import start_queue
+async def start_batch_queue(req: Optional[QueueStartRequest] = None):
+    """Starts or resumes serial execution of the Smart Batch Queue.
+    Optionally syncs the user's latest Translation Settings onto all currently queued items.
+    """
+    from backend.queue_manager import start_queue, apply_settings_to_queued_items
+    if req is not None:
+        try:
+            apply_settings_to_queued_items(
+                source_lang=req.source_lang,
+                target_lang=req.target_lang,
+                output_format=req.output_format,
+                layout_mode=req.layout_mode,
+                reading_direction=req.reading_direction,
+                ai_polish=req.ai_polish,
+                api_key=req.api_key,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     return start_queue(_execute_queue_item)
 
 
