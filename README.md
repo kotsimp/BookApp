@@ -12,9 +12,9 @@ A modern, high-performance local web application to **translate documents** betw
 ## 📑 Documentation & Manuals (Εγχειρίδια)
 
 * 📖 **[Εγχειρίδιο Χρήστη / User Manual (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**  
-  *Αναλυτικός οδηγός βήμα-βήμα για τον χρήστη: Single-Pass AI Translation & Polish, αυτόματη ανίχνευση Graphic Novels & Scanned PDFs (με κλείδωμα συμβατών επιλογών), Manga (RTL), επιλογή φορμάτ (PDF, CBZ, CBR, EPUB), ελληνική τυπογραφική επιμέλεια, αυτόματη ανίχνευση είδους, πολυφωνικά audiobooks, ακρόαση δειγμάτων φωνής, κουμπί Refresh και Dark/Light Mode.*
+  *Αναλυτικός οδηγός βήμα-βήμα για τον χρήστη: Ενιαίο Upload & Smart Batch Queue (1–20 αρχεία), Single-Pass AI Translation & Polish (με live πρόοδο batches + σελίδων & αυτόματη επαναφορά ρυθμίσεων στο Resume), αυτόματη ανίχνευση Graphic Novels & Scanned PDFs (με κλείδωμα συμβατών επιλογών), Manga (RTL), επιλογή φορμάτ (PDF, CBZ, CBR, EPUB), ελληνική τυπογραφική επιμέλεια, αυτόματη ανίχνευση είδους, πολυφωνικά audiobooks, ακρόαση δειγμάτων φωνής, κουμπί Refresh και Dark/Light Mode.*
 * 🛠️ **[Εγχειρίδιο Διαχειριστή / Admin Manual (docs/ADMIN_MANUAL.md)](docs/ADMIN_MANUAL.md)**  
-  *Τεχνικός οδηγός για διαχειριστές: SQLite database persistence (`data/bookapp.db`), σημασιολογική προσωρινή μνήμη μεταφράσεων & Vision AI (Semantic Cache), Single-Pass Gemini Flash (`thinkingBudget: 0`), 429 Circuit Breaker με αυτόματο Gemini failover, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy με SSE, API endpoints και 27 αυτοματοποιημένα test suites.*
+  *Τεχνικός οδηγός για διαχειριστές: SQLite database persistence (`data/bookapp.db`) με metadata settings & `file_path` auto-healing, Smart Batch Queue engine (`backend/queue_manager.py`), σημασιολογική προσωρινή μνήμη μεταφράσεων & Vision AI (Semantic Cache), Single-Pass Gemini Flash (`thinkingBudget: 0`), 429 Circuit Breaker με αυτόματο Gemini failover, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy με SSE, 40 REST API endpoints και 29 αυτοματοποιημένα test suites.*
 
 ---
 
@@ -22,11 +22,11 @@ A modern, high-performance local web application to **translate documents** betw
 
 | Feature | Details |
 |---|---|
-| **Single-Pass Direct AI Translation & Polish** | When **AI Polish** is enabled with a Gemini API key, books and documents (PDF, EPUB, DOCX, TXT) translate & polish in **one single parallel pass** (5 concurrent workers, `thinkingBudget: 0` on Gemini 2.5 Flash) — 4x–8x faster with Entity Consistency Dossier, Glossary injection, Rolling Context, Disk Checkpointing, and higher literary quality. |
+| **Single-Pass Direct AI Translation & Polish** | When **AI Polish** is enabled with a Gemini API key, books and documents (PDF, EPUB, DOCX, TXT) translate & polish in **one single parallel pass** (5 concurrent workers, `thinkingBudget: 0` on Gemini 2.5 Flash) — 4x–8x faster with Entity Consistency Dossier, Glossary injection, Rolling Context, Disk Checkpointing, exact `batches + pages` live progress, and full settings restore on Session History resume. |
 | **Parallel English ⇄ Greek Translation + 429 Failover** | High-speed parallel translation (`Semaphore(4)`, `CHUNK_SIZE=4000`, HTTP keep-alive) via Google's GTX POST API with a 20s `429` circuit breaker, fast MyMemory fallback, and **automatic Gemini Flash failover** so documents never come out untranslated in English. |
-| **Automatic Graphic Novel & Scanned PDF Detection** | On upload (`POST /api/upload`), `detect_is_graphic_novel()` inspects CBZ/CBR archives and PDF pages (image coverage, vector text density, artwork cues) to automatically detect digital & scanned Graphic Novels and **lock the UI strictly to Graphic Novel options** (`PDF/CBZ/CBR/EPUB`, `Graphic Novel` layout, `LTR/RTL` reading direction) while disabling incompatible text options. |
-| **Parallel Scanned Comic Vision AI & Manga (RTL)** | Translates both digital and **scanned/image-only** comics & Manga preserving 100% of surrounding artwork. Runs **4 parallel Gemini Vision workers** (`thinkingBudget: 0`, optimized JPEG encoding, SHA-256 Vision cache), draws opaque background-matched fills over original raster balloon text, auto-selects contrasting text color, scales Greek comic fonts (`fit-to-box` down to 5pt), and exports to **PDF, CBZ, CBR, and Fixed-Layout EPUB** (including `page-progression-direction="rtl"`). |
-| **Persistent SQLite Database** | Full job state persistence across server restarts (`data/bookapp.db`) in WAL mode with connection locking, preventing data loss and allowing resumption of long tasks. |
+| **Automatic Graphic Novel & Scanned PDF Detection** | On upload (`POST /api/upload`), `detect_is_graphic_novel()` inspects CBZ/CBR archives and PDF pages (image coverage, vector text density, artwork cues) to automatically detect digital & scanned Graphic Novels and **lock the UI strictly to Graphic Novel options** (`PDF/CBZ/CBR/EPUB`, `Graphic Novel` layout, `LTR/RTL` reading direction) while disabling incompatible text options. Upload validation also rejects empty (0-byte), >250 MB, or corrupted DOCX/EPUB/CBZ/PDF files immediately with clear messages. |
+| **Parallel Scanned Comic Vision AI & Manga (RTL)** | Translates both digital and **scanned/image-only** comics & Manga preserving 100% of surrounding artwork. Runs **4 parallel Gemini Vision workers** (`thinkingBudget: 0`, optimized JPEG encoding, SHA-256 Vision cache, resilient malformed-JSON recovery), draws opaque background-matched fills over original raster balloon text, auto-selects contrasting text color, scales Greek comic fonts (`fit-to-box` down to 5pt), and exports to **PDF, CBZ, CBR, and Fixed-Layout EPUB** (including `page-progression-direction="rtl"`). |
+| **Persistent SQLite Database & Full Resume Restore** | Full job state & translation settings persistence across server restarts (`data/bookapp.db`) in WAL mode with connection locking, automatic orphaned `running` job recovery on startup, `file_path` auto-healing, and full UI settings restoration (`output_format`, `layout_mode`, `source_lang`, `target_lang`, `ai_polish`, `reading_direction`, `total_pages`) when resuming from Session History. |
 | **Semantic Translation, Polish & Vision Cache** | SHA-256 content-hash caching for translated chunks, AI-polished batches, and scanned comic Vision detections. Cached items return in ~3ms with zero API/quota consumption and live statistics (`GET /api/cache/stats`). |
 | **Storage Auto-Cleanup Garbage Collector** | Automated disk management (`backend/storage_cleaner.py`) that safely purges orphaned temporary audio chunks and extractions older than 48 hours while protecting user exports (`POST /api/admin/cleanup`). |
 | **Greek Editorial Typography Engine** | Built-in publishing typography (`backend/typography.py`, 1.25M words/sec): converts straight quotes `"..."` to Greek guillemets `«...»`, standardizes dialogue dashes (`—`), applies modern Greek final "ν" rules (`δε/δεν`, `μη/μην`), and normalizes punctuation spacing & Greek question marks (`;`). |
@@ -35,8 +35,8 @@ A modern, high-performance local web application to **translate documents** betw
 | **M4B & Tagged Audiobooks** | Exports audiobooks in both `.mp3` and `.m4b` formats with full ID3v2/MP4 metadata tagging (Title, Artist, Album, Genre="Audiobook") and embedded cover art via `mutagen`. |
 | **Voice Preview Auditions** | Instant 2–3 second voice audition playback button (`🔊 Ακρόαση`, `GET /api/tts/preview`) next to each voice in the UI. |
 | **Modern UI Controls & One-Click Launcher** | Dark/Light theme toggle, dedicated **🔄 Refresh** button in header & navbar, dedicated **🔑 Gemini API Key** button with **💾 Save Key** and auto-sync to server, Split-Screen Editor with Sync Scroll, and Windows desktop launcher (`start_bookapp.bat`). |
-| **Smart Batch Queue (Multi-Document Serial Queue)** | Drop multiple mixed documents (novels, EPUBs, Graphic Novels, Manga) at once or click **➕ Add to Queue**. Auto-detects Graphic Novels vs Books per file, executes serially (1 doc at a time at full 4–5x internal parallelism to avoid `429` collisions), supports **Manual Start / Pause** or **⚡ Auto-Start Queue**, live per-item progress bars, and **📦 Download All (ZIP)** (`/api/queue/*`). |
-| **Automated Test Suite (29 Suites)** | Bulletproof master runner `run_all_tests.py` (with `--fast` mode, auto-server launch, and automatic `config/settings.json` snapshot/restore so user API keys are never overwritten). Executes 29 suites (100% pass rate) including a **10-point static/contract guard** (`test_code_health.py`: AST, undefined globals, unused imports, deprecated APIs, HTML⇄JS cross-integrity, Frontend⇄Backend API route matching across 34 UI calls, **100% coverage across all 39 FastAPI endpoints**, and config hygiene), `test_e2e_regression_guard.py`, and `test_smart_batch_queue.py`. |
+| **Unified Upload & Smart Batch Queue (Up to 20 Files)** | Select or drop **1 file or up to 20 mixed files** (novels, EPUBs, Graphic Novels, Manga — max 250 MB/file) directly inside the top **Upload Document(s)** card, or click **➕ Add More** on a single file to seamlessly promote it into a batch. Configure Translation Settings below once — `POST /api/queue/start` syncs your latest settings onto all queued items while auto-protecting Comics vs Books per file. Runs serially (1 doc at a time at full 4–5x internal parallelism to avoid `429` collisions) with isolated per-item cancel, **🔄 Retry** (`POST /api/queue/{job_id}/retry`), **⏸️ Pause / ▶️ Resume**, **⚡ Auto-Start**, live progress bars, and **📦 Download All (ZIP)** (`/api/queue/*`). |
+| **Automated Test Suite (29 Suites)** | Bulletproof master runner `run_all_tests.py` (with `--fast` mode, auto-server launch, and automatic `config/settings.json` snapshot/restore so user API keys are never overwritten). Executes 29 suites (100% pass rate) including a **10-point static/contract guard** (`test_code_health.py`: AST, undefined globals, unused imports, deprecated APIs, HTML⇄JS cross-integrity + dynamic handler guard, Frontend⇄Backend API route matching across 35 UI calls, **100% coverage across all 40 FastAPI endpoints**, and config hygiene), `test_e2e_regression_guard.py`, and `test_smart_batch_queue.py`. |
 | **In-Place Format Preservation** | Translates `.docx` and `.epub` in-place, preserving font families, font sizes, headings, bold/italic, alignments, and tables. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX, live preview thumbnail with status `✔ Εξώφυλλο ενεργό`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, isolates chapter headings (*Πρόλογος*, *Θησεύς*, etc.) and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
@@ -109,21 +109,22 @@ BookApp/
 │   ├── settings_manager.py  # Thread-safe persistent application settings
 │   ├── translator.py        # High-speed chunked Google GTX translation engine
 │   ├── tts_engine.py        # Multi-voice Edge-TTS neural audio generator & M4B exporter
-│   ├── job_manager.py       # Persistent job state tracking, SQLite sync & cleanup
-│   └── parsers.py           # Multi-mode extractors for PDF, DOCX, EPUB, CBZ, TXT
+│   ├── job_manager.py       # Persistent job state tracking, SQLite sync, file_path healing & cleanup
+│   ├── queue_manager.py     # Smart Batch Queue serial engine (max 20 files, isolated cancel, retry)
+│   └── parsers.py           # Multi-mode extractors & Graphic Novel auto-detector (PDF, DOCX, EPUB, CBZ)
 ├── config/
 │   ├── glossary.json        # Categorized custom glossary terms (Technical, Literature, General)
 │   └── settings.json        # Local persistent settings (gitignored)
 ├── data/
-│   └── bookapp.db           # Persistent SQLite database (jobs & translation cache)
+│   └── bookapp.db           # Persistent SQLite database (jobs, metadata & translation cache)
 ├── frontend/
-│   ├── index.html           # Modern single-page interface with Dark/Light theme
+│   ├── index.html           # Modern single-page interface with unified Upload & Batch Queue + Dark/Light theme
 │   ├── style.css            # Responsive CSS theme with theme variables
-│   └── app.js               # Frontend state, split-screen editor & voice preview
+│   └── app.js               # Frontend state, batch queue, split-screen editor & voice preview
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide in Greek
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 28 Automated Test Suites (100% PASS)
+├── tests/                   # 29 Automated Test Suites (100% PASS · 40/40 Endpoints)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt
@@ -158,16 +159,17 @@ BookApp/
 The master runner automatically protects & restores your `config/settings.json` (never touching your saved API keys) and starts a temporary test server if none is running:
 
 ```bash
-# Run all 28 automated test suites (Full Suite)
+# Run all 29 automated test suites (Full Suite)
 .\.venv\Scripts\python run_all_tests.py
 
-# Run fast local suite (23 static/unit/regression/benchmark suites in ~30s)
+# Run fast local suite (static/unit/regression/queue/benchmark suites in ~30s)
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
 Or run individual focused guard suites directly:
 ```bash
 .\.venv\Scripts\python tests/test_code_health.py
+.\.venv\Scripts\python tests/test_smart_batch_queue.py
 .\.venv\Scripts\python tests/test_e2e_regression_guard.py
 .\.venv\Scripts\python tests/test_scanned_comic_and_autodetect.py
 .\.venv\Scripts\python tests/test_performance_and_benchmarks.py

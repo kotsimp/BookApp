@@ -51,7 +51,9 @@
 
 ### Βασικές Τεχνολογίες Backend:
 * **FastAPI + Uvicorn:** Υψηλής απόδοσης ασύγχρονος Web server.
-* **SQLite Database Layer (`data/bookapp.db`):** Μόνιμη αποθήκευση κατάστασης εργασιών και ρυθμίσεων σε WAL mode (Write-Ahead Logging) με thread-safe κλειδώματα, εξασφαλίζοντας μηδενική απώλεια δεδομένων μετά από επανεκκινήσεις.
+* **SQLite Database Layer (`data/bookapp.db`):** Μόνιμη αποθήκευση κατάστασης εργασιών και πλήρων μεταδεδομένων ρυθμίσεων (`output_format`, `layout_mode`, `source_lang`, `target_lang`, `ai_polish`, `reading_direction`, `total_pages`, `done_pages`) σε WAL mode (Write-Ahead Logging) με thread-safe κλειδώματα, αυτόματη αποκατάσταση ορφανών `running` jobs κατά την εκκίνηση (`db_reset_orphaned_running_jobs`) και self-healing `file_path` (`_heal_file_path`) για μηδενική απώλεια δεδομένων μετά από επανεκκινήσεις.
+* **Smart Batch Queue Engine (`backend/queue_manager.py`):** Σειριακή μηχανή μαζικής μετάφρασης ενοποιημένη στο Upload Card με όριο `MAX_QUEUE_ITEMS = 20` αρχεία ανά παρτίδα (και `MAX_UPLOAD_SIZE_BYTES = 250 MB` ανά αρχείο). Υποστηρίζει δυναμικό συγχρονισμό ρυθμίσεων στο `POST /api/queue/start` (`apply_settings_to_queued_items`), προστασία μικτών παρτίδων (Comics vs Books), απομονωμένο child `asyncio.Task` ανά αρχείο (ώστε η ακύρωση του ενεργού στοιχείου να συνεχίζει αυτόματα στο επόμενο), `POST /api/queue/{job_id}/retry`, `Pause/Resume`, `Auto-Start` και εξαγωγή ενιαίου ZIP (`GET /api/queue/download-all`).
+* **Upload Validation Guard (`POST /api/upload`):** Άμεση απόρριψη κενών αρχείων (`0 bytes`), αρχείων >250 MB (`HTTP 413`) και κατεστραμμένων/μετονομασμένων αρχείων ελέγχοντας magic headers (`PK` για `.docx`/`.epub`/`.cbz`/`.zip`, `%PDF` για `.pdf`) με unique UUID temp filenames για αποφυγή συγκρούσεων σε multi-file uploads.
 * **Semantic Translation & Polish Cache:** Σημασιολογική προσωρινή μνήμη μεταφράσεων και AI Polish βασισμένη σε κατακερματισμό περιεχομένου (SHA-256). Επαναλαμβανόμενες φράσεις και παράγραφοι επιστρέφονται ακαριαία (0ms) χωρίς κατανάλωση εξωτερικού API quota, με ζωντανά στατιστικά επιτυχιών (`GET /api/cache/stats`).
 * **Storage Auto-Cleanup Garbage Collector (`backend/storage_cleaner.py`):** Αυτόματος μηχανισμός εκκαθάρισης προσωρινών τμημάτων ήχου και εξαγωγών παλαιότερων των 48 ωρών, προστατεύοντας τα τελικά αρχεία εξόδου. Προσβάσιμος και μέσω `POST /api/admin/cleanup`.
 * **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`):** Εντοπισμός μπαλονιών διαλόγου, inpainting φόντου, έξυπνη κλιμάκωση γραμματοσειράς `fit-to-box` (έως 5.5pt), υποστήριξη ιαπωνικής φοράς ανάγνωσης Manga (RTL: top-to-bottom, right-to-left) και εξαγωγή σε PDF, CBZ, CBR και Fixed-Layout EPUB.
@@ -198,7 +200,7 @@ server {
     listen 80;
     server_name bookapp.internal.domain;
 
-    client_max_body_size 100M;  # Επιτρέπει μεγάλα PDF/EPUB
+    client_max_body_size 250M;  # Επιτρέπει μεγάλα PDF/EPUB/Graphic Novels (έως 250 MB)
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -227,31 +229,40 @@ server {
 ```
 BookApp/
 ├── backend/
-│   ├── main.py              # Endpoints API (Upload, Translate, Audiobook, Polish, Settings, Download)
-│   ├── ai_polisher.py       # Επιμέλεια κειμένου μέσω Google Gemini API
+│   ├── main.py              # FastAPI endpoints (40 REST routes & SSE streaming)
+│   ├── ai_polisher.py       # Single-Pass AI Translation & Gemini Polish (Semaphore(5), thinkingBudget: 0)
+│   ├── comic_translator.py  # Graphic Novel / Scanned PDF / Manga (RTL) Vision AI (4 parallel workers)
+│   ├── queue_manager.py     # Smart Batch Queue serial engine (max 20 files, isolated cancel, retry)
+│   ├── database.py          # SQLite WAL persistence (data/bookapp.db) & SHA-256 semantic cache
+│   ├── typography.py        # Ελληνική εκδοτική τυπογραφία & κανόνας τελικού «ν»
+│   ├── genre_detector.py    # Αυτόματη ανίχνευση είδους/ύφους εγγράφου
+│   ├── storage_cleaner.py   # Garbage collector προσωρινών αρχείων (48h)
 │   ├── format_preserver.py  # In-place DOCX/EPUB styling preservation
-│   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF & Literature/E-Reader layout
-│   ├── glossary.py          # Διαχείριση προσαρμοσμένου γλωσσαρίου όρων
+│   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF, CBZ, CBR & Literature layout
+│   ├── glossary.py          # Διαχείριση κατηγοριοποιημένου γλωσσαρίου όρων
 │   ├── settings_manager.py  # Αποθήκευση/ανάγνωση ρυθμίσεων (config/settings.json)
-│   ├── translator.py        # Μηχανή μετάφρασης (Google GTX client API)
-│   ├── tts_engine.py        # Παραγωγή ήχου edge-tts (Nestoras / Athina)
-│   ├── job_manager.py       # Διαχείριση εργασιών, ανάκτηση από δίσκο & αυτόματος καθαρισμός
-│   └── parsers.py           # Αναλυτές εγγράφων PDF, DOCX, EPUB
+│   ├── translator.py        # Μηχανή μετάφρασης (Google GTX POST + 429 Circuit Breaker + Gemini failover)
+│   ├── tts_engine.py        # Πολυφωνική παραγωγή ήχου edge-tts (Nestoras / Athina) & M4B export
+│   ├── job_manager.py       # Διαχείριση εργασιών, SQLite metadata sync, file_path healing & cleanup
+│   └── parsers.py           # Αναλυτές PDF, DOCX, EPUB, CBZ & detect_is_graphic_novel()
 ├── config/
 │   ├── glossary.json        # Αποθηκευμένο γλωσσάρι όρων
 │   └── settings.json        # Τοπικές ρυθμίσεις & API keys (gitignored)
+├── data/
+│   └── bookapp.db           # Μόνιμη SQLite βάση (jobs, metadata & semantic cache)
 ├── frontend/                # Static files (HTML, CSS, JS)
 ├── temp/
 │   ├── uploads/{job_id}/    # Αποθηκευμένα αρχεία εισόδου
-│   └── outputs/{job_id}/    # Μεταφρασμένα αρχεία και MP3 audiobooks
-├── tests/                   # Αυτοματοποιημένα τεστ
+│   └── outputs/{job_id}/    # Μεταφρασμένα αρχεία, checkpoints και MP3/M4B audiobooks
+├── tests/                   # 29 Αυτοματοποιημένα test suites (100% PASS)
 └── requirements.txt
 ```
 
-### Διαχείριση Εργασιών, Ρυθμίσεων & Εξωφύλλων μέσω REST Endpoints
-Η εφαρμογή παρέχει ολοκληρωμένο REST API για τη διαχείριση εργασιών, ρυθμίσεων και εικόνων εξωφύλλου:
-* `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία, καθαρίζει τη μνήμη και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
-* `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό και διαγράφει όλα τα προσωρινά αρχεία στο `temp/uploads/` και `temp/outputs/`.
+### Διαχείριση Εργασιών, Ουράς, Ρυθμίσεων & Εξωφύλλων μέσω REST Endpoints
+Η εφαρμογή παρέχει ολοκληρωμένο REST API (**40 endpoints**) για τη διαχείριση εργασιών, Smart Batch Queue, ρυθμίσεων και εικόνων εξωφύλλου:
+* `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Πλήρης διαχείριση της Smart Batch Queue (έως 20 αρχεία, συγχρονισμός ρυθμίσεων στο start, retry, pause/resume, ZIP export).
+* `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία από τη μνήμη, τη SQLite, την ουρά και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
+* `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό, την ουρά και τα προσωρινά αρχεία (διατηρώντας τη `translation_cache`).
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`).
 * `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
 * `POST /api/cover/{job_id}`: Ανέβασμα νέου προσαρμοσμένου εξωφύλλου (`multipart/form-data`) με αυτόματη ενημέρωση των αρχείων εξόδου.
@@ -277,17 +288,17 @@ BookApp/
 
 ## 6. Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)
 
-Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **28 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 30 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη) και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
+Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **29 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 40 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη) και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
 
 ```bash
-# Εκτέλεση όλων των 28 suites (Full Suite):
+# Εκτέλεση όλων των 29 suites (Full Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Ταχεία εκτέλεση (23 static/unit/regression/benchmark suites σε ~30s):
+# Ταχεία εκτέλεση (static/unit/regression/queue/benchmark suites σε ~30s):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
-Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **28 σουίτες δοκιμών**:
+Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **29 σουίτες δοκιμών**:
 1. `test_ai_polish_advanced.py`: Δίγλωσση επιμέλεια, Audiobook phonetics, consistency dossier & checkpoints.
 2. `test_ai_polisher_deep.py`: Όλα τα 6 στυλ επιμέλειας, temperatures, multi-page splitting, cache invalidation.
 3. `test_api.py`: Ολοκληρωμένοι έλεγχοι REST endpoints, upload, translation & streaming.
@@ -298,7 +309,7 @@ BookApp/
 8. `test_database_and_cache.py`: SQLite persistence (`data/bookapp.db`), restart recovery & SHA-256 cache.
 9. `test_document_integrity_and_encoding.py`: BOM, UTF-16, CP1253, πολυτονικά ελληνικά, corrupted file handling.
 10. `test_dynamic_download.py`: Άμεση αλλαγή φορμάτ κατά τη λήψη χωρίς επανυπολογισμό.
-11. `test_e2e_regression_guard.py`: **7-σημείων E2E φύλακας παλινδρόμησης:** Single-Job Delete & Clear All (`DELETE /api/jobs`) σε API + SQLite (με διατήρηση cache), DOCX + AI Polish Single-Pass, Invalid API key fail-fast (<1s), `/health`, `/preview/{id}`, `/cover/{id}` (POST/GET/DELETE), `/debug/extract/{id}`, `/polish/status/{id}`, `/progress/{id}` SSE, Source-Anchored identical-text auto-disable και Google 429 Circuit Breaker.
+11. `test_e2e_regression_guard.py`: **9-σημείων E2E φύλακας παλινδρόμησης:** Single-Job Delete & Clear All (`DELETE /api/jobs`) σε API + SQLite (με διατήρηση cache), DOCX + AI Polish Single-Pass, Invalid API key fail-fast (<1s), `/health`, `/preview/{id}`, `/cover/{id}` (POST/GET/DELETE), `/debug/extract/{id}`, `/polish/status/{id}`, `/progress/{id}` SSE, Source-Anchored identical-text auto-disable, Google 429 Circuit Breaker, επανεκκίνηση `cancelled` jobs & ανάκτηση ορφανών `running` jobs, καθώς και SQLite `file_path` persistence & πλήρης επαναφορά ρυθμίσεων στο Resume.
 12. `test_edge_cases_and_robustness.py`: Οριακές περιπτώσεις, ακραία inputs και ανθεκτικότητα.
 13. `test_editor_glossary_ai.py`: In-browser Editor, κανόνες γλωσσαρίου και AI Polish.
 14. `test_exporter.py`: Εξαγωγή σε DOCX, PDF, EPUB, TXT, CBZ, CBR.
@@ -316,9 +327,9 @@ BookApp/
 26. `test_translator.py`: Μηχανή μετάφρασης GTX POST, 429 circuit breaker, Gemini failover.
 27. `test_tts_audiobook_deep.py`: Κατάλογος φωνών, prosody, συνένωση chunks, ακύρωση in-flight.
 28. `test_typography_and_genre.py`: Ελληνική τυπογραφία, κανόνας τελικού «ν», αυτόματη ανίχνευση είδους.
-29. `test_smart_batch_queue.py`: Πλήρης κύκλος ζωής Smart Batch Queue (`/api/queue/*`), σειριακή εκτέλεση πολλαπλών αρχείων, λήψη ενιαίου ZIP (`/api/queue/download-all`) και ανθεκτική ανάκτηση κακοσχηματισμένου Vision JSON (`_parse_vision_json`).
+29. `test_smart_batch_queue.py`: Πλήρης κύκλος ζωής Smart Batch Queue (`/api/queue/*`), όριο 20 αρχείων, συγχρονισμός ρυθμίσεων στο `/queue/start` σε μικτές παρτίδες (Comic + Book), απομονωμένη ακύρωση running item, Pause/Resume, Retry (`/queue/{id}/retry`), validation (400/404/0-byte DOCX), History-Delete sync, λήψη ενιαίου ZIP (`/api/queue/download-all`) και ανθεκτική ανάκτηση κακοσχηματισμένου Vision JSON (`_parse_vision_json`).
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`29/29 PASS (100% επιτυχία · 39/39 FastAPI endpoints)`**.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`29/29 PASS (100% επιτυχία · 40/40 FastAPI endpoints)`**.
 
 ---
 
@@ -338,3 +349,5 @@ BookApp/
 | **Απώλεια αρχικών σελίδων PDF (Πίνακας Περιεχομένων, Πρόλογος, Εισαγωγή)** | Το παλαιότερο regex φιλτράρισμα κεφαλίδων απέρριπτε ολόκληρα μπλοκ κειμένου εάν περιείχαν γραμμή κεφαλίδας. | Έχει επιλυθεί πλήρως: το `_clean_page_blocks` καθαρίζει πλέον μόνο τις συγκεκριμένες γραμμές κεφαλίδας σε επίπεδο γραμμής (`lines`), διατηρώντας το 100% του περιεχομένου των πρώτων σελίδων (front matter) τόσο κατά τη μετάφραση όσο και κατά την εξαγωγή. |
 | **Διακοπή AI Polish σε πολυσέλιδα βιβλία (>300 σελίδες)** | Διακοπή δικτύου ή κατά λάθος ανανέωση της σελίδας κατά την εκτέλεση δεκάδων batches. | Έχει επιλυθεί πλήρως: κάθε επιτυχής παρτίδα αποθηκεύεται σε πραγματικό χρόνο στο `temp/outputs/{job_id}/.polish_checkpoint.json` (ή `.direct_ai_checkpoint.json`). Κατά την επανεκτέλεση, τα αποθηκευμένα batches ανακτώνται ακαριαία χωρίς νέα αιτήματα στο Gemini API. |
 | **Νευρωνική φωνή Edge-TTS κομπιάζει σε ξένα ονόματα ή διαβάζει αριθμούς ως ψηφία** | Η φωνή `Nestoras` διαβάζει αγγλικούς χαρακτήρες γράμμα-γράμμα ή κομπιάζει σε λατινικά ακρωνύμια (`DNA`, `AI`). | Χρησιμοποιήστε την επιλογή **AI Polish for Spoken Audio (style="audiobook")**, η οποία μεταγράφει φωνητικά τα ξένα ονόματα σε ελληνικά (`Κίτον`, `Θησέας`, `Ρόρσαχ`), αναπτύσσει ολογράφως τους αριθμούς (`δύο χιλιάδες έξι`) και αφαιρεί δείκτες σελίδων και υποσημειώσεις. |
+| **Σφάλμα `no such file: ...temp/uploads/tmp/...` κατά το Resume από Session History** | Παλαιότερη έκδοση του `db_save_job` δεν ενημέρωνε το `file_path` στο `ON CONFLICT DO UPDATE`. | Έχει επιλυθεί πλήρως: το `database.py` ενημερώνει πλέον `file_path`, και ο `job_manager.py` διαθέτει αυτόματο `_heal_file_path()` από `temp/uploads/{job_id}/`. |
+| **Σφάλμα `Package not found` σε `.docx` αρχείο** | Το ανεβασμένο αρχείο ήταν 0 bytes (κενό) ή μετονομασμένο παλιό `.doc`. | Έχει επιλυθεί: το `POST /api/upload` απορρίπτει αμέσως κενά (0 bytes) ή μη έγκυρα `.docx`/`.epub`/`.cbz`/`.pdf` αρχεία με σαφές μήνυμα σφάλματος. |
