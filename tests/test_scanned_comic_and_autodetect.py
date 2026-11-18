@@ -58,6 +58,12 @@ def api_get(path):
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
+
 class TestScannedComicAndAutoDetect(unittest.TestCase):
 
     def test_1_autodetect_scanned_comic_pdf_vs_normal_novel_pdf(self):
@@ -106,7 +112,13 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         self.assertFalse(up_novel["is_comic"], f"Normal novel must NOT be detected as comic: {up_novel}")
         self.assertFalse(up_novel["is_scanned"])
 
-        # Cleanup temp files
+        # Cleanup temp files & test jobs
+        for jid in (up_comic.get("job_id"), up_novel.get("job_id")):
+            if jid:
+                try:
+                    api_delete(f"/jobs/{jid}")
+                except Exception:
+                    pass
         for p in (img_path, comic_pdf_path, novel_pdf_path):
             p.unlink(missing_ok=True)
         print("   Auto-detection (Scanned Comic PDF=True, Novel PDF=False): OK")
@@ -194,6 +206,10 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         out_txt = txt_files[0].read_text(encoding="utf-8")
         self.assertIn("[Επιμελημένο AI]", out_txt, "EPUB with ai_polish=True must route through Single-Pass Direct AI!")
 
+        try:
+            api_delete(f"/jobs/{job_id}")
+        except Exception:
+            pass
         epub_path.unlink(missing_ok=True)
         print("   EPUB Novel + AI Polish Single-Pass routing: OK")
 

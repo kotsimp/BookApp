@@ -137,9 +137,17 @@ def _run_standalone_polish_suite():
         assert len(content) > 1000
         print(f"  Download pasted text output as DOCX: OK ({len(content)} bytes)")
 
+    # Clean up test jobs & scratch files
+    for jid in (job_id, new_job_id):
+        try:
+            api_delete(f"/jobs/{jid}")
+        except Exception:
+            pass
+    sample_docx.unlink(missing_ok=True)
+
     # Clean up test setting
     api_delete("/settings/gemini_api_key")
-    print("  Cleaned up test gemini_api_key from settings.")
+    print("  Cleaned up test jobs & gemini_api_key from settings.")
 
     print("\nALL STANDALONE AI POLISH TESTS PASSED SUCCESSFULLY!")
 

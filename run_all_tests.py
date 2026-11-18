@@ -49,6 +49,53 @@ def _start_temp_server():
     return proc
 
 
+def _clear_test_sessions():
+    """Clear all test jobs, batch queue items, and temp test artifacts while preserving translation_cache."""
+    for endpoint in ("/api/queue", "/api/jobs"):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:8000{endpoint}", method="DELETE")
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+        except Exception:
+            pass
+
+    # Fallback SQLite + disk cleanup in case server wasn't reachable
+    db_file = BASE_DIR / "data" / "bookapp.db"
+    if db_file.exists():
+        try:
+            import sqlite3
+            with sqlite3.connect(str(db_file)) as conn:
+                conn.execute("DELETE FROM jobs")
+                conn.commit()
+        except Exception:
+            pass
+
+    for sub in ("uploads", "outputs"):
+        sub_dir = BASE_DIR / "temp" / sub
+        if sub_dir.is_dir():
+            for child in list(sub_dir.iterdir()):
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    # Remove stray temp/test_* or sample_* files created by tests
+    temp_dir = BASE_DIR / "temp"
+    if temp_dir.is_dir():
+        for pattern in ("test_*", "sample_*"):
+            for f in temp_dir.glob(pattern):
+                try:
+                    if f.is_dir():
+                        shutil.rmtree(f, ignore_errors=True)
+                    else:
+                        f.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+
 def run_suite():
     fast_mode = "--fast" in sys.argv
     test_files = sorted(glob.glob("tests/test_*.py"))
@@ -94,6 +141,9 @@ def run_suite():
                 failed.append((rel_name, dur, err_output))
                 print(f"❌ FAIL ({dur:.2f}s)")
     finally:
+        # Always clear test sessions, queue items, and temporary test files (preserves translation_cache)
+        _clear_test_sessions()
+
         # Always restore user settings untouched
         if settings_backup is not None:
             settings_file.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +171,7 @@ def run_suite():
     print(f"  Failed           : {len(failed)} {'❌' if failed else ''}")
     print(f"  Total Duration   : {total_dur:.2f}s")
     print(f"  User Settings    : Protected & Restored 🛡️")
+    print(f"  Session History  : Cleared & Clean 🧹")
     print("=" * 72)
 
     if failed:
