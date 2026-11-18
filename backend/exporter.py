@@ -104,20 +104,63 @@ _EXPORT_SPECIAL_TOKEN_RE = re.compile(
 _EMPHASIS_TOKEN_RE = re.compile(
     r"(\*\*[^*\n]+?\*\*|(?<!\*)\*(?!\s)[^*\n]+?(?<!\s)\*(?!\*))"
 )
-_XML_ILLEGAL_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_XML_ILLEGAL_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_INVISIBLE_GARBAGE_RE = re.compile(r"[\ufffd\u00ad\ufeff\u200b-\u200f\u202a-\u202e\u2060-\u206f]")
+_EXOTIC_SPACE_RE = re.compile(r"[\u00a0\u2000-\u200a\u202f\u205f\u3000]")
+_UNICODE_PUNCT_NORMALIZE = {
+    "\u2010": "-",   # hyphen
+    "\u2011": "-",   # non-breaking hyphen
+    "\u2012": "–",   # figure dash
+    "\u2212": "-",   # minus sign
+    "\u2032": "'",   # prime
+    "\u2033": '"',   # double prime
+    "\u2028": "\n",  # line separator
+    "\u2029": "\n\n",  # paragraph separator
+}
+_PDF_GLYPH_FALLBACKS = {
+    "•": "-",
+    "—": "-",
+    "–": "-",
+    "…": "...",
+    "«": '"',
+    "»": '"',
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+    "×": "x",
+    "÷": "/",
+    "±": "+/-",
+    "≤": "<=",
+    "≥": ">=",
+    "≠": "!=",
+    "→": "->",
+    "←": "<-",
+    "↔": "<->",
+    "✓": "v",
+    "✔": "v",
+    "➢": ">",
+    "❖": "*",
+    "✉": "",
+}
 
 
 def _sanitize_pua(text: str) -> str:
     """
     Map Wingdings / Symbol Private Use Area (PUA) characters to standard Unicode,
-    strip XML-illegal control characters, stray inline HTML tags, LLM special tokens,
-    and broken Greek hyphens.
+    normalize exotic Unicode spaces/dashes, strip XML-illegal / replacement / zero-width
+    control characters, stray inline HTML tags, LLM special tokens, and broken Greek hyphens.
     """
     if not text:
         return ""
     for pua, repl in _PUA_MAP.items():
         text = text.replace(pua, repl)
     text = re.sub(r"[\ue000-\uf8ff]", "• ", text)
+    for ch, repl in _UNICODE_PUNCT_NORMALIZE.items():
+        if ch in text:
+            text = text.replace(ch, repl)
+    text = _EXOTIC_SPACE_RE.sub(" ", text)
+    text = _INVISIBLE_GARBAGE_RE.sub("", text)
     text = _XML_ILLEGAL_CTRL_RE.sub("", text)
     text = _EXPORT_SPECIAL_TOKEN_RE.sub("", text)
     text = _EXPORT_HTML_TAG_RE.sub("", text)
@@ -127,6 +170,68 @@ def _sanitize_pua(text: str) -> str:
     except Exception:
         pass
     return text
+
+
+def _sanitize_for_pdf_font(text: str, font_obj) -> str:
+    """
+    Replaces or strips any character not present in font_obj so PyMuPDF never renders
+    hollow tofu/missing-glyph boxes (□ / \\x00) in exported PDFs.
+    """
+    if not text or font_obj is None or not hasattr(font_obj, "has_glyph"):
+        return text or ""
+    out: list[str] = []
+    changed = False
+    for ch in text:
+        if ch.isspace() or font_obj.has_glyph(ord(ch)):
+            out.append(ch)
+        else:
+            changed = True
+            fb = _PDF_GLYPH_FALLBACKS.get(ch, "")
+            if fb:
+                safe_fb = "".join(c for c in fb if c.isspace() or font_obj.has_glyph(ord(c)))
+                if safe_fb:
+                    out.append(safe_fb)
+    return "".join(out) if changed else text
+
+
+def _split_oversized_token(token: str, font_obj, fontsize: float, max_w: float) -> list[str]:
+    """
+    Splits a single unbroken token (such as a long URL) that exceeds max_w into
+    margin-safe chunks, preferring natural delimiters ('/', '?', '&', '=', '-', '_', '.')
+    before falling back to clean character boundaries so text never clips past the right margin.
+    """
+    if not token or max_w <= 10.0:
+        return [token] if token else []
+    if font_obj.text_length(token, fontsize=fontsize) <= max_w:
+        return [token]
+
+    parts: list[str] = []
+    rem = token
+    break_chars = "/?&=-_.:"
+    while rem:
+        if font_obj.text_length(rem, fontsize=fontsize) <= max_w:
+            parts.append(rem)
+            break
+        # Binary search for the longest prefix that fits within max_w
+        lo, hi = 1, len(rem)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if font_obj.text_length(rem[:mid], fontsize=fontsize) <= max_w:
+                lo = mid
+            else:
+                hi = mid - 1
+        cut = max(1, lo)
+        # Prefer breaking right after a natural URL/token separator in the second half of the chunk
+        best_sep = -1
+        for idx in range(cut - 1, max(0, cut // 2 - 1), -1):
+            if rem[idx] in break_chars:
+                best_sep = idx + 1
+                break
+        if best_sep > 0:
+            cut = best_sep
+        parts.append(rem[:cut])
+        rem = rem[cut:]
+    return parts
 
 
 def _split_emphasis_runs(text: str) -> list[tuple[str, bool, bool]]:
@@ -534,9 +639,10 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         if ch["title"] and (len(chapters) > 1 or ch["title"] != out_path.stem):
             y += 28.0
             title_size = 15.5
-            title_w = font_obj.text_length(ch["title"], fontsize=title_size)
+            safe_title = _sanitize_for_pdf_font(ch["title"], font_obj)
+            title_w = font_obj.text_length(safe_title, fontsize=title_size)
             tx = max(margin_x, (width - title_w) / 2.0)
-            page.insert_text(pymupdf.Point(tx, y), ch["title"], fontsize=title_size, fontname=fname, color=(0.1, 0.1, 0.1))
+            page.insert_text(pymupdf.Point(tx, y), safe_title, fontsize=title_size, fontname=fname, color=(0.1, 0.1, 0.1))
             y += 32.0
 
         body_size = 11.0
@@ -556,19 +662,23 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
                 is_first = True
                 continue
 
-            # Tokenize paragraph into styled words (word, style_code: 'r'|'i'|'b')
-            styled_words: list[tuple[str, str]] = []
-            for seg, is_bold, is_italic in _split_emphasis_runs(para):
-                st = "b" if is_bold else ("i" if is_italic else "r")
-                for w in seg.split():
-                    styled_words.append((w, st))
-
             def _word_font(st: str):
                 if st == "i":
                     return fname_it, font_obj_it
                 if st == "b":
                     return fname_bd, font_obj_bd
                 return fname, font_obj
+
+            # Tokenize paragraph into styled words (word, style_code: 'r'|'i'|'b'),
+            # sanitizing unsupported glyphs and wrapping oversized tokens (e.g. long URLs)
+            styled_words: list[tuple[str, str]] = []
+            for seg, is_bold, is_italic in _split_emphasis_runs(para):
+                st = "b" if is_bold else ("i" if is_italic else "r")
+                _, fobj_seg = _word_font(st)
+                safe_seg = _sanitize_for_pdf_font(seg, fobj_seg)
+                for w in safe_seg.split():
+                    for piece in _split_oversized_token(w, fobj_seg, body_size, max_line_w - indent):
+                        styled_words.append((piece, st))
 
             def _measure_styled_line(items: list[tuple[str, str]]) -> float:
                 total_w = 0.0
@@ -709,7 +819,7 @@ def export_pdf(text: str, out_path: Path, layout: str = "standard", cover_image:
                 y += 18.0
 
             for raw_line in section_body.split("\n"):
-                line = _sanitize_pua(raw_line).strip()
+                line = _sanitize_for_pdf_font(_sanitize_pua(raw_line), font_obj).strip()
                 if not line:
                     y += 7.0
                     continue
@@ -719,9 +829,11 @@ def export_pdf(text: str, out_path: Path, layout: str = "standard", cover_image:
                 line_height = 17.5 if heading else 14.5
                 color = (0.05, 0.05, 0.2) if heading else (0.1, 0.1, 0.1)
 
-                words = line.split()
-                line_words = []
                 max_w = width - 2 * margin
+                words: list[str] = []
+                for raw_w in line.split():
+                    words.extend(_split_oversized_token(raw_w, font_obj, font_size, max_w))
+                line_words = []
 
                 for w in words:
                     test_str = " ".join(line_words + [w])

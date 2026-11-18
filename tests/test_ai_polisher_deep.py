@@ -17,8 +17,17 @@ import unittest
 from backend.ai_polisher import (
     STYLE_PROMPTS,
     STYLE_TEMPERATURES,
+    _LITERARY_SAFETY_SETTINGS,
+    _ContentBlockedError,
+    _build_stratified_book_sample,
+    _deduplicate_batch_boundary,
+    _extract_clean_tail_context,
+    _extract_gemini_text_and_reason,
+    _find_mixed_script_tokens,
     reset_model_cache,
     polish_text,
+    polish_text_with_gemini,
+    sanitize_ai_output,
     get_polish_job_status,
     update_polish_job_status,
 )
@@ -118,6 +127,140 @@ class TestAIPolisherDeep(unittest.TestCase):
         self.assertEqual(st_done["status"], "done")
         self.assertEqual(st_done["percent"], 100)
         print("   Polish status tracker: OK")
+
+    def test_safety_settings_block_none_and_prompt_feedback(self):
+        print("-> 6. Testing BLOCK_NONE safety settings & promptFeedback blockReason detection...")
+        self.assertGreaterEqual(len(_LITERARY_SAFETY_SETTINGS), 4)
+        for cfg in _LITERARY_SAFETY_SETTINGS:
+            self.assertEqual(cfg.get("threshold"), "BLOCK_NONE", f"Expected BLOCK_NONE for {cfg}")
+
+        txt, reason = _extract_gemini_text_and_reason({
+            "promptFeedback": {"blockReason": "PROHIBITED_CONTENT"},
+            "candidates": [],
+        })
+        self.assertEqual(txt, "")
+        self.assertEqual(reason, "PROHIBITED_CONTENT")
+        print("   BLOCK_NONE & promptFeedback detection: OK")
+
+    def test_recursive_bisection_isolates_single_blocked_paragraph(self):
+        print("-> 7. Testing recursive multi-page & paragraph bisection on safety-blocked content...")
+        from unittest.mock import patch
+        import backend.ai_polisher as ap
+
+        sample = (
+            "=== PAGE 1 ===\n"
+            "Η πρώτη σελίδα είναι εντελώς καθαρή και περιγράφει την άφιξη του Θησέα.\n\n"
+            "=== PAGE 2 ===\n"
+            "Η πρώτη παράγραφος της δεύτερης σελίδας είναι απολύτως καθαρή λογοτεχνική πρόζα.\n\n"
+            "Αυτή η μοναδική παράγραφος περιέχει FORBIDDEN_TRIGGER που προκαλεί safety block.\n\n"
+            "=== PAGE 3 ===\n"
+            "Η τρίτη σελίδα συνεχίζει κανονικά την αφήγηση χωρίς κανένα πρόβλημα."
+        )
+
+        async def _selective_block(content_text, api_key, system_prompt, **kwargs):
+            m = re.search(r"<TEXT_TO_POLISH>(.*?)</TEXT_TO_POLISH>", content_text, re.DOTALL)
+            body = m.group(1).strip() if m else content_text
+            if "FORBIDDEN_TRIGGER" in body:
+                raise _ContentBlockedError("Simulated PROHIBITED_CONTENT safety block")
+            return body.replace("σελίδα", "σελίδα [AI]").replace("παράγραφος", "παράγραφος [AI]")
+
+        with patch.object(ap, "_call_gemini_api", side_effect=_selective_block):
+            result = asyncio.run(polish_text_with_gemini(
+                text=sample,
+                api_key="REAL_KEY_BISECT_TEST",
+                style="literature",
+            ))
+
+        # Pages 1, 3, and the clean paragraph of page 2 MUST all be AI-polished!
+        self.assertIn("πρώτη σελίδα [AI]", result)
+        self.assertIn("πρώτη παράγραφος [AI]", result)
+        self.assertIn("τρίτη σελίδα [AI]", result)
+        # Only the single blocked paragraph falls back to draft (no silent 3-page wipeout)
+        self.assertIn("FORBIDDEN_TRIGGER", result)
+        # Page markers preserved exactly once each
+        self.assertEqual(result.count("=== PAGE 1 ==="), 1)
+        self.assertEqual(result.count("=== PAGE 2 ==="), 1)
+        self.assertEqual(result.count("=== PAGE 3 ==="), 1)
+        print("   Recursive bisection single-paragraph isolation: OK")
+
+    def test_boundary_dedup_and_leaked_context_sanitization(self):
+        print("-> 8. Testing chunk-boundary deduplication & leaked '[... ...]' context stripping...")
+        # Real-world p. 372 leaked '[... ...]' bracketed context + XML context block
+        leaked = (
+            "<PREVIOUS_CONTEXT_DO_NOT_REPEAT>\nΠαλιό κείμενο αναφοράς.\n</PREVIOUS_CONTEXT_DO_NOT_REPEAT>\n\n"
+            "[... για να παραμείνει κανείς όρθιος, έπρεπε να είναι διαρκώς σε κίνηση "
+            "να μιλάει μέσα στο μυαλό μου σαν σχιζοφρενική ψευδαίσθηση:]\n\n"
+            "<TEXT_TO_POLISH>\n=== PAGE 372 ===\n\nΗ κανονική αφήγηση συνεχίζεται καθαρά εδώ.\n</TEXT_TO_POLISH>"
+        )
+        cleaned = sanitize_ai_output(leaked)
+        self.assertNotIn("PREVIOUS_CONTEXT", cleaned)
+        self.assertNotIn("TEXT_TO_POLISH", cleaned)
+        self.assertNotIn("σχιζοφρενική ψευδαίσθηση", cleaned)
+        self.assertIn("Η κανονική αφήγηση συνεχίζεται καθαρά εδώ.", cleaned)
+
+        # Clean tail extraction never cuts mid-word
+        long_para = "Πρώτη πρόταση του κειμένου. Δεύτερη πρόταση που περιγράφει τον Θησέα. Τρίτη τελική πρόταση με καθαρό τέλος."
+        tail = _extract_clean_tail_context(long_para, max_chars=90)
+        self.assertTrue(tail.endswith("τέλος."))
+        self.assertNotIn("Πρώτη", tail)
+
+        # Deduplication strips: (a) pre-marker leak, (b) paraphrased repeated leading paragraph,
+        # while NEVER stripping short dialogue like '«Όχι.»'
+        prev_batch = (
+            "=== PAGE 1 ===\n\n"
+            "Ο Σίρι Κίτον κοίταξε έξω από το φινιστρίνι του Θησέα προς το σκοτεινό κέλυφος του Ρόρσαχ "
+            "ενώ οι αισθητήρες κατέγραφαν την ακτινοβολία."
+        )
+        curr_batch_with_dups = (
+            "Κάποιο διαρρεύσαν κείμενο πριν τον δείκτη σελίδας.\n\n"
+            "=== PAGE 2 ===\n\n"
+            "Ο Σίρι Κίτον κοίταξε έξω από το φινιστρίνι του Θησέα προς το σκοτεινό κέλυφος του Ρόρσαχ "
+            "καθώς οι αισθητήρες κατέγραφαν την ακτινοβολία.\n\n"
+            "«Όχι.»\n\n"
+            "Αυτή είναι η νέα παράγραφος της δεύτερης σελίδας."
+        )
+        deduped = _deduplicate_batch_boundary(prev_batch, curr_batch_with_dups, expected_first_page=2)
+        self.assertTrue(deduped.startswith("=== PAGE 2 ==="))
+        self.assertNotIn("διαρρεύσαν", deduped)
+        self.assertNotIn("φινιστρίνι", deduped)
+        self.assertIn("«Όχι.»", deduped)
+        self.assertIn("νέα παράγραφος της δεύτερης σελίδας", deduped)
+        print("   Boundary deduplication & leaked-context stripping: OK")
+
+    def test_whole_book_stratified_sampling_and_mixed_script_tokens(self):
+        print("-> 9. Testing whole-book stratified dossier sampling, dialogue rule & mixed-script tokens...")
+        # Build a 90,000-char book where key entities appear ONLY at 55% and 85% (far past old 18,000-char cutoff)
+        filler_a = ("The quiet corridor hummed beneath the hull of Theseus as the crew slept. " * 600)
+        mid_section = (
+            "\n\nAmanda Bates deployed the Grunts while Stretch and Clench locked onto the bulkhead. "
+            "Amanda Bates warned that Grunts are drones, not Scramblers. Stretch and Clench moved swiftly. "
+            "Amanda Bates checked Grunts telemetry near Stretch and Clench again. "
+            "Amanda Bates monitored Grunts and Scramblers closely.\n\n"
+        )
+        filler_b = ("Darkness stretched across the Kuiper belt in unbroken silence. " * 600)
+        late_section = (
+            "\n\nJukka Sarasti confronted Sascha and Isaac Szpindel inside the drum. "
+            "Jukka Sarasti spoke to Sascha while Isaac Szpindel watched Rorschach. "
+            "Jukka Sarasti and Sascha debated Isaac Szpindel and Rorschach.\n\n"
+        )
+        book = filler_a + mid_section + filler_b + late_section
+        sample = _build_stratified_book_sample(book, max_total_chars=24000)
+
+        self.assertIn("FREQUENCY SCAN", sample)
+        self.assertIn("Amanda Bates", sample)
+        self.assertIn("Grunts", sample)
+        self.assertIn("Stretch", sample)
+        self.assertIn("Clench", sample)
+        self.assertIn("Jukka Sarasti", sample)
+
+        # Literature prompt enforces uniform Greek guillemets «...»
+        self.assertIn("«...»", STYLE_PROMPTS["literature"])
+        self.assertIn("PREVIOUS_CONTEXT_DO_NOT_REPEAT", STYLE_PROMPTS["literature"])
+
+        # Mixed-script token detector catches exact Blindsight p.364 defect 'ημIFωτισμένη'
+        bad = _find_mixed_script_tokens("Η αίθουσα ήταν ημIFωτισμένη με 12 μm απόκλιση.")
+        self.assertEqual(bad, ["ημIFωτισμένη"])
+        print("   Whole-book stratified sampling & mixed-script token detection: OK")
 
 
 if __name__ == "__main__":

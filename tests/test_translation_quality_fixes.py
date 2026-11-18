@@ -289,6 +289,37 @@ class TestTranslationQualityFixes(unittest.TestCase):
         self.assertIn("ΑΔΥΤΟΥ", page_text, "Tiny Page 61 comic balloon must NOT render blank!")
         self.assertIn("ΘΗΣΑΥΡΟΦΥΛΑΚΙΟ", page_text, "Long Greek word should fit unbroken by shrinking font!")
 
+    def test_10_pdf_exporter_no_tofu_glyphs_and_wraps_long_urls_within_margins(self):
+        long_url = "http://hctv.humnet.ucla.edu/departments/linguistics/VowelsandConsonants/vowels/chapter12/index_reference_page.html"
+        sample = (
+            "=== PAGE 1 ===\n\n"
+            "ΚΕΦΑΛΑΙΟ 1\n\n"
+            "Αυτό το κείμενο περιέχει \ufffd άκυρο σύμβολο, \u200b αόρατο κενό και 🚀 emoji που δεν έχει η Georgia.\n\n"
+            f"Βιβλιογραφική παραπομπή: {long_url} (πρόσβαση 2006)."
+        )
+        with tempfile.TemporaryDirectory() as td:
+            td_p = Path(td)
+            for layout in ("literature", "standard"):
+                pdf_p = export_pdf(sample, td_p / f"clean_{layout}.pdf", layout=layout)
+                doc = fitz.open(str(pdf_p))
+                try:
+                    full_txt = "\n".join(pg.get_text() for pg in doc)
+                    # Zero missing-glyph tofu boxes (\x00 / \ufffd)
+                    self.assertNotIn("\x00", full_txt, f"Missing-glyph tofu \\x00 leaked in {layout} PDF!")
+                    self.assertNotIn("\ufffd", full_txt, f"Replacement char leaked in {layout} PDF!")
+                    # Every drawn word bounding box MUST fit inside the page width (no right-margin URL clipping)
+                    margin_limit = 432.0 - 44.0 if layout == "literature" else 595.0 - 46.0
+                    for pg in doc:
+                        for w in pg.get_text("words"):
+                            x1 = w[2]
+                            self.assertLessEqual(
+                                x1,
+                                margin_limit,
+                                f"Token '{w[4]}' clipped past right margin ({x1:.1f} > {margin_limit}) in {layout} PDF!",
+                            )
+                finally:
+                    doc.close()
+
 
 if __name__ == "__main__":
     unittest.main()
