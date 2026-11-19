@@ -185,6 +185,8 @@ function makeEl(id) {
     closest: () => null,
     addEventListener: () => {},
     focus: () => {},
+    pause: () => {},
+    play: () => Promise.resolve(),
     querySelector: () => null,
     querySelectorAll: () => [],
   };

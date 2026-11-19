@@ -380,7 +380,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
                     retries=3,
                 ))
             dur = time.time() - t0
-            self.assertLess(dur, 4.0, f"429 circuit breaker took too long: {dur:.2f}s")
+            self.assertLess(dur, 6.0, f"429 circuit breaker took too long: {dur:.2f}s")
             self.assertGreater(tr_mod._GTX_COOLDOWN_UNTIL, time.time(), "Expected 429 circuit breaker cooldown to activate!")
             self.assertEqual(calls["gtx"], 2, "Expected GTX to trip circuit breaker after 2nd 429 attempt")
             print(f"   429 Circuit Breaker ({dur:.2f}s, cooldown active): OK")

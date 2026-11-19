@@ -727,9 +727,12 @@ function playVoicePreview(voiceCode, event, customText = null) {
 async function playActiveVoiceCustomPreview() {
   const selectedVoiceName = document.getElementById('ab-voice-selected')?.value || state.selectedVoice;
   const lang = document.getElementById('ab-lang-select')?.value || 'english';
-  const voices = _voicesCache[lang] || [];
-  const matched = voices.find(v => v.name === selectedVoiceName || v.code === selectedVoiceName) || voices[0];
-  const voiceCode = matched ? matched.code : (lang === 'greek' ? 'el-GR-NestorasNeural' : 'en-US-GuyNeural');
+  const voices = (state.voices && state.voices[lang]) || {};
+  let voiceCode = voices[selectedVoiceName];
+  if (!voiceCode) {
+    const firstCode = Object.values(voices)[0];
+    voiceCode = firstCode || (lang === 'greek' ? 'el-GR-NestorasNeural' : 'en-US-GuyNeural');
+  }
 
   let customText = document.getElementById('ab-custom-preview-text')?.value?.trim();
   if (!customText && state.ab.jobId) {
@@ -1184,6 +1187,14 @@ function updateProgress(prefix, data) {
     detailEl.textContent = '';
   }
 
+  if (data.status === 'running') {
+    const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
+    if (cancelBtn) {
+      cancelBtn.style.display = 'inline-flex';
+      cancelBtn.disabled = false;
+    }
+  }
+
   if (data.status === 'done') {
     state[prefix].status = 'done';
     setStatusBadge(prefix, 'done');
@@ -1284,6 +1295,18 @@ function resetProgress(prefix, keepButtonsEnabled = false) {
 
   if (prefix === 'tr') {
     closeEditor();
+  }
+  if (prefix === 'ab') {
+    const audio = document.getElementById('ab-audio-element');
+    if (audio) {
+      if (typeof audio.pause === 'function') {
+        audio.pause();
+      }
+      audio.currentTime = 0;
+      audio.src = '';
+    }
+    const playerWrap = document.getElementById('ab-player-container');
+    if (playerWrap) playerWrap.style.display = 'none';
   }
   state[prefix].status = 'idle';
   const tabBtnId = prefix === 'tr' ? 'btn-translate' : 'btn-audiobook';
@@ -1434,7 +1457,9 @@ function onAudioChapterSelect(val) {
     const sec = parseFloat(val);
     if (!isNaN(sec) && sec >= 0) {
       audio.currentTime = sec;
-      audio.play().catch(() => {});
+      if (typeof audio.play === 'function') {
+        audio.play().catch(() => {});
+      }
     }
   }
 }
@@ -1918,8 +1943,8 @@ async function saveEditorText() {
 let _readerFontSizeScale = 1.0;
 let _readerData = null;
 
-async function openReaderModal() {
-  const jobId = state.tr.jobId;
+async function openReaderModal(targetJobId = null) {
+  const jobId = targetJobId || state.tr.jobId;
   if (!jobId) {
     toast('Δεν υπάρχει επιλεγμένο έγγραφο για ανάγνωση.', 'error');
     return;
@@ -2035,6 +2060,8 @@ function checkSmartResume(jobs) {
   // Find most recent job that was interrupted or has uncompleted checkpoint
   const candidate = jobs.find(j => {
     if (!j.job_id || j.status === 'done' || j.status === 'cancelled') return false;
+    if (state.tr.jobId === j.job_id && state.tr.status === 'running') return false;
+    if (state.ab.jobId === j.job_id && state.ab.status === 'running') return false;
     const dismissed = sessionStorage.getItem(`dismiss_resume_${j.job_id}`);
     if (dismissed) return false;
     const done = Number(j.done_chunks || j.done_pages || 0);
@@ -3467,6 +3494,12 @@ async function init() {
   if (glossaryModal) {
     glossaryModal.addEventListener('click', (e) => {
       if (e.target === glossaryModal) closeGlossaryModal();
+    });
+  }
+  const readerModal = document.getElementById('reader-modal');
+  if (readerModal) {
+    readerModal.addEventListener('click', (e) => {
+      if (e.target === readerModal) closeReaderModal();
     });
   }
 
