@@ -899,6 +899,7 @@ async def polish_text_with_gemini(
     use_source_anchoring: bool = True,
     progress_callback: Optional[Callable[[int, int], Any]] = None,
     target_lang: str = "greek",
+    quota_behavior: str = "wait",
 ) -> str:
     """
     Polishes and proofreads translated text using Google's Gemini API.
@@ -1316,7 +1317,14 @@ async def polish_text_with_gemini(
                             polished_res, _ = await _polish_items_reliably(batch_items, prev_snippet=prev_snippet)
                             last_ex = None
                             break
-                        except (PermissionError, DailyQuotaExhaustedError):
+                        except (PermissionError, DailyQuotaExhaustedError) as p_or_q:
+                            if isinstance(p_or_q, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                                logger.warning(
+                                    f"Gemini Daily Quota exhausted during polish (batch {b_idx + 1}/{total_batches}). "
+                                    f"quota_behavior='fallback' -> keeping draft text..."
+                                )
+                                last_ex = p_or_q
+                                break
                             raise
                         except Exception as ex:
                             last_ex = ex
@@ -1346,7 +1354,13 @@ async def polish_text_with_gemini(
                 await asyncio.gather(*(_polish_batch(i, b) for i, b in pending_batches))
 
             if (all(batch_failed) or all(not p for p in polished_batches)) and first_error is not None:
-                raise first_error
+                if isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                    logger.warning(
+                        "All batches failed due to DailyQuotaExhaustedError but quota_behavior='fallback'. "
+                        "Proceeding with unpolished original text."
+                    )
+                else:
+                    raise first_error
 
             final_batches = []
             for b_idx, p in enumerate(polished_batches):
@@ -1822,6 +1836,7 @@ async def translate_and_polish_direct_with_gemini(
     output_path: str,
     api_key: str,
     style: str = "literature",
+    quota_behavior: str = "wait",
 ) -> str:
     """
     Single-Pass Direct AI Translation + Literary Polish via Gemini Flash.
@@ -2190,7 +2205,14 @@ async def translate_and_polish_direct_with_gemini(
                         translated_b = await _translate_items_reliably(b_items, prev_tail=prev_tail)
                         last_ex = None
                         break
-                    except (PermissionError, DailyQuotaExhaustedError):
+                    except (PermissionError, DailyQuotaExhaustedError) as p_or_q:
+                        if isinstance(p_or_q, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                            logger.warning(
+                                f"[{job_id}] Gemini Daily Quota exhausted on batch {b_idx + 1}/{total_batches}. "
+                                f"quota_behavior='fallback' -> Seamlessly switching this batch and subsequent batches to free translation engine..."
+                            )
+                            last_ex = p_or_q
+                            break
                         raise
                     except Exception as ex:
                         last_ex = ex
@@ -2213,10 +2235,17 @@ async def translate_and_polish_direct_with_gemini(
                         tr_p = await _translate_with_retry(txt, source_lang, target_lang) if txt else ""
                         fallback_parts.append(f"=== PAGE {pn} ===\n{tr_p}")
                     results[b_idx] = "\n\n".join(fallback_parts)
+                    checkpoint_data["batches"][str(b_idx)] = results[b_idx]
+                    _save_cp()
 
             completed += 1
             pages_done += len(b_items)
             pct = 8 + int((completed / total_batches) * 85)
+            step_msg = (
+                f"Single-Pass AI Translation & Polish: batch {completed}/{total_batches} ({pages_done}/{total_pages} pages)..."
+                if last_ex is None
+                else f"⚠️ Όριο Gemini: Αυτόματη συνέχιση με δωρεάν μηχανή (batch {completed}/{total_batches})..."
+            )
             update_job(
                 job_id,
                 done_chunks=completed,
@@ -2224,7 +2253,7 @@ async def translate_and_polish_direct_with_gemini(
                 done_pages=pages_done,
                 total_pages=total_pages,
                 progress=pct,
-                current_step=f"Single-Pass AI Translation & Polish: batch {completed}/{total_batches} ({pages_done}/{total_pages} pages)...",
+                current_step=step_msg,
             )
 
         await asyncio.gather(*(_worker(i, b) for i, b in enumerate(batches)))

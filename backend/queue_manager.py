@@ -33,6 +33,7 @@ class QueueItem:
     is_scanned: bool = False
     status: str = "queued"  # queued | running | done | error | cancelled
     error: Optional[str] = None
+    quota_behavior: str = "wait"  # 'wait' or 'fallback'
 
 
 _queue_items: List[QueueItem] = []
@@ -99,6 +100,7 @@ def get_queue_state() -> Dict[str, Any]:
             "is_comic": item.is_comic,
             "is_scanned": item.is_scanned,
             "status": item.status,
+            "quota_behavior": getattr(item, "quota_behavior", "wait") or "wait",
             "progress": progress,
             "current_step": current_step,
             "has_output": has_output,
@@ -147,6 +149,7 @@ def add_to_queue(
     api_key: Optional[str] = None,
     is_comic: bool = False,
     is_scanned: bool = False,
+    quota_behavior: str = "wait",
 ) -> QueueItem:
     """Adds an uploaded job to the batch queue (or updates/re-queues it if already present)."""
     global _queue_auto_start
@@ -228,6 +231,7 @@ def add_to_queue(
         is_comic=effective_comic,
         is_scanned=is_scanned,
         status="queued",
+        quota_behavior=quota_behavior or "wait",
     )
     _queue_items.append(item)
     if is_mixed_queue():
@@ -370,6 +374,7 @@ def apply_settings_to_queued_items(
     reading_direction: Optional[str] = None,
     ai_polish: Optional[bool] = None,
     api_key: Optional[str] = None,
+    quota_behavior: Optional[str] = None,
 ) -> int:
     """Applies the user's latest Translation Settings to all currently 'queued' items
     while strictly preserving per-item Comic vs Book safety rules.
@@ -400,6 +405,8 @@ def apply_settings_to_queued_items(
             item.reading_direction = reading_direction
         if api_key is not None:
             item.api_key = api_key or None
+        if quota_behavior:
+            item.quota_behavior = quota_behavior
 
         fmt_clean = (output_format or item.output_format or "pdf").lower().lstrip(".")
         layout_clean = (layout_mode or item.layout_mode or "standard").lower()

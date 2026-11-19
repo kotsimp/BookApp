@@ -301,6 +301,27 @@
         </span>
       </div>
 
+      <!-- Gemini Quota Limit Behavior Option -->
+      <div class="form-group" style="margin-top:12px; padding:12px 14px; background:rgba(255,255,255,0.02); border:1.5px solid var(--border); border-radius:10px">
+        <label class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <span>⚡ Σε εξάντληση ορίου Gemini (On Quota Limit)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Επιλογή πριν τη μετάφραση</span>
+        </label>
+        <div style="display:flex; gap:16px; flex-wrap:wrap">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
+            <input type="radio" name="tr-quota-behavior" value="wait" checked onchange="onQuotaBehaviorChange('tr')" />
+            <span>⏳ <strong>Αναμονή για επαναφορά (Wait for Reset)</strong></span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
+            <input type="radio" name="tr-quota-behavior" value="fallback" onchange="onQuotaBehaviorChange('tr')" />
+            <span>🔄 <strong>Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback)</strong></span>
+          </label>
+        </div>
+        <div id="tr-quota-behavior-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:6px; line-height:1.4">
+          ⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το ημερήσιο όριο, η εργασία σταματά με ασφάλεια στο checkpoint και περιμένει τον ζωντανό χρονοδιακόπτη ή νέο API Key (διατηρεί 100% την ποιότητα Gemini).
+        </div>
+      </div>
+
       <div class="info-box">
         <span class="info-box-icon">ℹ️</span>
         <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
@@ -584,6 +605,27 @@
           <input type="checkbox" id="ab-use-translated" onchange="syncAudiobookLangWithSource()" style="width:18px;height:18px;accent-color:var(--violet)" />
           <span id="ab-use-translated-label" style="font-size:0.9rem">Use previously translated text (if available from Translate tab)</span>
         </label>
+      </div>
+
+      <!-- Quota Behavior Selection Prior to Audiobook Generation -->
+      <div class="form-group" style="margin-top:12px; padding:12px 14px; background:rgba(255,255,255,0.02); border:1.5px solid var(--border); border-radius:10px">
+        <label class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <span>⚡ Σε εξάντληση ορίου Gemini Script Polish (On Quota Limit)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Επιλογή πριν τη μετατροπή</span>
+        </label>
+        <div style="display:flex; gap:16px; flex-wrap:wrap">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
+            <input type="radio" name="ab-quota-behavior" value="wait" checked onchange="onQuotaBehaviorChange('ab')" />
+            <span>⏳ <strong>Αναμονή για επαναφορά (Wait for Reset)</strong></span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
+            <input type="radio" name="ab-quota-behavior" value="fallback" onchange="onQuotaBehaviorChange('ab')" />
+            <span>🔄 <strong>Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback)</strong></span>
+          </label>
+        </div>
+        <div id="ab-quota-behavior-desc" style="font-size:0.75rem; color:var(--text-muted); margin-top:6px; line-height:1.4">
+          ⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το όριο Gemini, η διαδικασία σταματά και περιμένει την επαναφορά για μέγιστη ποιότητα.
+        </div>
       </div>
 
       <div class="info-box">

@@ -757,6 +757,8 @@ async function startTranslation() {
   const apiKey = localStorage.getItem('gemini_api_key') || null;
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
+  const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
+  const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
 
   // Update download button label to show chosen format
   const labelEl = document.getElementById('tr-format-label');
@@ -789,6 +791,7 @@ async function startTranslation() {
         reading_direction: readingDirection,
         ai_polish: aiPolish,
         api_key: apiKey || null,
+        quota_behavior: quotaBehavior,
       }),
     });
     if (!res.ok) {
@@ -801,6 +804,42 @@ async function startTranslation() {
     showError('tr', err.message);
     setActionButtonsEnabled('tr', true);
   }
+}
+
+// ── Quota Limit Behavior (Wait vs Auto-Fallback) ────────────────
+function onQuotaBehaviorChange(prefix) {
+  const sel = document.querySelector(`input[name="${prefix}-quota-behavior"]:checked`);
+  const val = sel ? sel.value : 'wait';
+  const descEl = document.getElementById(`${prefix}-quota-behavior-desc`);
+  if (descEl) {
+    if (val === 'wait') {
+      descEl.innerHTML = (prefix === 'ab')
+        ? '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το όριο Gemini, η διαδικασία σταματά και περιμένει την επαναφορά για μέγιστη ποιότητα.'
+        : '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το ημερήσιο όριο, η εργασία σταματά με ασφάλεια στο checkpoint και περιμένει τον ζωντανό χρονοδιακόπτη ή νέο API Key (διατηρεί 100% την ποιότητα Gemini).';
+    } else {
+      descEl.innerHTML = (prefix === 'ab')
+        ? '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini στο Script Polish, η εκφώνηση συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας το αρχικό κείμενο (δωρεάν Edge-TTS).'
+        : '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini, η εργασία συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας τη δωρεάν μηχανή μετάφρασης (χωρίς όρια χρήσης).';
+    }
+  }
+  try {
+    localStorage.setItem(`${prefix}_quota_behavior`, val);
+  } catch (_) {}
+}
+
+function initQuotaBehaviorSelectors() {
+  ['tr', 'ab'].forEach((prefix) => {
+    try {
+      const saved = localStorage.getItem(`${prefix}_quota_behavior`);
+      if (saved) {
+        const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="${saved}"]`);
+        if (radio) {
+          radio.checked = true;
+          onQuotaBehaviorChange(prefix);
+        }
+      }
+    } catch (_) {}
+  });
 }
 
 // ── Narration Style & Prosody Sliders ───────────────────────────
@@ -884,6 +923,8 @@ async function startAudiobook() {
   try {
     const isMultiVoice = document.getElementById('ab-multi-voice')?.checked || false;
     const dialogueVoice = isMultiVoice ? (document.getElementById('ab-dialogue-voice-select')?.value || null) : null;
+    const quotaBehaviorEl = document.querySelector('input[name="ab-quota-behavior"]:checked');
+    const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
 
     const res = await fetch(`${API}/audiobook`, {
       method: 'POST',
@@ -899,6 +940,7 @@ async function startAudiobook() {
         pitch: narrationPitch,
         ai_polish: aiPolish,
         api_key: apiKey || null,
+        quota_behavior: quotaBehavior,
       }),
     });
     if (!res.ok) {
@@ -2526,7 +2568,9 @@ function _readCurrentTranslationSettings() {
   const apiKey = localStorage.getItem('gemini_api_key') || null;
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
-  return { srcLang, tgtLang, chosenFmt, chosenLayout, aiPolish, apiKey, readingDirection };
+  const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
+  const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
+  return { srcLang, tgtLang, chosenFmt, chosenLayout, aiPolish, apiKey, readingDirection, quotaBehavior };
 }
 
 function syncPrimaryStartButtonWithQueue(q) {
@@ -2948,6 +2992,7 @@ async function startBatchQueue() {
         reading_direction: cfg.readingDirection,
         ai_polish: cfg.aiPolish,
         api_key: cfg.apiKey || null,
+        quota_behavior: cfg.quotaBehavior,
       }),
     });
     if (!res.ok) {
@@ -3014,9 +3059,10 @@ async function clearBatchQueue() {
 
 // ── Init ───────────────────────────────────────────────────
 async function init() {
-  // Initialize Theme and Editor Sync Scroll
+  // Initialize Theme, Editor Sync Scroll, and Quota Behavior choice
   initTheme();
   setupSyncScroll();
+  initQuotaBehaviorSelectors();
 
   // Auto-sync Gemini API key between localStorage and backend server
   const localKey = localStorage.getItem('gemini_api_key');

@@ -36,6 +36,7 @@ class Job:
     reading_direction: str = "ltr"
     total_pages: int = 0
     done_pages: int = 0
+    quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -92,6 +93,7 @@ def _job_to_db_dict(job: Job) -> dict:
             "reading_direction": job.reading_direction,
             "total_pages": int(job.total_pages or 0),
             "done_pages": int(job.done_pages or 0),
+            "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
         },
     }
 
@@ -135,6 +137,7 @@ def _job_from_db_row(row: dict) -> Job:
         reading_direction=meta.get("reading_direction") or "ltr",
         total_pages=int(meta.get("total_pages") or 0),
         done_pages=int(meta.get("done_pages") or 0),
+        quota_behavior=str(meta.get("quota_behavior") or "wait"),
     )
 
     if healed_fp != orig_fp and healed_fp:

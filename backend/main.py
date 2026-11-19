@@ -94,6 +94,7 @@ class TranslateRequest(BaseModel):
     reading_direction: str = "ltr"  # 'ltr' or 'rtl' (Manga)
     ai_polish: bool = False
     api_key: Optional[str] = None
+    quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
 
 
 class AudiobookRequest(BaseModel):
@@ -107,6 +108,7 @@ class AudiobookRequest(BaseModel):
     pitch: Optional[str] = None          # optional explicit pitch e.g. '-2Hz', '-1Hz', '+0Hz'
     ai_polish: bool = False              # if True, polish script with Gemini before TTS
     api_key: Optional[str] = None        # optional Gemini API key override
+    quota_behavior: str = "wait"         # 'wait' or 'fallback'
 
 
 class GenreDetectionRequest(BaseModel):
@@ -131,6 +133,7 @@ class QueueAddRequest(BaseModel):
     api_key: Optional[str] = None
     is_comic: bool = False
     is_scanned: bool = False
+    quota_behavior: str = "wait"
 
 
 class QueueAutoStartRequest(BaseModel):
@@ -145,6 +148,7 @@ class QueueStartRequest(BaseModel):
     reading_direction: Optional[str] = None
     ai_polish: Optional[bool] = None
     api_key: Optional[str] = None
+    quota_behavior: Optional[str] = None
 
 
 class UpdateTextRequest(BaseModel):
@@ -396,6 +400,10 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     reading_direction = (getattr(req, "reading_direction", "ltr") or "ltr").strip().lower()
     if reading_direction not in {"ltr", "rtl"}:
         reading_direction = "ltr"
+    quota_behavior = (getattr(req, "quota_behavior", "wait") or "wait").strip().lower()
+    if quota_behavior not in ("wait", "fallback"):
+        quota_behavior = "wait"
+
     clear_job_cancellation(req.job_id)
     update_job(
         req.job_id,
@@ -408,6 +416,7 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         layout_mode=layout_mode,
         reading_direction=reading_direction,
         ai_polish=req.ai_polish,
+        quota_behavior=quota_behavior,
     )
 
     background_tasks.add_task(
@@ -420,12 +429,13 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         output_path,
         req.ai_polish,
         req.api_key,
+        quota_behavior,
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
-async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path, ai_polish=False, api_key=None):
+async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path, ai_polish=False, api_key=None, quota_behavior="wait"):
     task = asyncio.current_task()
     if task:
         register_task(job_id, task)
@@ -514,6 +524,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 output_path=output_path,
                 api_key=resolved_key,
                 style=style_for_layout,
+                quota_behavior=quota_behavior,
             )
             if is_job_cancelled(job_id):
                 return
@@ -656,8 +667,12 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         if not resolved_key:
             raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Please save your key in AI Polish first.")
 
+    quota_behavior = (getattr(req, "quota_behavior", "wait") or "wait").strip().lower()
+    if quota_behavior not in ("wait", "fallback"):
+        quota_behavior = "wait"
+
     clear_job_cancellation(req.job_id)
-    update_job(req.job_id, mode="audiobook", status="running", error=None)
+    update_job(req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior)
 
     background_tasks.add_task(
         _run_audiobook,
@@ -674,6 +689,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         req.dialogue_voice,
         req.ai_polish,
         req.api_key,
+        quota_behavior,
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
@@ -681,7 +697,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
 
 async def _run_audiobook(
     job_id, file_path, file_type, language, voice_name, output_path, translated_path,
-    narration_style="literature", rate=None, pitch=None, dialogue_voice=None, ai_polish=False, api_key=None
+    narration_style="literature", rate=None, pitch=None, dialogue_voice=None, ai_polish=False, api_key=None, quota_behavior="wait"
 ):
     task = asyncio.current_task()
     if task:
@@ -703,6 +719,7 @@ async def _run_audiobook(
             dialogue_voice=dialogue_voice,
             ai_polish=ai_polish,
             api_key=api_key,
+            quota_behavior=quota_behavior,
         )
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Audiobook task was cancelled.")
@@ -820,6 +837,7 @@ async def job_status(job_id: str):
         "done_chunks": job.done_chunks,
         "error": job.error,
         "has_output": job.output_path is not None,
+        "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
         "gemini_quota_reset_timestamp": quota_info.get("reset_timestamp", 0.0),
@@ -1316,13 +1334,15 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
 
 class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
+    default_quota_behavior: Optional[str] = None
 
 
 @app.get("/api/settings")
 async def get_app_settings():
     from backend.settings_manager import get_setting
     key = get_setting("gemini_api_key", "")
-    return {"gemini_api_key": key}
+    quota_behavior = get_setting("default_quota_behavior", "wait") or "wait"
+    return {"gemini_api_key": key, "default_quota_behavior": quota_behavior}
 
 
 @app.post("/api/settings")
@@ -1335,6 +1355,10 @@ async def update_app_settings(req: SettingsRequest):
         reset_gemini_quota_exhaustion()
         reset_model_cache()
         reset_vision_model_cache()
+    if req.default_quota_behavior is not None:
+        val = req.default_quota_behavior.strip().lower()
+        if val in ("wait", "fallback"):
+            save_setting("default_quota_behavior", val)
     return {"status": "ok"}
 
 
@@ -1692,6 +1716,7 @@ async def _execute_queue_item(q_item):
         output_path,
         q_item.ai_polish,
         q_item.api_key,
+        getattr(q_item, "quota_behavior", "wait") or "wait",
     )
 
 
@@ -1718,6 +1743,7 @@ async def add_batch_queue_item(req: QueueAddRequest):
             api_key=req.api_key,
             is_comic=req.is_comic,
             is_scanned=req.is_scanned,
+            quota_behavior=req.quota_behavior,
         )
     except KeyError as e:
         raise HTTPException(404, str(e))
@@ -1765,6 +1791,7 @@ async def start_batch_queue(req: Optional[QueueStartRequest] = None):
                 reading_direction=req.reading_direction,
                 ai_polish=req.ai_polish,
                 api_key=req.api_key,
+                quota_behavior=req.quota_behavior,
             )
         except ValueError as e:
             raise HTTPException(400, str(e))

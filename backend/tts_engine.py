@@ -303,6 +303,7 @@ async def generate_audiobook(
     dialogue_voice: Optional[str] = None,
     ai_polish: bool = False,
     api_key: Optional[str] = None,
+    quota_behavior: str = "wait",
 ) -> str:
     """
     Generates an MP3 or M4B audiobook from a document or pre-translated text file.
@@ -381,14 +382,23 @@ async def generate_audiobook(
             update_job(job_id, current_step=f"✨ AI polishing audio script ({cur}/{tot})...", progress=pct)
 
         polish_style = "poetry" if style == "poetry" else "audiobook"
-        raw_text = await polish_text_with_gemini(
-            raw_text,
-            api_key=resolved_key,
-            style=polish_style,
-            job_id=job_id,
-            progress_callback=_polish_prog,
-            target_lang=lang_norm,
-        )
+        try:
+            raw_text = await polish_text_with_gemini(
+                raw_text,
+                api_key=resolved_key,
+                style=polish_style,
+                job_id=job_id,
+                progress_callback=_polish_prog,
+                target_lang=lang_norm,
+                quota_behavior=quota_behavior,
+            )
+        except Exception as p_err:
+            from backend.ai_polisher import DailyQuotaExhaustedError
+            if isinstance(p_err, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                logger.warning(f"[{job_id}] Gemini quota exhausted during audiobook script polish. Proceeding with unpolished text (fallback)...")
+                update_job(job_id, current_step="⚠️ Όριο Gemini: Συνέχιση εκφώνησης με αρχικό κείμενο...")
+            else:
+                raise
 
     voice_segments = split_into_voice_segments(
         raw_text,
