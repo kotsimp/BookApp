@@ -993,6 +993,20 @@ function updateProgress(prefix, data) {
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
   document.getElementById(`${prefix}-progress-step`).textContent = step;
 
+  // Single-document Gemini quota warning banner
+  const quotaBanner = document.getElementById(`${prefix}-quota-warning-banner`);
+  const quotaText = document.getElementById(`${prefix}-quota-warning-text`);
+  if (quotaBanner) {
+    if (data.gemini_quota_exhausted) {
+      quotaBanner.style.display = 'block';
+      if (quotaText) {
+        quotaText.textContent = data.gemini_quota_message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier).';
+      }
+    } else {
+      quotaBanner.style.display = 'none';
+    }
+  }
+
   // Show detail while actively running
   const detailEl = document.getElementById(`${prefix}-progress-detail`);
   if (data.total_chunks > 0 && data.status !== 'done') {
@@ -1124,6 +1138,19 @@ function resetProgress(prefix, keepButtonsEnabled = false) {
 function showResult(prefix, data) {
   const card = document.getElementById(`${prefix}-result-card`);
   const meta = document.getElementById(`${prefix}-result-meta`);
+
+  const resQuota = document.getElementById(`${prefix}-result-quota-notice`);
+  const resQuotaText = document.getElementById(`${prefix}-result-quota-text`);
+  if (resQuota) {
+    if (data && data.gemini_quota_exhausted) {
+      resQuota.style.display = 'block';
+      if (resQuotaText) {
+        resQuotaText.textContent = data.gemini_quota_message || 'Το ημερήσιο όριο του Gemini API εξαντλήθηκε κατά τη μετάφραση. Το έγγραφο ολοκληρώθηκε με τη βασική μηχανή μετάφρασης.';
+      }
+    } else {
+      resQuota.style.display = 'none';
+    }
+  }
   if (prefix === 'tr') {
     const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
     const label = fmt.toUpperCase();
@@ -1704,6 +1731,24 @@ async function openAiPolishModal() {
   if (btn) btn.disabled = _polishRunning;
   const cancelBtn = document.getElementById('btn-cancel-polish');
   if (cancelBtn) cancelBtn.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
+
+  // Check Gemini daily quota status and display warning if exhausted
+  const mBanner = document.getElementById('ai-polish-quota-warning-banner');
+  const mText = document.getElementById('ai-polish-quota-warning-text');
+  try {
+    const qRes = await fetch(`${API}/gemini/status`);
+    if (qRes.ok) {
+      const qData = await qRes.json();
+      if (mBanner) {
+        if (qData.exhausted) {
+          mBanner.style.display = 'block';
+          if (mText) mText.textContent = qData.message || 'Το ημερήσιο όριο του Gemini API έχει εξαντληθεί.';
+        } else {
+          mBanner.style.display = 'none';
+        }
+      }
+    }
+  } catch (_) {}
 }
 
 function closeAiPolishModal() {
@@ -1739,6 +1784,8 @@ async function saveGeminiKeyOnly() {
   if (badge) badge.style.display = 'inline';
   const clearBtn = document.getElementById('btn-clear-key');
   if (clearBtn) clearBtn.style.display = 'inline';
+  const mBanner = document.getElementById('ai-polish-quota-warning-banner');
+  if (mBanner) mBanner.style.display = 'none';
   toast('Το Gemini API Key αποθηκεύτηκε επιτυχώς!', 'success');
 }
 
@@ -2553,7 +2600,9 @@ function renderBatchQueue(q) {
     const modeTag = it.is_comic
       ? `🎨 Comic (${(it.reading_direction || 'ltr').toUpperCase()})`
       : (it.layout_mode === 'literature' ? '📚 Literature' : '📄 Standard');
-    const aiTag = it.ai_polish ? ' · ✨ AI Polish' : '';
+    const aiTag = it.ai_polish
+      ? (q.gemini_quota_exhausted ? ' · ⚠️ Χωρίς AI Polish (Όριο Quota)' : ' · ✨ AI Polish')
+      : '';
     const dlLink = it.has_output
       ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
       : '';
@@ -2711,6 +2760,22 @@ async function init() {
 
   // Load voices
   await loadVoices();
+
+  // Check Gemini daily quota status on initial load
+  try {
+    const gq = await fetch(`${API}/gemini/status`);
+    if (gq.ok) {
+      const qd = await gq.json();
+      if (qd.exhausted) {
+        const qBanner = document.getElementById('queue-quota-warning-banner');
+        const qText = document.getElementById('queue-quota-warning-text');
+        if (qBanner && qText) {
+          qBanner.style.display = 'block';
+          qText.textContent = qd.message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini API.';
+        }
+      }
+    }
+  } catch (_) {}
 
   // Load history & any active batch queue
   await refreshHistory();

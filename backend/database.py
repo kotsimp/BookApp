@@ -232,7 +232,12 @@ def db_delete_test_jobs() -> List[str]:
             rows = cursor.fetchall()
             for r in rows:
                 fname = (r["file_name"] or "").strip().lower()
-                if any(fname.startswith(p) for p in test_prefixes) or fname in exact_matches:
+                jid = (r["job_id"] or "").strip().lower()
+                if (
+                    any(fname.startswith(p) for p in test_prefixes)
+                    or fname in exact_matches
+                    or any(jid.startswith(p) for p in test_prefixes)
+                ):
                     deleted_ids.append(r["job_id"])
 
             if deleted_ids:

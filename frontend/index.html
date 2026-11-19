@@ -108,8 +108,17 @@
 
       <!-- Embedded Smart Batch Queue (shown automatically when 2+ files are selected or queue has items) -->
       <div id="tr-queue-card" style="display:none; margin-top:4px; padding-top:4px">
-        <div id="queue-quota-warning-banner" style="display:none; margin-bottom:10px; padding:10px 14px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.5); border-radius:10px; font-size:0.84rem; color:var(--text-primary); line-height:1.4">
-          ⚠️ <strong>Όριο Gemini API (Free Tier):</strong> <span id="queue-quota-warning-text"></span>
+        <div id="queue-quota-warning-banner" style="display:none; margin-bottom:12px; padding:12px 16px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.86rem; color:var(--text-primary); line-height:1.45; box-shadow:0 2px 8px rgba(245,158,11,0.1)">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+            <div>
+              <span style="font-size:1.1rem; margin-right:4px">⚠️</span>
+              <strong>Ημερήσιο Όριο Gemini (Free Tier):</strong>
+              <span id="queue-quota-warning-text"></span>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); white-space:nowrap; padding:4px 10px; font-size:0.8rem">
+              🔑 Αλλαγή API Key
+            </button>
+          </div>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px; padding:8px 12px; background:rgba(124,58,237,0.08); border:1px solid rgba(124,58,237,0.25); border-radius:10px">
           <div style="font-size:0.82rem; color:var(--text-secondary)">
@@ -304,6 +313,19 @@
         </span>
       </div>
 
+      <div id="tr-quota-warning-banner" style="display:none; margin-bottom:14px; padding:12px 16px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.86rem; color:var(--text-primary); line-height:1.45">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+          <div>
+            <span style="font-size:1.1rem; margin-right:4px">⚠️</span>
+            <strong>Ημερήσιο Όριο Gemini (Free Tier):</strong>
+            <span id="tr-quota-warning-text"></span>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); white-space:nowrap; padding:4px 10px; font-size:0.8rem">
+            🔑 Αλλαγή API Key
+          </button>
+        </div>
+      </div>
+
       <div class="progress-header">
         <span class="progress-label" id="tr-progress-step">Starting...</span>
         <span class="progress-pct" id="tr-progress-pct">0%</span>
@@ -324,6 +346,9 @@
       <div style="font-size:3rem; margin-bottom:12px">✅</div>
       <h3>Translation Complete!</h3>
       <p id="tr-result-meta">Your document has been translated successfully.</p>
+      <div id="tr-result-quota-notice" style="display:none; margin:12px auto; max-width:640px; padding:10px 16px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.5); border-radius:10px; font-size:0.85rem; color:var(--text-primary); text-align:left; line-height:1.4">
+        ⚠️ <strong>Ειδοποίηση Ορίου Gemini:</strong> <span id="tr-result-quota-text"></span>
+      </div>
       <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px">
         <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
           ⬇️ Download <span id="tr-format-label">TXT</span> File
@@ -647,6 +672,9 @@
               Clear
             </button>
           </div>
+        </div>
+        <div id="ai-polish-quota-warning-banner" style="display:none; margin-top:10px; padding:10px 14px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.84rem; color:var(--text-primary); line-height:1.4">
+          ⚠️ <strong>Εξαντλημένο Όριο Gemini:</strong> <span id="ai-polish-quota-warning-text"></span>
         </div>
       </div>
 

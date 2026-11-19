@@ -107,20 +107,15 @@ def get_queue_state() -> Dict[str, Any]:
 
     is_running = bool(_queue_task and not _queue_task.done()) or running_count > 0
 
-    from backend.ai_polisher import is_gemini_quota_exhausted, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
-    quota_exhausted = is_gemini_quota_exhausted()
-    quota_message = None
-    if quota_exhausted:
-        rem_sec = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
-        rem_min = rem_sec // 60
-        if rem_min > 60:
-            time_str = f"{rem_min // 60}ώ {rem_min % 60}λ"
-        else:
-            time_str = f"{max(1, rem_min)}λ"
+    from backend.ai_polisher import get_gemini_quota_info
+    q_info = get_gemini_quota_info()
+    quota_exhausted = q_info["exhausted"]
+    quota_message = q_info["message"]
+    if quota_exhausted and q_info.get("cooldown_time_str"):
         quota_message = (
-            f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+            f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
             f"Η ουρά συνεχίζει αυτόματα με τη βασική μηχανή μετάφρασης (χωρίς AI polish). "
-            f"Ανανέωση ορίου σε ~{time_str} ή αλλάξτε API Key στις Ρυθμίσεις."
+            f"Ανανέωση ορίου σε ~{q_info['cooldown_time_str']} ή αλλάξτε API Key στις Ρυθμίσεις."
         )
 
     return {

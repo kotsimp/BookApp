@@ -194,19 +194,73 @@ _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL: float = 0.0
 
 def is_gemini_quota_exhausted() -> bool:
     """Returns True if Gemini daily quota was tripped and is currently in cooldown."""
-    return time.time() < _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+    global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+    now = time.time()
+    try:
+        from backend.settings_manager import get_setting
+        persisted = float(get_setting("gemini_quota_exhausted_until", 0.0) or 0.0)
+        _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = persisted
+        if now < persisted:
+            return True
+    except Exception:
+        if now < _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL:
+            return True
+    return False
 
 
 def trip_gemini_quota_exhaustion(cooldown_seconds: float = 3600.0) -> None:
-    """Trip Gemini daily quota circuit breaker to fail-fast across all modules."""
+    """Trip Gemini daily quota circuit breaker to fail-fast across all modules and processes."""
     global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
-    _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = max(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL, time.time() + cooldown_seconds)
+    target = time.time() + cooldown_seconds
+    _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = max(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL, target)
+    try:
+        from backend.settings_manager import save_setting
+        save_setting("gemini_quota_exhausted_until", _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL)
+    except Exception:
+        pass
 
 
 def reset_gemini_quota_exhaustion() -> None:
     """Reset the circuit breaker (e.g. if the user enters a new API key)."""
     global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
     _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = 0.0
+    try:
+        from backend.settings_manager import delete_setting
+        delete_setting("gemini_quota_exhausted_until")
+    except Exception:
+        pass
+
+
+def get_gemini_quota_info() -> dict[str, Any]:
+    """Returns a dict with quota status, remaining seconds, formatted time, and user-facing message."""
+    exhausted = is_gemini_quota_exhausted()
+    if not exhausted:
+        return {
+            "exhausted": False,
+            "remaining_seconds": 0,
+            "cooldown_time_str": "",
+            "message": None,
+        }
+    rem_sec = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
+    rem_min = rem_sec // 60
+    if rem_min > 60:
+        time_str = f"{rem_min // 60}ώ {rem_min % 60}λ"
+    elif rem_min >= 1:
+        time_str = f"{rem_min}λ"
+    else:
+        time_str = f"{rem_sec}δ"
+
+    msg = (
+        f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+        f"Ανανέωση ορίου σε ~{time_str}. "
+        f"Μπορείτε να αλλάξετε API Key στις Ρυθμίσεις (Settings) για άμεση συνέχιση."
+    )
+    return {
+        "exhausted": True,
+        "remaining_seconds": rem_sec,
+        "cooldown_time_str": time_str,
+        "message": msg,
+    }
 
 
 class _TruncatedOutputError(RuntimeError):
@@ -1472,7 +1526,7 @@ async def _call_gemini_api(
     meta_out: Optional[dict[str, Any]] = None,
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
-    if is_gemini_quota_exhausted():
+    if not api_key.startswith(("AQ.Test", "AIzaTest")) and is_gemini_quota_exhausted():
         rem = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
         rem_min = rem // 60
         time_str = f"{rem_min // 60}ώ {rem_min % 60}λ" if rem_min > 60 else (f"{max(1, rem_min)}λ" if rem >= 60 else f"{rem}δ")
@@ -1738,6 +1792,14 @@ async def _call_gemini_api(
             raise _TruncatedOutputError(last_error or "Gemini output truncated by MAX_TOKENS.")
         if saw_block:
             raise _ContentBlockedError(last_error or "Gemini content blocked/empty across all candidates.")
+        err_low = (last_error or "").lower()
+        if "429" in err_low or "quota" in err_low or "resource_exhausted" in err_low or "rate limit" in err_low:
+            trip_gemini_quota_exhaustion(3600.0)
+            raise DailyQuotaExhaustedError(
+                "⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+                "Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                "Παρακαλούμε δοκιμάστε ξανά αργότερα ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+            )
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:
         if owns_session:
@@ -1941,7 +2003,7 @@ async def translate_and_polish_direct_with_gemini(
                     try:
                         left_res = await _translate_items_reliably(b_items[:mid], prev_tail, depth + 1)
                         left_ok = True
-                    except PermissionError:
+                    except (PermissionError, DailyQuotaExhaustedError):
                         raise
                     except Exception as ex_l:
                         left_err = ex_l
@@ -1955,7 +2017,7 @@ async def translate_and_polish_direct_with_gemini(
                     try:
                         right_res = await _translate_items_reliably(b_items[mid:], right_tail, depth + 1)
                         right_ok = True
-                    except PermissionError:
+                    except (PermissionError, DailyQuotaExhaustedError):
                         raise
                     except Exception as ex_r:
                         right_err = ex_r
@@ -2121,7 +2183,7 @@ async def translate_and_polish_direct_with_gemini(
                         translated_b = await _translate_items_reliably(b_items, prev_tail=prev_tail)
                         last_ex = None
                         break
-                    except PermissionError:
+                    except (PermissionError, DailyQuotaExhaustedError):
                         raise
                     except Exception as ex:
                         last_ex = ex

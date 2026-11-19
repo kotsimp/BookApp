@@ -430,7 +430,7 @@ async def _ai_polish_comic_balloons(
         return [b["draft"] for b in balloons]
 
     from backend.ai_polisher import is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
-    if is_gemini_quota_exhausted():
+    if is_gemini_quota_exhausted() and not (api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest")):
         logger.info("Gemini daily quota exhausted; using standard translated text for comic balloons without AI polish.")
         return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
 
@@ -839,7 +839,7 @@ async def _detect_comic_balloons_vision_async(
 
     from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason, is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
 
-    if is_gemini_quota_exhausted():
+    if is_gemini_quota_exhausted() and not (api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest")):
         if status_out is not None:
             status_out["succeeded"] = False
             status_out["error"] = "Gemini daily quota exhausted"

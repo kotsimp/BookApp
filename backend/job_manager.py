@@ -474,18 +474,31 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
                 pass
 
 
-def is_test_job_filename(file_name: Optional[str]) -> bool:
-    """Returns True if the filename matches test-generated job naming patterns."""
-    if not file_name:
-        return False
-    fn = file_name.strip().lower()
+def is_test_job_identifier(job_id: Optional[str], file_name: Optional[str] = None) -> bool:
+    """Returns True if the job ID or filename matches test-generated job naming patterns."""
     test_prefixes = (
         "test_", "reg_", "mock_", "sample_", "q_iso_",
         "cover_check", "sse_test", "sse_thread", "cancel_guard",
         "scanned_only", "book_", "path_"
     )
     exact_matches = ("sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf")
-    return any(fn.startswith(p) for p in test_prefixes) or fn in exact_matches
+
+    if job_id:
+        jid = job_id.strip().lower()
+        if any(jid.startswith(p) for p in test_prefixes):
+            return True
+
+    if file_name:
+        fn = file_name.strip().lower()
+        if any(fn.startswith(p) for p in test_prefixes) or fn in exact_matches:
+            return True
+
+    return False
+
+
+def is_test_job_filename(file_name: Optional[str]) -> bool:
+    """Returns True if the filename matches test-generated job naming patterns."""
+    return is_test_job_identifier(None, file_name)
 
 
 def cleanup_test_jobs() -> list[str]:
@@ -496,7 +509,7 @@ def cleanup_test_jobs() -> list[str]:
 
     # 1. Purge from in-memory _jobs
     for jid, job in list(_jobs.items()):
-        if is_test_job_filename(job.file_name):
+        if is_test_job_identifier(jid, job.file_name):
             _jobs.pop(jid, None)
             deleted_ids.append(jid)
 

@@ -604,7 +604,18 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
     except Exception as e:
         logger.error(f"Translation/export error [{job_id}]: {e}", exc_info=True)
-        update_job(job_id, status="error", error=str(e))
+        from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError, get_gemini_quota_info
+        err_str = str(e)
+        if isinstance(e, DailyQuotaExhaustedError) or is_gemini_quota_exhausted() or any(k in err_str.lower() for k in ("quota", "resource_exhausted", "429")):
+            q_info = get_gemini_quota_info()
+            update_job(
+                job_id,
+                status="error",
+                error=err_str if "Εξαντλήθηκε" in err_str else f"⚠️ {q_info['message'] or err_str}",
+                current_step="⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API",
+            )
+        else:
+            update_job(job_id, status="error", error=err_str)
     finally:
         unregister_task(job_id)
 
@@ -786,6 +797,9 @@ async def job_status(job_id: str):
     if not ai_polish and cp_file.is_file():
         ai_polish = True
 
+    from backend.ai_polisher import get_gemini_quota_info
+    quota_info = get_gemini_quota_info()
+
     return {
         "job_id": job.job_id,
         "file_name": job.file_name,
@@ -806,6 +820,8 @@ async def job_status(job_id: str):
         "done_chunks": job.done_chunks,
         "error": job.error,
         "has_output": job.output_path is not None,
+        "gemini_quota_exhausted": quota_info["exhausted"],
+        "gemini_quota_message": quota_info["message"],
     }
 
 
@@ -1334,6 +1350,13 @@ async def delete_app_setting(key: str):
 # ---------------------------------------------------------------------------
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------
+
+@app.get("/api/gemini/status")
+async def get_gemini_status():
+    """Returns current Gemini daily quota exhaustion status and cooldown info."""
+    from backend.ai_polisher import get_gemini_quota_info
+    return get_gemini_quota_info()
+
 
 @app.get("/api/polish/status/{job_id}")
 async def get_polish_status(job_id: str):
