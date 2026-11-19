@@ -232,32 +232,39 @@ def reset_gemini_quota_exhaustion() -> None:
 
 
 def get_gemini_quota_info() -> dict[str, Any]:
-    """Returns a dict with quota status, remaining seconds, formatted time, and user-facing message."""
+    """Returns a dict with quota status, remaining seconds, exact reset clock time, and user-facing message."""
     exhausted = is_gemini_quota_exhausted()
     if not exhausted:
         return {
             "exhausted": False,
             "remaining_seconds": 0,
+            "reset_timestamp": 0.0,
+            "reset_time_str": "",
             "cooldown_time_str": "",
             "message": None,
         }
     rem_sec = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
+    import datetime
+    reset_dt = datetime.datetime.fromtimestamp(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL)
+    reset_time_str = reset_dt.strftime("%H:%M:%S")
     rem_min = rem_sec // 60
     if rem_min > 60:
         time_str = f"{rem_min // 60}ώ {rem_min % 60}λ"
     elif rem_min >= 1:
-        time_str = f"{rem_min}λ"
+        time_str = f"{rem_min}λ {rem_sec % 60}δ"
     else:
         time_str = f"{rem_sec}δ"
 
     msg = (
         f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
-        f"Ανανέωση ορίου σε ~{time_str}. "
+        f"Έτοιμο ξανά στις {reset_time_str} (απομένουν ~{time_str}). "
         f"Μπορείτε να αλλάξετε API Key στις Ρυθμίσεις (Settings) για άμεση συνέχιση."
     )
     return {
         "exhausted": True,
         "remaining_seconds": rem_sec,
+        "reset_timestamp": _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL,
+        "reset_time_str": reset_time_str,
         "cooldown_time_str": time_str,
         "message": msg,
     }
@@ -1527,13 +1534,11 @@ async def _call_gemini_api(
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
     if not api_key.startswith(("AQ.Test", "AIzaTest")) and is_gemini_quota_exhausted():
-        rem = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
-        rem_min = rem // 60
-        time_str = f"{rem_min // 60}ώ {rem_min % 60}λ" if rem_min > 60 else (f"{max(1, rem_min)}λ" if rem >= 60 else f"{rem}δ")
+        q_info = get_gemini_quota_info()
         raise DailyQuotaExhaustedError(
-            f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier limit reached). "
-            f"Ενεργή προστασία cooldown για ακόμα ~{time_str}. "
-            f"Αλλάξτε API Key στις Ρυθμίσεις ή περιμένετε την ανανέωση του ορίου."
+            f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+            f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+            f"Αλλάξτε API Key στις Ρυθμίσεις ή περιμένετε την αντίστροφη μέτρηση για αυτόματη συνέχιση."
         )
 
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
@@ -1736,16 +1741,16 @@ async def _call_gemini_api(
                                 or "per day" in err_low
                                 or cooldown_sec >= 180.0
                             ):
-                                rem_min = int(cooldown_sec // 60)
-                                time_str = f"{rem_min // 60}ώ {rem_min % 60}λ" if rem_min > 60 else f"{max(1, rem_min)}λ"
+                                trip_gemini_quota_exhaustion(cooldown_sec)
+                                q_info = get_gemini_quota_info()
                                 logger.warning(
                                     f"Gemini daily quota exhausted ({resp.status}). Tripping circuit breaker for {int(cooldown_sec)}s. Skipping all remaining candidate models."
                                 )
-                                trip_gemini_quota_exhaustion(cooldown_sec)
                                 raise DailyQuotaExhaustedError(
                                     f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
                                     f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                                    f"Παρακαλούμε δοκιμάστε ξανά σε ~{time_str} ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+                                    f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+                                    f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
                                 )
 
                             logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
@@ -1795,10 +1800,12 @@ async def _call_gemini_api(
         err_low = (last_error or "").lower()
         if "429" in err_low or "quota" in err_low or "resource_exhausted" in err_low or "rate limit" in err_low:
             trip_gemini_quota_exhaustion(3600.0)
+            q_info = get_gemini_quota_info()
             raise DailyQuotaExhaustedError(
-                "⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
-                "Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                "Παρακαλούμε δοκιμάστε ξανά αργότερα ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+                f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+                f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+                f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
             )
         raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:

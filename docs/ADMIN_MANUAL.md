@@ -263,7 +263,9 @@ BookApp/
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό, την ουρά και τα προσωρινά αρχεία (διατηρώντας τη `translation_cache`).
 * `DELETE /api/jobs/tests/cleanup`: Καθαρίζει άμεσα όλα τα δοκιμαστικά αρχεία/εργασίες που δημιουργήθηκαν από αυτοματοποιημένα τεστ (prefixes `test_`, `reg_`, `mock_`, κ.λπ.) από τη βάση SQLite, τη μνήμη και τους φακέλους `temp/`, διατηρώντας ανέπαφο το πραγματικό ιστορικό του χρήστη.
 * `GET /api/jobs?include_tests=true`: Προαιρετική παράμετρος ανάκτησης εργασιών. Από προεπιλογή (`include_tests=false`), τα δοκιμαστικά αρχεία φιλτράρονται αυτόματα ώστε να μην εμφανίζονται ποτέ στο Session History του UI.
-* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`).
+* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`). Κατά την αποθήκευση νέου κλειδιού, μηδενίζεται αυτόματα ο cooldown διακόπτης του Gemini.
+* `GET /api/gemini/status`: Επιστρέφει την κατάσταση του διακόπτη προστασίας Gemini Quota (`exhausted: bool`), τα εναπομείναντα δευτερόλεπτα (`remaining_seconds: int`), το Unix timestamp επαναφοράς (`reset_timestamp: float`), την ακριβή τοπική ώρα επαναφοράς (`reset_time_str: "HH:MM:SS"`), το φορμαρισμένο κείμενο (`cooldown_time_str`) και το αναλυτικό μήνυμα προς το χρήστη.
+* `POST /api/gemini/reset-quota`: Μηδενίζει άμεσα τον διακόπτη προστασίας Quota Circuit Breaker και αποκαθιστά την άμεση διαθεσιμότητα των κλήσεων AI Polish.
 * `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
 * `POST /api/cover/{job_id}`: Ανέβασμα νέου προσαρμοσμένου εξωφύλλου (`multipart/form-data`) με αυτόματη ενημέρωση των αρχείων εξόδου.
 * `DELETE /api/cover/{job_id}`: Αφαίρεση του εξωφύλλου για τη συγκεκριμένη εργασία.

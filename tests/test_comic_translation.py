@@ -264,5 +264,11 @@ def test_cbz_archive_translation():
 
 
 if __name__ == "__main__":
-    test_graphic_novel_pdf_translation()
-    test_cbz_archive_translation()
+    try:
+        test_graphic_novel_pdf_translation()
+        test_cbz_archive_translation()
+    finally:
+        try:
+            api_delete("/jobs/tests/cleanup")
+        except Exception:
+            pass

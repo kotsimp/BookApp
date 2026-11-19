@@ -822,6 +822,9 @@ async def job_status(job_id: str):
         "has_output": job.output_path is not None,
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
+        "gemini_quota_reset_timestamp": quota_info.get("reset_timestamp", 0.0),
+        "gemini_quota_reset_time_str": quota_info.get("reset_time_str", ""),
+        "gemini_quota_remaining_seconds": quota_info.get("remaining_seconds", 0),
     }
 
 
@@ -1325,10 +1328,11 @@ async def get_app_settings():
 @app.post("/api/settings")
 async def update_app_settings(req: SettingsRequest):
     from backend.settings_manager import save_setting
-    from backend.ai_polisher import reset_model_cache
+    from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
     from backend.comic_translator import reset_vision_model_cache
     if req.gemini_api_key is not None:
         save_setting("gemini_api_key", req.gemini_api_key.strip())
+        reset_gemini_quota_exhaustion()
         reset_model_cache()
         reset_vision_model_cache()
     return {"status": "ok"}
@@ -1356,6 +1360,14 @@ async def get_gemini_status():
     """Returns current Gemini daily quota exhaustion status and cooldown info."""
     from backend.ai_polisher import get_gemini_quota_info
     return get_gemini_quota_info()
+
+
+@app.post("/api/gemini/reset-quota")
+async def reset_gemini_quota_endpoint():
+    """Manually resets the Gemini daily quota circuit breaker cooldown."""
+    from backend.ai_polisher import reset_gemini_quota_exhaustion
+    reset_gemini_quota_exhaustion()
+    return {"status": "ok", "message": "Gemini quota circuit breaker reset."}
 
 
 @app.get("/api/polish/status/{job_id}")

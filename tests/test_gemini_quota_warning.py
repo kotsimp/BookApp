@@ -66,7 +66,10 @@ class TestGeminiQuotaWarning(unittest.TestCase):
         info_tripped = get_gemini_quota_info()
         self.assertTrue(info_tripped["exhausted"])
         self.assertGreater(info_tripped["remaining_seconds"], 1700)
+        self.assertGreater(info_tripped["reset_timestamp"], 0)
+        self.assertEqual(len(info_tripped["reset_time_str"]), 8)  # HH:MM:SS
         self.assertIn("Εξαντλήθηκε το ημερήσιο όριο του Gemini API", info_tripped["message"])
+        self.assertIn("Έτοιμο ξανά στις", info_tripped["message"])
         self.assertIn("Ρυθμίσεις", info_tripped["message"])
 
         # Reset
@@ -87,13 +90,24 @@ class TestGeminiQuotaWarning(unittest.TestCase):
         status_tripped, data_tripped = api_get("/gemini/status")
         self.assertEqual(status_tripped, 200)
         self.assertTrue(data_tripped["exhausted"])
+        self.assertGreater(data_tripped["reset_timestamp"], 0)
+        self.assertEqual(len(data_tripped["reset_time_str"]), 8)
         self.assertIn("Εξαντλήθηκε το ημερήσιο όριο του Gemini API", data_tripped["message"])
+        self.assertIn("Έτοιμο ξανά στις", data_tripped["message"])
 
-        # Reset via settings save
-        status_set, res_set = api_post_json("/settings", {"gemini_api_key": "AQ.NewKeyTest1234567890abcdef"})
-        self.assertEqual(status_set, 200)
+        # Reset via explicit endpoint
+        status_rst, res_rst = api_post_json("/gemini/reset-quota", {})
+        self.assertEqual(status_rst, 200)
+        self.assertEqual(res_rst["status"], "ok")
         status_cleared, data_cleared = api_get("/gemini/status")
         self.assertFalse(data_cleared["exhausted"])
+
+        # Trip again and reset via settings save
+        trip_gemini_quota_exhaustion(3600.0)
+        status_set, res_set = api_post_json("/settings", {"gemini_api_key": "AQ.NewKeyTest1234567890abcdef"})
+        self.assertEqual(status_set, 200)
+        status_cleared2, data_cleared2 = api_get("/gemini/status")
+        self.assertFalse(data_cleared2["exhausted"])
 
     def test_03_job_status_includes_quota_fields(self):
         job = create_job("test_quota_job_file.pdf", "test_quota_job_file.pdf", "pdf")
@@ -111,6 +125,8 @@ class TestGeminiQuotaWarning(unittest.TestCase):
         status2, d2 = api_get(f"/status/{jid}")
         self.assertEqual(status2, 200)
         self.assertTrue(d2["gemini_quota_exhausted"])
+        self.assertGreater(d2["gemini_quota_reset_timestamp"], 0)
+        self.assertEqual(len(d2["gemini_quota_reset_time_str"]), 8)
         self.assertIn("Εξαντλήθηκε το ημερήσιο όριο", d2["gemini_quota_message"])
 
     def test_04_batch_queue_includes_quota_state(self):
@@ -120,11 +136,13 @@ class TestGeminiQuotaWarning(unittest.TestCase):
         trip_gemini_quota_exhaustion(3600.0)
         q_state = get_queue_state()
         self.assertTrue(q_state["gemini_quota_exhausted"])
+        self.assertGreater(q_state["gemini_quota_reset_timestamp"], 0)
         self.assertIn("Εξαντλήθηκε το ημερήσιο όριο", q_state["gemini_quota_message"])
 
         status, data = api_get("/queue")
         self.assertEqual(status, 200)
         self.assertTrue(data["gemini_quota_exhausted"])
+        self.assertGreater(data["gemini_quota_reset_timestamp"], 0)
         self.assertIn("Εξαντλήθηκε το ημερήσιο όριο του Gemini API", data["gemini_quota_message"])
 
     def test_05_teardown_cleans_up_all_test_jobs(self):

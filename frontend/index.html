@@ -352,7 +352,15 @@
         <div class="progress-bar-fill shimmer" id="tr-progress-bar" style="width:0%"></div>
       </div>
       <p class="progress-step" id="tr-progress-detail"></p>
-      <div style="display:flex; justify-content:flex-end; margin-top:14px">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <button type="button" class="btn btn-sm btn-outline" id="tr-quota-key-btn" onclick="openAiPolishModal()" style="display:none; border-color:var(--amber); color:var(--amber); font-weight:600; padding:6px 12px">
+            🔑 Αλλαγή API Key
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" id="tr-resume-btn" onclick="resumeTranslation('tr')" style="display:none; background:var(--emerald, #10b981); border:none; font-weight:600; padding:6px 14px; box-shadow:0 2px 10px rgba(16,185,129,0.35)">
+            ▶️ Συνέχιση Μετάφρασης (Resume)
+          </button>
+        </div>
         <button class="btn btn-secondary btn-sm" id="tr-cancel-btn" onclick="cancelJob('tr')" style="border-color:var(--rose, #f43f5e); color:var(--rose, #f43f5e); display:inline-flex; align-items:center; gap:6px">
           🛑 Cancel Translation
         </button>
@@ -436,7 +444,19 @@
 
     <!-- Error Card -->
     <div class="error-card" id="tr-error-card">
-      ❌ <strong>Error:</strong> <span id="tr-error-msg"></span>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px">
+        <div style="flex:1; min-width:240px">
+          ❌ <strong>Error:</strong> <span id="tr-error-msg"></span>
+        </div>
+        <div id="tr-error-quota-actions" style="display:none; gap:8px; align-items:center; flex-wrap:wrap">
+          <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; padding:4px 10px; font-size:0.8rem">
+            🔑 Αλλαγή API Key
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" id="tr-error-resume-btn" onclick="resumeTranslation('tr')" style="background:var(--emerald, #10b981); border:none; font-weight:600; padding:4px 12px; font-size:0.8rem; box-shadow:0 2px 8px rgba(16,185,129,0.3)">
+            ▶️ Συνέχιση Μετάφρασης
+          </button>
+        </div>
+      </div>
     </div>
 
   </section>

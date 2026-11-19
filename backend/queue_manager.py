@@ -130,6 +130,9 @@ def get_queue_state() -> Dict[str, Any]:
         "max_items": MAX_QUEUE_ITEMS,
         "gemini_quota_exhausted": quota_exhausted,
         "gemini_quota_message": quota_message,
+        "gemini_quota_reset_timestamp": q_info.get("reset_timestamp", 0.0),
+        "gemini_quota_reset_time_str": q_info.get("reset_time_str", ""),
+        "gemini_quota_remaining_seconds": q_info.get("remaining_seconds", 0),
     }
 
 
