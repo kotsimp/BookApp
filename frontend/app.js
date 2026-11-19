@@ -2255,12 +2255,15 @@ function _tickGeminiQuotaCountdown() {
 
   const min = Math.floor(remSec / 60);
   const sec = remSec % 60;
-  const mmss = `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  const hrs = Math.floor(min / 60);
+  const remM = min % 60;
+
+  const mmss = hrs > 0
+    ? `${String(hrs).padStart(2, '0')}:${String(remM).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 
   let formattedTime = `${min}λ ${sec}δ`;
-  if (min >= 60) {
-    const hrs = Math.floor(min / 60);
-    const remM = min % 60;
+  if (hrs > 0) {
     formattedTime = `${hrs}ώ ${remM}λ ${sec}δ`;
   } else if (min < 1) {
     formattedTime = `${sec}δ`;
@@ -2387,7 +2390,15 @@ function onGeminiQuotaRestored() {
   if (polishTag) polishTag.style.display = 'none';
 
   // 5. Toast notification to user
-  toast('✅ Το όριο του Gemini API ανανεώθηκε! Έτοιμο για άμεση συνέχιση.', 'success');
+  toast('✅ Το όριο του Gemini API ανανεώθηκε! Αυτόματη συνέχιση από το checkpoint...', 'success');
+
+  // 6. Automatic Resume when countdown finishes
+  if (state.tr.jobId && (state.tr.status === 'error' || state.tr.status === 'idle')) {
+    console.log(`Auto-resuming translation job ${state.tr.jobId} after quota restoration...`);
+    setTimeout(() => {
+      resumeTranslation('tr');
+    }, 2000);
+  }
 }
 
 async function saveGeminiKeyOnly() {
