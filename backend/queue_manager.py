@@ -6,6 +6,7 @@ parallelism to maximize speed without triggering API 429 rate-limit collisions).
 Supports both Manual Queue review + Start and Auto-Start Queue modes.
 """
 
+import os
 import time
 import asyncio
 import logging
@@ -168,6 +169,10 @@ def add_to_queue(
         raise RuntimeError(f"Job '{job_id}' is already running.")
 
     # Auto-detect comic vs book compatibility safely for mixed batches
+    from backend.settings_manager import get_setting
+    resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not resolved_key and (quota_behavior == "wait" or not quota_behavior):
+        quota_behavior = "fallback"
     effective_comic = bool(
         is_comic
         or getattr(job, "layout_mode", "") == "comic"
@@ -407,6 +412,11 @@ def apply_settings_to_queued_items(
             item.api_key = api_key or None
         if quota_behavior:
             item.quota_behavior = quota_behavior
+        else:
+            from backend.settings_manager import get_setting
+            resolved_key = (item.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+            if not resolved_key:
+                item.quota_behavior = "fallback"
 
         fmt_clean = (output_format or item.output_format or "pdf").lower().lstrip(".")
         layout_clean = (layout_mode or item.layout_mode or "standard").lower()

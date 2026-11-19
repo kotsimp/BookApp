@@ -915,12 +915,16 @@ async def polish_text_with_gemini(
         if not is_greek_target:
             return s
         from backend.typography import format_greek_typography
+        from backend.glossary import apply_glossary
         return format_greek_typography(apply_glossary(s, "greek", style=style))
 
     from backend.settings_manager import get_setting
     key = api_key or os.environ.get("GEMINI_API_KEY") or get_setting("gemini_api_key")
     if not key:
-        raise ValueError("Missing Gemini API Key. Please provide a key in settings.")
+        if quota_behavior == "fallback":
+            logger.info(f"[{job_id or 'direct'}] No Gemini API key provided and quota_behavior='fallback' -> Applying free rule-based typography and glossary polish.")
+            return _postprocess(text)
+        raise ValueError("Missing Gemini API Key. Please provide a key in settings or select free models (fallback).")
 
     base_system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
     sem = asyncio.Semaphore(5)

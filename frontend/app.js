@@ -758,7 +758,10 @@ async function startTranslation() {
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
-  const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
+  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
+  if (!apiKey && quotaBehavior === 'wait') {
+    quotaBehavior = 'fallback';
+  }
 
   // Update download button label to show chosen format
   const labelEl = document.getElementById('tr-format-label');
@@ -811,15 +814,28 @@ function onQuotaBehaviorChange(prefix) {
   const sel = document.querySelector(`input[name="${prefix}-quota-behavior"]:checked`);
   const val = sel ? sel.value : 'wait';
   const descEl = document.getElementById(`${prefix}-quota-behavior-desc`);
+  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
   if (descEl) {
     if (val === 'wait') {
-      descEl.innerHTML = (prefix === 'ab')
-        ? '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το όριο Gemini, η διαδικασία σταματά και περιμένει την επαναφορά για μέγιστη ποιότητα.'
-        : '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το ημερήσιο όριο, η εργασία σταματά με ασφάλεια στο checkpoint και περιμένει τον ζωντανό χρονοδιακόπτη ή νέο API Key (διατηρεί 100% την ποιότητα Gemini).';
+      if (!hasKey) {
+        descEl.innerHTML = (prefix === 'ab')
+          ? '⚠️ <em>Σημείωση:</em> Επιλέξατε Αναμονή για Gemini αλλά δεν έχει εισαχθεί API Key. Συνιστάται η επιλογή Δωρεάν Μοντέλου παρακάτω.'
+          : '⚠️ <em>Σημείωση:</em> Επιλέξατε Αναμονή για Gemini αλλά δεν έχει εισαχθεί API Key. Συνιστάται η επιλογή Δωρεάν Μοντέλου παρακάτω ή εισαγωγή κλειδιού στις Ρυθμίσεις.';
+      } else {
+        descEl.innerHTML = (prefix === 'ab')
+          ? '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το όριο Gemini, η διαδικασία σταματά και περιμένει την επαναφορά για μέγιστη ποιότητα.'
+          : '⏳ <em>Αναμονή:</em> Εάν εξαντληθεί το ημερήσιο όριο, η εργασία σταματά με ασφάλεια στο checkpoint και περιμένει τον ζωντανό χρονοδιακόπτη ή νέο API Key (διατηρεί 100% την ποιότητα Gemini).';
+      }
     } else {
-      descEl.innerHTML = (prefix === 'ab')
-        ? '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini στο Script Polish, η εκφώνηση συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας το αρχικό κείμενο (δωρεάν Edge-TTS).'
-        : '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini, η εργασία συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας τη δωρεάν μηχανή μετάφρασης (χωρίς όρια χρήσης).';
+      if (!hasKey) {
+        descEl.innerHTML = (prefix === 'ab')
+          ? '🔄 <em>Δωρεάν Μοντέλα (Προεπιλογή):</em> Χωρίς Gemini API Key, η εκφώνηση εκτελείται αυτόματα με το δωρεάν μοντέλο Edge-TTS χωρίς διακοπή και χωρίς όρια.'
+          : '🔄 <em>Δωρεάν Μοντέλα (Προεπιλογή):</em> Χωρίς Gemini API Key, χρησιμοποιείται αυτόματα η δωρεάν μηχανή (Google Translate & τυπογραφία) χωρίς διακοπή και χωρίς όρια χρήσης.';
+      } else {
+        descEl.innerHTML = (prefix === 'ab')
+          ? '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini στο Script Polish, η εκφώνηση συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας το αρχικό κείμενο (δωρεάν Edge-TTS).'
+          : '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini, η εργασία συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας τη δωρεάν μηχανή μετάφρασης (χωρίς όρια χρήσης).';
+      }
     }
   }
   try {
@@ -828,15 +844,16 @@ function onQuotaBehaviorChange(prefix) {
 }
 
 function initQuotaBehaviorSelectors() {
+  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  const defaultBehavior = hasKey ? 'wait' : 'fallback';
   ['tr', 'ab'].forEach((prefix) => {
     try {
       const saved = localStorage.getItem(`${prefix}_quota_behavior`);
-      if (saved) {
-        const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="${saved}"]`);
-        if (radio) {
-          radio.checked = true;
-          onQuotaBehaviorChange(prefix);
-        }
+      const targetVal = saved || defaultBehavior;
+      const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="${targetVal}"]`);
+      if (radio) {
+        radio.checked = true;
+        onQuotaBehaviorChange(prefix);
       }
     } catch (_) {}
   });
@@ -924,7 +941,10 @@ async function startAudiobook() {
     const isMultiVoice = document.getElementById('ab-multi-voice')?.checked || false;
     const dialogueVoice = isMultiVoice ? (document.getElementById('ab-dialogue-voice-select')?.value || null) : null;
     const quotaBehaviorEl = document.querySelector('input[name="ab-quota-behavior"]:checked');
-    const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
+    let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
+    if (!apiKey && quotaBehavior === 'wait') {
+      quotaBehavior = 'fallback';
+    }
 
     const res = await fetch(`${API}/audiobook`, {
       method: 'POST',
@@ -2071,8 +2091,17 @@ async function clearGeminiKey() {
     await fetch(`${API}/settings/gemini_api_key`, { method: 'DELETE' });
   } catch (_) {}
   stopGeminiQuotaCountdown(false);
+  // Default selectors to free models (fallback) when key is removed
+  ['tr', 'ab'].forEach((prefix) => {
+    localStorage.setItem(`${prefix}_quota_behavior`, 'fallback');
+    const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="fallback"]`);
+    if (radio) {
+      radio.checked = true;
+      onQuotaBehaviorChange(prefix);
+    }
+  });
   await checkGlobalGeminiQuotaStatus();
-  toast('Saved Gemini API key cleared.', 'info');
+  toast('Το Gemini API Key αφαιρέθηκε. Τα δωρεάν μοντέλα είναι πλέον η ενεργή προεπιλογή.', 'info');
 }
 
 async function checkGlobalGeminiQuotaStatus() {
@@ -2110,7 +2139,12 @@ async function checkGlobalGeminiQuotaStatus() {
             navBadge.textContent = '✓ Active';
             navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό (15 RPM / 1.500 RPD)';
           } else {
-            navBadge.style.display = 'none';
+            navBadge.style.display = 'inline-block';
+            navBadge.style.background = 'rgba(59,130,246,0.15)';
+            navBadge.style.color = 'var(--blue, #3b82f6)';
+            navBadge.style.border = '1px solid rgba(59,130,246,0.3)';
+            navBadge.textContent = '🆓 Free Mode';
+            navBadge.title = 'Δωρεάν μοντέλα ενεργά ως προεπιλογή (Google Translate & Edge-TTS — χωρίς API key)';
           }
         }
       }
@@ -2163,25 +2197,26 @@ async function runAiPolish() {
     return;
   }
 
-  const apiKey = document.getElementById('gemini-api-key').value.trim();
-  if (!apiKey) {
-    toast('Please enter your Gemini API Key.', 'error');
-    return;
+  const apiKeyInput = document.getElementById('gemini-api-key');
+  const apiKey = (apiKeyInput ? apiKeyInput.value.trim() : '') || localStorage.getItem('gemini_api_key') || '';
+  if (apiKey) {
+    const isValidFormat = (apiKey.startsWith('AQ.') && apiKey.length >= 25) ||
+                          (apiKey.startsWith('AIza') && apiKey.length >= 35) ||
+                          (apiKey.length >= 25);
+    if (!isValidFormat) {
+      toast('Invalid API Key format. Google Gemini keys start with "AQ." or "AIzaSy...". Please paste a valid key.', 'error');
+      return;
+    }
+    localStorage.setItem('gemini_api_key', apiKey);
+    // Persist permanently on server settings as well
+    fetch(`${API}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gemini_api_key: apiKey }),
+    }).catch(() => {});
+  } else {
+    toast('ℹ️ Δεν έχει οριστεί Gemini API Key: Χρήση των δωρεάν μοντέλων (τυπογραφία & γλωσσάρι).', 'info');
   }
-  const isValidFormat = (apiKey.startsWith('AQ.') && apiKey.length >= 25) ||
-                        (apiKey.startsWith('AIza') && apiKey.length >= 35) ||
-                        (apiKey.length >= 25);
-  if (!isValidFormat) {
-    toast('Invalid API Key format. Google Gemini keys start with "AQ." or "AIzaSy...". Please paste a valid key.', 'error');
-    return;
-  }
-  localStorage.setItem('gemini_api_key', apiKey);
-  // Persist permanently on server settings as well
-  fetch(`${API}/settings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gemini_api_key: apiKey }),
-  }).catch(() => {});
 
   const style = document.getElementById('ai-polish-style').value;
   const progEl = document.getElementById('ai-polish-progress-container');
@@ -2569,7 +2604,10 @@ function _readCurrentTranslationSettings() {
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
-  const quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : 'wait';
+  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
+  if (!apiKey && quotaBehavior === 'wait') {
+    quotaBehavior = 'fallback';
+  }
   return { srcLang, tgtLang, chosenFmt, chosenLayout, aiPolish, apiKey, readingDirection, quotaBehavior };
 }
 

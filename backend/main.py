@@ -400,9 +400,18 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     reading_direction = (getattr(req, "reading_direction", "ltr") or "ltr").strip().lower()
     if reading_direction not in {"ltr", "rtl"}:
         reading_direction = "ltr"
-    quota_behavior = (getattr(req, "quota_behavior", "wait") or "wait").strip().lower()
+
+    from backend.settings_manager import get_setting
+    resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+
+    quota_behavior = (getattr(req, "quota_behavior", "") or "").strip().lower()
+    if not quota_behavior:
+        quota_behavior = "wait" if resolved_key else "fallback"
+    elif not resolved_key and quota_behavior == "wait":
+        # Free models are the default when no Gemini API key is configured
+        quota_behavior = "fallback"
     if quota_behavior not in ("wait", "fallback"):
-        quota_behavior = "wait"
+        quota_behavior = "fallback" if not resolved_key else "wait"
 
     clear_job_cancellation(req.job_id)
     update_job(
@@ -593,6 +602,11 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             if is_job_cancelled(job_id):
                 return
             txt_content = Path(output_path).read_text(encoding="utf-8")
+            if ai_polish and not resolved_key and (target_lang.lower() in ("greek", "el")):
+                from backend.typography import format_greek_typography
+                from backend.glossary import apply_glossary
+                txt_content = format_greek_typography(apply_glossary(txt_content, "greek", style="literature" if layout == "literature" else "formal"))
+                Path(output_path).write_text(txt_content, encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
             final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
 
@@ -661,15 +675,20 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
             txt_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
             translated_path = str(txt_files[0])
 
-    if req.ai_polish:
-        from backend.settings_manager import get_setting
-        resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-        if not resolved_key:
-            raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Please save your key in AI Polish first.")
+    from backend.settings_manager import get_setting
+    resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
 
-    quota_behavior = (getattr(req, "quota_behavior", "wait") or "wait").strip().lower()
+    quota_behavior = (getattr(req, "quota_behavior", "") or "").strip().lower()
+    if not quota_behavior:
+        quota_behavior = "wait" if resolved_key else "fallback"
+    elif not resolved_key and quota_behavior == "wait":
+        # Free models default when no Gemini API key is configured
+        quota_behavior = "fallback"
     if quota_behavior not in ("wait", "fallback"):
-        quota_behavior = "wait"
+        quota_behavior = "fallback" if not resolved_key else "wait"
+
+    if req.ai_polish and not resolved_key and quota_behavior != "fallback":
+        raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Επιλέξτε 'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο' για εκφώνηση χωρίς κλειδί.")
 
     clear_job_cancellation(req.job_id)
     update_job(req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior)
@@ -1340,9 +1359,18 @@ class SettingsRequest(BaseModel):
 @app.get("/api/settings")
 async def get_app_settings():
     from backend.settings_manager import get_setting
-    key = get_setting("gemini_api_key", "")
-    quota_behavior = get_setting("default_quota_behavior", "wait") or "wait"
-    return {"gemini_api_key": key, "default_quota_behavior": quota_behavior}
+    key = (get_setting("gemini_api_key", "") or "").strip()
+    has_key = bool(key)
+    default_behavior = "wait" if has_key else "fallback"
+    quota_behavior = get_setting("default_quota_behavior", default_behavior) or default_behavior
+    if not has_key:
+        quota_behavior = "fallback"
+    return {
+        "gemini_api_key": key,
+        "default_quota_behavior": quota_behavior,
+        "has_gemini_key": has_key,
+        "default_engine": "gemini" if has_key else "free",
+    }
 
 
 @app.post("/api/settings")
@@ -1501,13 +1529,18 @@ async def polish_translation(req: PolishRequest):
             step=f"Polishing batch {current} of {total}...",
         )
 
+    from backend.settings_manager import get_setting
+    resolved_polish_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    polish_quota_behavior = "wait" if resolved_polish_key else "fallback"
+
+    init_step = "Connecting to Gemini Flash AI..." if resolved_polish_key else "ℹ️ Εφαρμογή δωρεάν τυπογραφικών κανόνων & γλωσσαρίου (Free Mode)..."
     update_polish_job_status(
         req.job_id,
         current=0,
         total=1,
         percent=0,
         status="running",
-        step="Connecting to Gemini Flash AI...",
+        step=init_step,
     )
 
     try:
@@ -1519,15 +1552,17 @@ async def polish_translation(req: PolishRequest):
             job_id=req.job_id,
             use_source_anchoring=effective_bilingual,
             progress_callback=on_progress,
+            quota_behavior=polish_quota_behavior,
         )
         total_p = get_polish_job_status(req.job_id).get("total", 1)
+        done_step = "AI Polishing complete!" if resolved_polish_key else "Ολοκληρώθηκε με δωρεάν τυπογραφική επιμέλεια & γλωσσάρι!"
         update_polish_job_status(
             req.job_id,
             current=total_p,
             total=total_p,
             percent=100,
             status="done",
-            step="AI Polishing complete!",
+            step=done_step,
         )
     except Exception as e:
         update_polish_job_status(

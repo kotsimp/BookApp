@@ -155,6 +155,39 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
         deleted = cleanup_test_jobs()
         self.assertEqual(len(deleted), 0)
 
+    def test_07_no_api_key_settings_and_queue_defaults_to_free(self):
+        """When no Gemini key is provided, settings and queue default to free models ('fallback')."""
+        from backend.settings_manager import save_setting, delete_setting
+        delete_setting("gemini_api_key")
+
+        # In queue manager, adding item without API key defaults quota_behavior to 'fallback'
+        job = create_job("test_no_key.txt", "test_no_key.txt", "txt")
+        q_item = add_to_queue(job.job_id, api_key=None, quota_behavior="wait")
+        self.assertEqual(q_item.quota_behavior, "fallback")
+
+        clear_queue()
+        cleanup_test_jobs()
+
+    def test_08_no_api_key_polish_applies_free_linguistic_rules(self):
+        """When polish is invoked without Gemini API key, it defaults to free typography and glossary polish."""
+        from backend.settings_manager import delete_setting
+        delete_setting("gemini_api_key")
+
+        raw_greek = '"Αυτό είναι ένα τεστ..." είπε ο Πέτρος.'
+        job = create_job("test_free_pol.txt", "test_free_pol.txt", "txt")
+
+        # Polish with no key and quota_behavior='fallback'
+        result = asyncio.run(
+            polish_text_with_gemini(
+                text=raw_greek,
+                api_key=None,
+                job_id=job.job_id,
+                quota_behavior="fallback",
+            )
+        )
+        self.assertIn("«Αυτό είναι ένα τεστ", result)  # Typography converts ASCII quotes to Greek Guillemets
+        cleanup_test_jobs()
+
 
 if __name__ == "__main__":
     unittest.main()

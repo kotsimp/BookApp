@@ -370,35 +370,42 @@ async def generate_audiobook(
         from backend.settings_manager import get_setting
 
         resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-        if not resolved_key:
-            err_msg = "Gemini API key is required for AI Audiobook Polish."
-            update_job(job_id, status="error", error=err_msg)
-            raise ValueError(err_msg)
-
-        update_job(job_id, current_step="✨ AI polishing script for spoken narration...", progress=5)
-
-        def _polish_prog(cur: int, tot: int):
-            pct = 5 + int((cur / max(tot, 1)) * 15)
-            update_job(job_id, current_step=f"✨ AI polishing audio script ({cur}/{tot})...", progress=pct)
-
         polish_style = "poetry" if style == "poetry" else "audiobook"
-        try:
-            raw_text = await polish_text_with_gemini(
-                raw_text,
-                api_key=resolved_key,
-                style=polish_style,
-                job_id=job_id,
-                progress_callback=_polish_prog,
-                target_lang=lang_norm,
-                quota_behavior=quota_behavior,
-            )
-        except Exception as p_err:
-            from backend.ai_polisher import DailyQuotaExhaustedError
-            if isinstance(p_err, DailyQuotaExhaustedError) and quota_behavior == "fallback":
-                logger.warning(f"[{job_id}] Gemini quota exhausted during audiobook script polish. Proceeding with unpolished text (fallback)...")
-                update_job(job_id, current_step="⚠️ Όριο Gemini: Συνέχιση εκφώνησης με αρχικό κείμενο...")
+        if not resolved_key:
+            if quota_behavior == "fallback":
+                logger.info(f"[{job_id}] No Gemini API key provided -> Defaulting to free neural TTS without Gemini polish.")
+                update_job(job_id, current_step="ℹ️ Δωρεάν μοντέλο: Εκφώνηση με νευρωνικές φωνές Edge-TTS...")
+                from backend.typography import format_greek_typography
+                from backend.glossary import apply_glossary
+                raw_text = format_greek_typography(apply_glossary(raw_text, "greek", style=polish_style))
             else:
-                raise
+                err_msg = "Gemini API key is required for AI Audiobook Polish. Επιλέξτε 'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο' για εκφώνηση χωρίς κλειδί."
+                update_job(job_id, status="error", error=err_msg)
+                raise ValueError(err_msg)
+        else:
+            update_job(job_id, current_step="✨ AI polishing script for spoken narration...", progress=5)
+
+            def _polish_prog(cur: int, tot: int):
+                pct = 5 + int((cur / max(tot, 1)) * 15)
+                update_job(job_id, current_step=f"✨ AI polishing audio script ({cur}/{tot})...", progress=pct)
+
+            try:
+                raw_text = await polish_text_with_gemini(
+                    raw_text,
+                    api_key=resolved_key,
+                    style=polish_style,
+                    job_id=job_id,
+                    progress_callback=_polish_prog,
+                    target_lang=lang_norm,
+                    quota_behavior=quota_behavior,
+                )
+            except Exception as p_err:
+                from backend.ai_polisher import DailyQuotaExhaustedError
+                if isinstance(p_err, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                    logger.warning(f"[{job_id}] Gemini quota exhausted during audiobook script polish. Proceeding with unpolished text (fallback)...")
+                    update_job(job_id, current_step="⚠️ Όριο Gemini: Συνέχιση εκφώνησης με αρχικό κείμενο...")
+                else:
+                    raise
 
     voice_segments = split_into_voice_segments(
         raw_text,
