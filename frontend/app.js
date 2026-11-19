@@ -1691,8 +1691,9 @@ function setStatusBadge(prefix, status) {
 async function downloadOutput(prefix, overrideFmt = null) {
   const jobId = state[prefix].jobId;
   if (!jobId) return;
-  if (prefix === 'tr' && state.tr.status === 'running') {
-    toast('⏳ Please wait until this translation is completed before downloading.', 'info');
+  if (state[prefix].status === 'running') {
+    const action = prefix === 'tr' ? 'translation' : 'audiobook generation';
+    toast(`⏳ Please wait until this ${action} is completed before downloading.`, 'info');
     return;
   }
   if (prefix === 'tr') {

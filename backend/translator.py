@@ -203,7 +203,7 @@ async def _translate_with_retry(
                     result = await loop.run_in_executor(None, _translate_gtx, text, source_lang, target_lang)
                 if result and result.strip():
                     # Validate that text was actually translated if target is Greek
-                    if target_lang == "greek" and len(re.findall(r"[\u0370-\u03ff]", result)) == 0 and len(re.findall(r"[a-zA-Z]", text)) > 30:
+                    if target_lang.lower() in ("greek", "el", "gr") and len(re.findall(r"[\u0370-\u03ff]", result)) == 0 and len(re.findall(r"[a-zA-Z]", text)) > 30:
                         logger.warning(f"GTX returned untranslated text on attempt {attempt+1}/{retries}, retrying...")
                         await asyncio.sleep(0.6 * (attempt + 1))
                         continue

@@ -16,7 +16,11 @@ sys.path.insert(0, ".")
 import io
 import json
 import time
+import asyncio
+import shutil
+import tempfile
 import unittest
+from unittest.mock import patch
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -319,6 +323,42 @@ class TestAPIContractsAndStateMachine(unittest.TestCase):
                     self.assertIn("book1_translated_greek.txt", names)
                     self.assertIn("book2_translated_greek.txt", names)
         print("   Batch ZIP download completion gate (404/409/200): OK")
+
+    def test_6_mime_map_and_comic_pdf_download(self):
+        print("-> 6. Testing MIME_MAP .doc support and comic PDF download handler...")
+        from backend.main import MIME_MAP, download_output
+        from fastapi import Request
+        from types import SimpleNamespace
+
+        # 1. Verify MIME_MAP contains .doc
+        self.assertEqual(MIME_MAP.get(".doc"), "application/msword")
+
+        # 2. Test comic PDF download does not 404
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comic_dir = Path("temp/outputs/test_comic_dl_job")
+            comic_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                pdf_file = comic_dir / "manga_translated_greek.pdf"
+                pdf_file.write_bytes(b"%PDF-1.4 mock comic pdf content")
+                fake_job = SimpleNamespace(
+                    job_id="test_comic_dl_job",
+                    file_name="manga.cbz",
+                    file_path="temp/uploads/test_comic_dl_job/manga.cbz",
+                    file_type="cbz",
+                    layout_mode="comic",
+                    reading_direction="rtl",
+                    output_path=str(pdf_file),
+                )
+                fake_req = SimpleNamespace(method="GET")
+
+                with patch("backend.main.get_job", return_value=fake_job):
+                    # Request format=pdf on comic job
+                    resp = asyncio.run(download_output(fake_req, "test_comic_dl_job", format="pdf", layout="comic"))
+                    self.assertEqual(resp.media_type, "application/pdf")
+                    self.assertTrue(Path(resp.path).exists())
+            finally:
+                shutil.rmtree(comic_dir, ignore_errors=True)
+        print("   MIME_MAP .doc and comic PDF download: OK")
 
 
 if __name__ == "__main__":

@@ -308,11 +308,14 @@ def db_get_cached_translation(cache_key: str) -> Optional[str]:
             )
             row = cursor.fetchone()
             if row:
-                with conn:
-                    conn.execute(
-                        "UPDATE translation_cache SET hits = hits + 1 WHERE cache_key = ?",
-                        (cache_key,)
-                    )
+                try:
+                    with conn:
+                        conn.execute(
+                            "UPDATE translation_cache SET hits = hits + 1 WHERE cache_key = ?",
+                            (cache_key,)
+                        )
+                except Exception:
+                    pass
                 return row[0]
             return None
         except Exception as e:
@@ -331,7 +334,7 @@ def db_set_cached_translation(
     engine: str,
 ) -> None:
     """Stores a translation result into the cache."""
-    if not source_text.strip() or not translated_text.strip():
+    if not source_text or not translated_text or not str(source_text).strip() or not str(translated_text).strip():
         return
     with _db_lock:
         conn = _get_connection()

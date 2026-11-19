@@ -221,3 +221,22 @@ class GeminiKeyPool:
                 "earliest_reset_time_str": earliest_str,
                 "slots": slots,
             }
+
+
+def resolve_gemini_api_key(explicit_key: Optional[str] = None) -> str:
+    """
+    Resolves an active Gemini API key from explicit argument, the 4-key pool,
+    legacy setting, or environment variable. Returns empty string if none configured.
+    """
+    k = (explicit_key or "").strip()
+    if k:
+        return k
+    active = GeminiKeyPool.get_active_key()
+    if active:
+        return active
+    keys = GeminiKeyPool.get_keys()
+    if keys:
+        return keys[0]
+    from backend.settings_manager import get_setting
+    return (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+

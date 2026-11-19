@@ -22,7 +22,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import HTTPException
-from backend.gemini_key_pool import GeminiKeyPool, mask_api_key, MAX_KEYS
+from backend.gemini_key_pool import GeminiKeyPool, mask_api_key, MAX_KEYS, resolve_gemini_api_key
 from backend.settings_manager import get_setting, save_setting, delete_setting
 from backend.main import (
     get_gemini_pool_status,
@@ -184,6 +184,28 @@ class TestGeminiKeyPool(unittest.TestCase):
         self.assertEqual(status["pool"]["available_keys"], 2)
         self.assertFalse(status["pool"]["all_exhausted"])
         self.assertFalse(status["exhausted"])
+
+    def test_08_resolve_gemini_api_key(self):
+        # Explicit key takes priority
+        self.assertEqual(resolve_gemini_api_key("ExplicitKey123"), "ExplicitKey123")
+
+        # Resolves active key from pool
+        GeminiKeyPool.set_keys(["PoolKey1", "PoolKey2"])
+        self.assertEqual(resolve_gemini_api_key(), "PoolKey1")
+
+        # When first key exhausted, rotates to next pool key
+        GeminiKeyPool.mark_key_exhausted("PoolKey1", cooldown_seconds=3600)
+        self.assertEqual(resolve_gemini_api_key(), "PoolKey2")
+
+        # When all exhausted, returns first pool key for quota handling
+        GeminiKeyPool.mark_key_exhausted("PoolKey2", cooldown_seconds=3600)
+        self.assertEqual(resolve_gemini_api_key(), "PoolKey1")
+
+        # When pool empty, falls back to legacy setting
+        GeminiKeyPool.set_keys([])
+        delete_setting("gemini_api_keys")
+        save_setting("gemini_api_key", "LegacyKey999")
+        self.assertEqual(resolve_gemini_api_key(), "LegacyKey999")
 
 
 if __name__ == "__main__":

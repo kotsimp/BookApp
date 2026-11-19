@@ -83,7 +83,7 @@ _CHAPTER_RE = re.compile(
     r"^(?:"
     r"(?:chapter|chap\.|part|book|prologue|epilogue|preface|introduction|afterword|acknowledgments|notes\s*and\s*references|license)"
     r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
-    r"|(?:κεφάλαιο|κεφ\.|μέρος|βιβλίο|πρόλογος|επίλογος|εισαγωγή|ευχαριστίες|σημειώσεις(?:\s*και\s*παραπομπές)?|άδεια)"
+    r"|(?:κ[εέ]φ[αά]λαιο|κεφ\.|μ[εέ]ρος|βιβλ[ιί]ο|πρ[οό]λογος|επ[ιί]λογος|εισαγωγ[ηή]|ευχαριστ[ιί]ες|σημει[ώω]σεις(?:\s*και\s*παραπομπ[εέ]ς)?|[αά]δεια)"
     r"(?:\s+[\w\d\.\-]+(?:\s*[:\-–—]\s*.+)?)?"
     r")$",
     re.IGNORECASE,
@@ -414,7 +414,7 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
             continue
         words = body_text.split()
         # If the chapter body is essentially just page numbers or TOC artifact
-        if len(body_text) < 150 and (body_text.isdigit() or all(w.isdigit() for w in words) or (words and words[0].isdigit())):
+        if len(body_text) < 150 and (body_text.isdigit() or all(w.isdigit() or w in (".", "...", ":", "-") for w in words)):
             continue
         # If front-matter chapter before the first real chapter has no sentence ending
         if idx == 0 and len(chapters) > 1 and len(body_text) < 150 and not any(body_text.endswith(p) for p in ('.', '!', '?')):

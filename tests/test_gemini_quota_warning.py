@@ -45,11 +45,19 @@ def api_post_json(path, data):
 class TestGeminiQuotaWarning(unittest.TestCase):
     def setUp(self):
         reset_gemini_quota_exhaustion()
+        try:
+            api_post_json("/gemini/reset-quota", {})
+        except Exception:
+            pass
         clear_queue()
         cleanup_test_jobs()
 
     def tearDown(self):
         reset_gemini_quota_exhaustion()
+        try:
+            api_post_json("/gemini/reset-quota", {})
+        except Exception:
+            pass
         clear_queue()
         cleanup_test_jobs()
 

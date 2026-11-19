@@ -214,7 +214,14 @@ async def synthesize_voice_preview(
     communicate = edge_tts.Communicate(sample_text, voice_code, rate="-10%")
     try:
         await asyncio.wait_for(communicate.save(str(tmp_file)), timeout=30.0)
-        os.replace(tmp_file, out_file)
+        for attempt in range(4):
+            try:
+                os.replace(tmp_file, out_file)
+                break
+            except PermissionError:
+                if attempt == 3:
+                    raise
+                await asyncio.sleep(0.05 * (attempt + 1))
     finally:
         if tmp_file.exists():
             try:

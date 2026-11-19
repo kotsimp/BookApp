@@ -41,13 +41,23 @@ class Job:
     subscribers: list       = field(default_factory=list)
 
 
+_WINDOWS_RESERVED_DEVICE_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}
+
+
 def is_valid_job_id(job_id: Optional[str]) -> bool:
-    """Returns True if job_id is a safe single-segment identifier with no path traversal."""
+    """Returns True if job_id is a safe single-segment identifier with no path traversal or reserved names."""
     if not isinstance(job_id, str) or not job_id.strip():
         return False
-    if "/" in job_id or "\\" in job_id or ".." in job_id or "\x00" in job_id:
+    jid = job_id.strip()
+    if "/" in jid or "\\" in jid or ".." in jid or "\x00" in jid:
         return False
-    if job_id in (".", "..") or job_id.startswith(".") or ":" in job_id:
+    if jid in (".", "..") or jid.startswith(".") or ":" in jid:
+        return False
+    if jid.upper() in _WINDOWS_RESERVED_DEVICE_NAMES:
         return False
     return True
 
@@ -331,7 +341,7 @@ def get_job(job_id: str) -> Optional[Job]:
 
 
 def update_job(job_id: str, **kwargs):
-    job = _jobs.get(job_id)
+    job = _jobs.get(job_id) or get_job(job_id)
     if job:
         # Protect cancelled status: once cancelled, background steps cannot overwrite status/step/output
         if job.status == "cancelled":

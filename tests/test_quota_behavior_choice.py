@@ -26,11 +26,23 @@ from backend.ai_polisher import (
 
 class TestQuotaBehaviorChoice(unittest.TestCase):
     def setUp(self):
+        from backend.settings_manager import get_setting
+        self._orig_keys = get_setting("gemini_api_keys")
+        self._orig_key = get_setting("gemini_api_key")
         reset_gemini_quota_exhaustion()
         clear_queue()
         cleanup_test_jobs()
 
     def tearDown(self):
+        from backend.settings_manager import save_setting, delete_setting
+        if self._orig_keys is not None:
+            save_setting("gemini_api_keys", self._orig_keys)
+        else:
+            delete_setting("gemini_api_keys")
+        if self._orig_key is not None:
+            save_setting("gemini_api_key", self._orig_key)
+        else:
+            delete_setting("gemini_api_key")
         reset_gemini_quota_exhaustion()
         clear_queue()
         cleanup_test_jobs()
@@ -172,8 +184,11 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
 
     def test_08_no_api_key_polish_applies_free_linguistic_rules(self):
         """When polish is invoked without Gemini API key, it defaults to free typography and glossary polish."""
+        from backend.gemini_key_pool import GeminiKeyPool
         from backend.settings_manager import delete_setting
+        GeminiKeyPool.set_keys([])
         delete_setting("gemini_api_key")
+        delete_setting("gemini_api_keys")
 
         raw_greek = '"Αυτό είναι ένα τεστ..." είπε ο Πέτρος.'
         job = create_job("test_free_pol.txt", "test_free_pol.txt", "txt")

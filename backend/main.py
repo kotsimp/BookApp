@@ -5,7 +5,6 @@ Main FastAPI application for the Document Translator & Audiobook Generator.
 import asyncio
 import json
 import logging
-import os
 import re
 import shutil
 import uuid
@@ -401,8 +400,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     if reading_direction not in {"ltr", "rtl"}:
         reading_direction = "ltr"
 
-    from backend.settings_manager import get_setting
-    resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    resolved_key = resolve_gemini_api_key(req.api_key)
 
     quota_behavior = (getattr(req, "quota_behavior", "") or "").strip().lower()
     if not quota_behavior:
@@ -462,9 +461,9 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
-        from backend.settings_manager import get_setting
+        from backend.gemini_key_pool import resolve_gemini_api_key
         from backend.parsers import detect_is_graphic_novel
-        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+        resolved_key = resolve_gemini_api_key(api_key)
 
         # Check if uploaded PDF is a scanned/image-only document or graphic novel
         comic_probe = detect_is_graphic_novel(file_path, file_type, job.file_name or "")
@@ -675,8 +674,8 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
             txt_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
             translated_path = str(txt_files[0])
 
-    from backend.settings_manager import get_setting
-    resolved_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    resolved_key = resolve_gemini_api_key(req.api_key)
 
     quota_behavior = (getattr(req, "quota_behavior", "") or "").strip().lower()
     if not quota_behavior:
@@ -868,6 +867,7 @@ async def job_status(job_id: str):
 MIME_MAP = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
     ".epub": "application/epub+zip",
     ".txt": "text/plain; charset=utf-8",
     ".mp3": "audio/mpeg",
@@ -964,6 +964,10 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                         )
                         if job:
                             update_job(job_id, output_path=str(out_path), output_format="epub", layout_mode="comic")
+                    elif fmt == "pdf":
+                        out_path = src_pdf
+                        if job:
+                            update_job(job_id, output_path=str(out_path), output_format="pdf", layout_mode="comic")
 
             # 2b. Audio format on-demand conversion (e.g. MP3 -> M4B with chapters & cover)
             if fmt == "m4b" and not out_path and out_dir.exists():
@@ -1596,8 +1600,8 @@ async def polish_translation(req: PolishRequest):
             step=f"Polishing batch {current} of {total}...",
         )
 
-    from backend.settings_manager import get_setting
-    resolved_polish_key = (req.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    resolved_polish_key = resolve_gemini_api_key(req.api_key)
     polish_quota_behavior = "wait" if resolved_polish_key else "fallback"
 
     init_step = "Connecting to Gemini Flash AI..." if resolved_polish_key else "ℹ️ Εφαρμογή δωρεάν τυπογραφικών κανόνων & γλωσσαρίου (Free Mode)..."
@@ -1863,6 +1867,7 @@ async def add_batch_queue_item(req: QueueAddRequest):
 @app.post("/api/queue/{job_id}/retry")
 async def retry_batch_queue_item(job_id: str):
     """Retries a failed, cancelled, or completed queue item and starts processing if not paused."""
+    _validate_job_id(job_id)
     from backend.queue_manager import retry_queue_item, get_queue_state, start_queue
     try:
         retry_queue_item(job_id)
@@ -1974,6 +1979,7 @@ async def download_batch_queue_zip():
 @app.delete("/api/queue/{job_id}")
 async def remove_batch_queue_item(job_id: str):
     """Removes a single job from the Smart Batch Queue."""
+    _validate_job_id(job_id)
     from backend.queue_manager import remove_from_queue, get_queue_state
     removed = remove_from_queue(job_id)
     if not removed:

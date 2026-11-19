@@ -412,8 +412,8 @@ def apply_settings_to_queued_items(
         if quota_behavior:
             item.quota_behavior = quota_behavior
         else:
-            from backend.settings_manager import get_setting
-            resolved_key = (item.api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip()
+            from backend.gemini_key_pool import resolve_gemini_api_key
+            resolved_key = resolve_gemini_api_key(item.api_key)
             if not resolved_key:
                 item.quota_behavior = "fallback"
 

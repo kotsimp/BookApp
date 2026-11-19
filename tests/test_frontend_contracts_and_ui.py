@@ -426,8 +426,16 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
   ctx.updateNavGeminiBadge({ total_keys: 0, available_keys: 0, all_exhausted: false });
   assert.strictEqual(getEl('nav-gemini-quota-badge').textContent, '🆓 Free Mode');
 
-  // 13. Download M4B calls downloadOutput('ab', 'm4b')
+  // 13. Download M4B calls downloadOutput('ab', 'm4b') and blocks if running
   appState.ab.jobId = 'ab-job-42';
+  appState.ab.status = 'running';
+  ctx.window.location.href = '';
+  toasts.length = 0;
+  await ctx.downloadOutput('ab');
+  assert.strictEqual(ctx.window.location.href, '', 'downloadOutput must block while audiobook is running');
+  assert(toasts.some(t => t.type === 'info' && t.msg.includes('audiobook generation is completed')));
+
+  appState.ab.status = 'done';
   ctx.window.location.href = '';
   ctx.downloadOutputM4b();
   assert.strictEqual(ctx.window.location.href, 'http://127.0.0.1:8000/api/download/ab-job-42?format=m4b');

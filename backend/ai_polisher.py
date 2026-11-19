@@ -943,8 +943,8 @@ async def polish_text_with_gemini(
         from backend.glossary import apply_glossary
         return format_greek_typography(apply_glossary(s, "greek", style=style))
 
-    from backend.settings_manager import get_setting
-    key = api_key or os.environ.get("GEMINI_API_KEY") or get_setting("gemini_api_key")
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    key = resolve_gemini_api_key(api_key)
     if not key:
         if quota_behavior == "fallback":
             logger.info(f"[{job_id or 'direct'}] No Gemini API key provided and quota_behavior='fallback' -> Applying free rule-based typography and glossary polish.")
@@ -1506,7 +1506,14 @@ async def polish_text_with_gemini(
                             res_text, _ = await _polish_chunk_reliably(c_text, prev_snippet=prev_snippet)
                             last_ex = None
                             break
-                        except (PermissionError, DailyQuotaExhaustedError):
+                        except (PermissionError, DailyQuotaExhaustedError) as p_or_q:
+                            if isinstance(p_or_q, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                                logger.warning(
+                                    f"Gemini Daily Quota exhausted during chunk polish ({c_idx + 1}/{total_chunks}). "
+                                    f"quota_behavior='fallback' -> keeping draft text..."
+                                )
+                                last_ex = p_or_q
+                                break
                             raise
                         except Exception as ex:
                             last_ex = ex
@@ -1556,7 +1563,17 @@ async def polish_text_with_gemini(
                 f"<SOURCE_REFERENCE>\n{original_text}\n</SOURCE_REFERENCE>\n\n"
                 f"<DRAFT_TO_POLISH>\n{text}\n</DRAFT_TO_POLISH>"
             )
-        polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
+        try:
+            polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
+        except DailyQuotaExhaustedError:
+            if quota_behavior == "fallback":
+                logger.warning(
+                    f"[{job_id or 'direct'}] Gemini Daily Quota exhausted on single chunk polish. "
+                    f"quota_behavior='fallback' -> keeping draft text..."
+                )
+                polished_single = text
+            else:
+                raise
         await _run_progress(1, 1)
         return _postprocess(polished_single)
 
