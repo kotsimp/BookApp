@@ -464,6 +464,9 @@ async function detectDocumentGenre(jobId, fileType) {
     if (res.ok) {
       const gInfo = await res.json();
       showGenreHint(gInfo);
+      if (currentAppMode === 'basic' && gInfo.genre) {
+        applyDetectedGenre(gInfo.genre);
+      }
     }
   } catch (e) {
     console.debug('Genre detection skipped:', e);
