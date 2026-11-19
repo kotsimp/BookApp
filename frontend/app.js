@@ -120,12 +120,13 @@ function applyAppMode(mode) {
       abLang.value = 'greek';
       if (typeof updateVoices === 'function') updateVoices();
     }
-    const nestorasOpt = document.querySelector('input[name="ab-voice"][value="el-GR-NestorasNeural"]');
-    if (nestorasOpt) {
-      nestorasOpt.checked = true;
+    const nestorasCard = document.querySelector('.voice-card[data-voice^="Nestoras"]');
+    if (nestorasCard && typeof selectVoice === 'function') {
+      selectVoice(nestorasCard.dataset.voice || 'Nestoras (Male)', nestorasCard);
+    } else {
       const vSelected = document.getElementById('ab-voice-selected');
-      if (vSelected) vSelected.value = 'el-GR-NestorasNeural';
-      state.selectedVoice = 'el-GR-NestorasNeural';
+      if (vSelected) vSelected.value = 'Nestoras (Male)';
+      state.selectedVoice = 'Nestoras (Male)';
     }
     const styleSelect = document.getElementById('ab-narration-style');
     if (styleSelect) {
@@ -1118,6 +1119,11 @@ async function startAudiobook() {
   } catch (err) {
     showError('ab', err.message);
     document.getElementById('ab-start-btn').disabled = false;
+    document.getElementById('ab-start-btn').textContent = currentAppMode === 'basic' ? '🎧 Δημιουργία Audiobook με AI (1-Click)' : '🎧 Generate Audiobook';
+    if (currentAppMode === 'basic') {
+      const abAi = document.getElementById('ab-ai-polish');
+      if (abAi) abAi.checked = true;
+    }
   }
 }
 
@@ -1374,9 +1380,9 @@ function setActionButtonsEnabled(prefix, enabled) {
   const startBtn = document.getElementById(`${prefix}-start-btn`);
   if (startBtn) {
     startBtn.disabled = !enabled;
-    if (prefix === 'tr' && state.tr.jobId) {
+    if (prefix === 'tr') {
       startBtn.textContent = currentAppMode === 'basic' ? '✨ Μετάφραση Βιβλίου με AI (1-Click)' : '🌐 Start Translation';
-    } else if (prefix === 'ab' && state.ab.jobId) {
+    } else if (prefix === 'ab') {
       startBtn.textContent = currentAppMode === 'basic' ? '🎧 Δημιουργία Audiobook με AI (1-Click)' : '🎧 Generate Audiobook';
     }
   }
@@ -1606,6 +1612,11 @@ function sendToAudiobook() {
     abSel.classList.add('visible');
   }
   document.getElementById('ab-start-btn').disabled = false;
+  document.getElementById('ab-start-btn').textContent = currentAppMode === 'basic' ? '🎧 Δημιουργία Audiobook με AI (1-Click)' : '🎧 Generate Audiobook';
+  if (currentAppMode === 'basic') {
+    const abAi = document.getElementById('ab-ai-polish');
+    if (abAi) abAi.checked = true;
+  }
 
   const sourceLang = document.getElementById('tr-source-lang')?.value || 'english';
   const targetLang = document.getElementById('tr-target-lang')?.value || 'greek';
@@ -3195,7 +3206,7 @@ function syncPrimaryStartButtonWithQueue(q) {
 
   if (!q || !q.items || q.items.length === 0) {
     trStartBtn.disabled = true;
-    trStartBtn.textContent = '🌐 Start Translation';
+    trStartBtn.textContent = currentAppMode === 'basic' ? '✨ Μετάφραση Βιβλίου με AI (1-Click)' : '🌐 Start Translation';
     if (directPolishBtn) directPolishBtn.disabled = true;
     return;
   }
