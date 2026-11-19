@@ -6,6 +6,7 @@ parallelism to maximize speed without triggering API 429 rate-limit collisions).
 Supports both Manual Queue review + Start and Auto-Start Queue modes.
 """
 
+import time
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -105,6 +106,23 @@ def get_queue_state() -> Dict[str, Any]:
         })
 
     is_running = bool(_queue_task and not _queue_task.done()) or running_count > 0
+
+    from backend.ai_polisher import is_gemini_quota_exhausted, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+    quota_exhausted = is_gemini_quota_exhausted()
+    quota_message = None
+    if quota_exhausted:
+        rem_sec = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
+        rem_min = rem_sec // 60
+        if rem_min > 60:
+            time_str = f"{rem_min // 60}ώ {rem_min % 60}λ"
+        else:
+            time_str = f"{max(1, rem_min)}λ"
+        quota_message = (
+            f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+            f"Η ουρά συνεχίζει αυτόματα με τη βασική μηχανή μετάφρασης (χωρίς AI polish). "
+            f"Ανανέωση ορίου σε ~{time_str} ή αλλάξτε API Key στις Ρυθμίσεις."
+        )
+
     return {
         "items": serialized,
         "is_running": is_running,
@@ -115,6 +133,8 @@ def get_queue_state() -> Dict[str, Any]:
         "queued_count": queued_count,
         "total_count": len(serialized),
         "max_items": MAX_QUEUE_ITEMS,
+        "gemini_quota_exhausted": quota_exhausted,
+        "gemini_quota_message": quota_message,
     }
 
 

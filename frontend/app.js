@@ -1479,7 +1479,7 @@ async function loadHistoryJob(jobId, mode) {
 function toast(msg, type = 'info') {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
-  const typeClass = { success: 'toast-success', error: 'toast-error', info: 'toast-info' };
+  const typeClass = { success: 'toast-success', error: 'toast-error', info: 'toast-info', warning: 'toast-warning' };
   el.className = `toast ${typeClass[type] || ''}`;
   const span = document.createElement('span');
   span.textContent = msg;
@@ -2177,6 +2177,7 @@ function setupSyncScroll() {
 // ── Smart Batch Queue (Unified in Upload Card, Max 20 Files) ─
 const MAX_BATCH_FILES = 20;
 let _queuePollTimer = null;
+let _seenQuotaWarning = false;
 let _batchQueueState = {
   items: [],
   is_running: false,
@@ -2469,6 +2470,24 @@ function renderBatchQueue(q) {
       autoLabel.title = isMixed
         ? 'Απενεργοποιημένο σε μικτή ουρά (Βιβλία + Graphic Novels) ώστε να ελέγχετε τις ρυθμίσεις πριν την εκκίνηση.'
         : 'Αυτόματη έναρξη μετάφρασης μόλις προστεθούν αρχεία';
+    }
+  }
+
+  const quotaBanner = document.getElementById('queue-quota-warning-banner');
+  const quotaText = document.getElementById('queue-quota-warning-text');
+  if (quotaBanner) {
+    if (q.gemini_quota_exhausted) {
+      quotaBanner.style.display = 'block';
+      if (quotaText) {
+        quotaText.textContent = q.gemini_quota_message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini Free Tier. Η ουρά συνεχίζει αυτόματα χωρίς AI Polish.';
+      }
+      if (!_seenQuotaWarning) {
+        _seenQuotaWarning = true;
+        toast('⚠️ Εξαντλήθηκε το ημερήσιο όριο Gemini Free Tier — η μετάφραση συνεχίζεται αυτόματα χωρίς AI polish.', 'warning');
+      }
+    } else {
+      quotaBanner.style.display = 'none';
+      _seenQuotaWarning = false;
     }
   }
 

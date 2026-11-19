@@ -1229,9 +1229,11 @@ async def translate_comic_document(
                 )
                 all_document_dialogues[page_idx] = (page_idx + 1, page_dialogues)
                 completed_count += 1
+                from backend.ai_polisher import is_gemini_quota_exhausted
+                quota_note = " (⚠️ Χωρίς AI Polish: εξαντλήθηκε το ημερήσιο όριο Gemini)" if is_gemini_quota_exhausted() else ""
                 update_job(
                     job_id,
-                    current_step=f"Translating graphic novel page {completed_count} of {total_pages}...",
+                    current_step=f"Translating graphic novel page {completed_count} of {total_pages}{quota_note}...",
                     progress=int((completed_count / max(total_pages, 1)) * 92),
                     done_chunks=completed_count,
                     total_chunks=total_pages,
@@ -1317,6 +1319,13 @@ async def translate_comic_document(
             total_vision_pages = len(vision_pages_to_process)
             total_detected_balloons = sum(len(v) for v in vision_results.values())
             if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
+                from backend.ai_polisher import is_gemini_quota_exhausted
+                if is_gemini_quota_exhausted() or "quota" in (last_vision_error or "").lower() or "429" in (last_vision_error or ""):
+                    raise RuntimeError(
+                        f"Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. "
+                        f"Η πρόοδος ({completed_count} σελίδες) αποθηκεύτηκε σε checkpoint! "
+                        f"Αλλάξτε Gemini API key στις Ρυθμίσεις ή δοκιμάστε ξανά αργότερα."
+                    )
                 raise RuntimeError(
                     f"Η μετάφραση Vision AI απέτυχε σε {failed_vision_pages}/{total_vision_pages} σελίδες "
                     f"({last_vision_error or 'όριο αιτημάτων API 429'}). "

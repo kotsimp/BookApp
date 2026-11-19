@@ -1474,14 +1474,24 @@ async def _call_gemini_api(
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
     if is_gemini_quota_exhausted():
         rem = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
-        raise DailyQuotaExhaustedError(f"Gemini daily quota exhausted (cooldown active for next {rem}s).")
+        rem_min = rem // 60
+        time_str = f"{rem_min // 60}ώ {rem_min % 60}λ" if rem_min > 60 else (f"{max(1, rem_min)}λ" if rem >= 60 else f"{rem}δ")
+        raise DailyQuotaExhaustedError(
+            f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier limit reached). "
+            f"Ενεργή προστασία cooldown για ακόμα ~{time_str}. "
+            f"Αλλάξτε API Key στις Ρυθμίσεις ή περιμένετε την ανανέωση του ορίου."
+        )
 
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
         for tag in ("DRAFT_TO_POLISH", "TEXT_TO_POLISH", "TEXT_TO_TRANSLATE"):
             m_tag = re.search(rf"<{tag}>(.*?)</{tag}>", content_text, re.DOTALL | re.IGNORECASE)
             if m_tag:
-                return sanitize_ai_output(f"[Επιμελημένο AI]: {m_tag.group(1).strip()}")
+                inner = m_tag.group(1).strip()
+                if re.search(r"={3,}\s*PAGE\s+\d+\s*={3,}", inner):
+                    subbed = re.sub(r"(={3,}\s*PAGE\s+\d+\s*={3,})", r"\1\n[Επιμελημένο AI]:", inner)
+                    return sanitize_ai_output(subbed)
+                return sanitize_ai_output(f"[Επιμελημένο AI]: {inner}")
         if "--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n" in content_text:
             draft_part = content_text.split("--- ΠΡΟΣΧΕΔΙΟ ΕΛΛΗΝΙΚΗΣ ΜΕΤΑΦΡΑΣΗΣ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ (DRAFT TO POLISH) ---\n")[-1]
             return sanitize_ai_output(f"[Επιμελημένο AI]: {draft_part.strip()}")
@@ -1672,12 +1682,16 @@ async def _call_gemini_api(
                                 or "per day" in err_low
                                 or cooldown_sec >= 180.0
                             ):
+                                rem_min = int(cooldown_sec // 60)
+                                time_str = f"{rem_min // 60}ώ {rem_min % 60}λ" if rem_min > 60 else f"{max(1, rem_min)}λ"
                                 logger.warning(
                                     f"Gemini daily quota exhausted ({resp.status}). Tripping circuit breaker for {int(cooldown_sec)}s. Skipping all remaining candidate models."
                                 )
                                 trip_gemini_quota_exhaustion(cooldown_sec)
                                 raise DailyQuotaExhaustedError(
-                                    f"Gemini daily quota limit exceeded: please retry in {int(cooldown_sec)}s."
+                                    f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+                                    f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                                    f"Παρακαλούμε δοκιμάστε ξανά σε ~{time_str} ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
                                 )
 
                             logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
