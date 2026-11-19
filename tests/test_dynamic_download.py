@@ -105,6 +105,26 @@ try:
         assert r.status == 200 and len(data.decode('utf-8').strip()) > 0
         print('Dynamic TXT download:', r.headers.get('Content-Type'), len(data))
 
+    # 5. Download dynamic M4B (on-demand audiobook conversion)
+    from backend.main import create_job, update_job, OUTPUT_DIR
+    ab_job = create_job("", "test_audio.mp3", "mp3")
+    ab_out_dir = OUTPUT_DIR / ab_job.job_id
+    ab_out_dir.mkdir(parents=True, exist_ok=True)
+    mock_mp3 = ab_out_dir / "test_audio.mp3"
+    mock_mp3.write_bytes(b'ID3\x03\x00\x00\x00\x00\x00\x00' + b'\xff\xfb\x90\x00' * 50)
+    update_job(ab_job.job_id, status="done", output_format="mp3")
+    try:
+        with urllib.request.urlopen(f'{API}/download/{ab_job.job_id}?format=m4b') as r:
+            data = r.read()
+            assert r.status == 200 and len(data) > 0
+            assert 'audio/mp4' in r.headers.get('Content-Type', '')
+            print('Dynamic M4B download:', r.headers.get('Content-Type'), len(data))
+    finally:
+        try:
+            urllib.request.urlopen(urllib.request.Request(f'{API}/jobs/{ab_job.job_id}', method='DELETE'))
+        except Exception:
+            pass
+
     print('ALL TESTS PASSED SUCCESSFULLY!')
 finally:
     try:

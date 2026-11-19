@@ -871,6 +871,7 @@ MIME_MAP = {
     ".epub": "application/epub+zip",
     ".txt": "text/plain; charset=utf-8",
     ".mp3": "audio/mpeg",
+    ".m4b": "audio/mp4",
     ".cbz": "application/vnd.comicbook+zip",
     ".cbr": "application/vnd.comicbook-rar",
 }
@@ -963,6 +964,31 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                         )
                         if job:
                             update_job(job_id, output_path=str(out_path), output_format="epub", layout_mode="comic")
+
+            # 2b. Audio format on-demand conversion (e.g. MP3 -> M4B with chapters & cover)
+            if fmt == "m4b" and not out_path and out_dir.exists():
+                mp3_files = list(out_dir.glob("*.mp3"))
+                if mp3_files:
+                    mp3_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                    src_mp3 = mp3_files[0]
+                    target_m4b = out_dir / f"{src_mp3.stem}.m4b"
+                    from backend.tts_engine import export_audiobook_m4b
+                    cov_img = None
+                    for cname in ("cover_image.jpg", "cover_image.png", "cover.jpg", "cover.png"):
+                        cand = out_dir / cname
+                        if cand.exists():
+                            cov_img = str(cand)
+                            break
+                    await export_audiobook_m4b(
+                        str(src_mp3),
+                        str(target_m4b),
+                        title=job.file_name if job else "Audiobook",
+                        author="BookApp",
+                        cover_image_path=cov_img,
+                    )
+                    out_path = target_m4b
+                    if job:
+                        update_job(job_id, output_path=str(out_path), output_format="m4b")
 
             # 3. Standard text formats
             if not out_path and out_dir.exists():

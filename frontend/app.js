@@ -372,8 +372,17 @@ async function uploadFile(prefix, file) {
     state[prefix].jobId = data.job_id;
 
     const pages = data.estimated_pages > 0 ? `~${data.estimated_pages} pages · ` : '';
+    let durationEst = '';
+    if (prefix === 'ab' && data.estimated_pages > 0) {
+      const totalMinutes = Math.round(data.estimated_pages * 2);
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      durationEst = hours > 0
+        ? ` · ⏱️ ~${hours} ${hours === 1 ? 'ώρα' : 'ώρες'}${mins > 0 ? ' ' + mins + ' λ' : ''} ακρόαση`
+        : ` · ⏱️ ~${mins} λεπτά ακρόαση`;
+    }
     document.getElementById(`${prefix}-file-meta`).textContent =
-      `${(file.size / 1024 / 1024).toFixed(1)} MB · ${pages}${data.file_type.toUpperCase()} · Ready`;
+      `${(file.size / 1024 / 1024).toFixed(1)} MB · ${pages}${data.file_type.toUpperCase()}${durationEst} · Ready`;
 
     const startBtn = document.getElementById(`${prefix}-start-btn`);
     if (startBtn) {
@@ -1493,6 +1502,7 @@ function showResult(prefix, data) {
     if (audioLangSelect) {
       audioLangSelect.value = targetLang;
     }
+    playCompletionNotification('BookApp — Μετάφραση Ολοκληρώθηκε!', 'Το βιβλίο σας μεταφράστηκε με επιτυχία και είναι έτοιμο για λήψη ή ανάγνωση.');
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download or listen to the MP3 file.';
     const playerWrap = document.getElementById('ab-player-container');
@@ -1508,8 +1518,132 @@ function showResult(prefix, data) {
         trackVoice.textContent = `${vName} · MP3 High Fidelity`;
       }
     }
+    const abDlBtn = document.getElementById('ab-download-btn');
+    if (abDlBtn && state.ab.jobId) {
+      abDlBtn.href = `${API}/download/${state.ab.jobId}`;
+    }
+    const abM4bBtn = document.getElementById('ab-download-m4b-btn');
+    if (abM4bBtn && state.ab.jobId) {
+      abM4bBtn.href = `${API}/download/${state.ab.jobId}?format=m4b`;
+    }
+    playCompletionNotification('BookApp — Audiobook Έτοιμο!', 'Το ηχητικό βιβλίο ολοκληρώθηκε με επιτυχία και είναι έτοιμο για ακρόαση.');
   }
   card.classList.add('visible');
+}
+
+function playCompletionChime() {
+  try {
+    if (typeof window === 'undefined') return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const notes = [
+      { freq: 523.25, start: now, dur: 0.18 },       // C5
+      { freq: 783.99, start: now + 0.15, dur: 0.35 } // G5
+    ];
+    notes.forEach(note => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(note.freq, note.start);
+      gain.gain.setValueAtTime(0.12, note.start);
+      gain.gain.exponentialRampToValueAtTime(0.001, note.start + note.dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(note.start);
+      osc.stop(note.start + note.dur);
+    });
+  } catch (_) {}
+}
+
+function sendDesktopNotification(title, body) {
+  try {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'granted') {
+        new Notification(title, { body, icon: '/favicon.ico' });
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            new Notification(title, { body, icon: '/favicon.ico' });
+          }
+        });
+      }
+    }
+  } catch (_) {}
+}
+
+function playCompletionNotification(title, message) {
+  playCompletionChime();
+  sendDesktopNotification(title, message);
+}
+
+async function copyTranslatedText() {
+  const jobId = state.tr.jobId;
+  if (!jobId) {
+    toast('Δεν υπάρχει μεταφρασμένο έγγραφο.', 'error');
+    return;
+  }
+  const btn = document.getElementById('tr-copy-btn');
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.innerHTML = '⏳ Αντιγραφή...';
+    btn.disabled = true;
+  }
+
+  try {
+    let textToCopy = '';
+    if (typeof _readerData !== 'undefined' && _readerData && _readerData.translated_text) {
+      textToCopy = _readerData.translated_text;
+    } else {
+      const res = await fetch(`${API}/jobs/${jobId}/text`);
+      if (res.ok) {
+        const data = await res.json();
+        _readerData = data;
+        textToCopy = (data.translated_text || data.original_text || '').trim();
+      }
+    }
+
+    if (!textToCopy) {
+      toast('Δεν βρέθηκε κείμενο προς αντιγραφή.', 'warning');
+      if (btn) {
+        btn.innerHTML = origHtml;
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(textToCopy);
+    } else if (typeof document !== 'undefined') {
+      const ta = document.createElement('textarea');
+      ta.value = textToCopy;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+
+    if (btn) {
+      btn.innerHTML = '✅ Αντιγράφηκε!';
+      setTimeout(() => {
+        if (btn) {
+          btn.innerHTML = origHtml;
+          btn.disabled = false;
+        }
+      }, 2500);
+    }
+    toast('📋 Το μεταφρασμένο κείμενο αντιγράφηκε στο πρόχειρο!', 'success');
+  } catch (err) {
+    toast(`Αποτυχία αντιγραφής: ${err.message}`, 'error');
+    if (btn) {
+      btn.innerHTML = origHtml;
+      btn.disabled = false;
+    }
+  }
 }
 
 function showError(prefix, msg) {
@@ -1552,7 +1686,7 @@ function setStatusBadge(prefix, status) {
   badge.innerHTML = `<span class="status-dot"></span> ${labels[status] || status}`;
 }
 
-async function downloadOutput(prefix) {
+async function downloadOutput(prefix, overrideFmt = null) {
   const jobId = state[prefix].jobId;
   if (!jobId) return;
   if (prefix === 'tr' && state.tr.status === 'running') {
@@ -1560,13 +1694,18 @@ async function downloadOutput(prefix) {
     return;
   }
   if (prefix === 'tr') {
-    const fmt = document.getElementById('tr-output-format')?.value || 'txt';
+    const fmt = overrideFmt || document.getElementById('tr-output-format')?.value || 'txt';
     const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
     window.location.href = targetUrl;
   } else {
-    window.location.href = `${API}/download/${jobId}`;
+    const targetUrl = overrideFmt ? `${API}/download/${jobId}?format=${overrideFmt}` : `${API}/download/${jobId}`;
+    window.location.href = targetUrl;
   }
+}
+
+function downloadOutputM4b() {
+  downloadOutput('ab', 'm4b');
 }
 
 function audioSkip(seconds) {
@@ -1617,7 +1756,21 @@ function sendToAudiobook() {
   const abMeta = document.getElementById('ab-file-meta');
   if (abIcon) abIcon.textContent = trIcon;
   if (abName) abName.textContent = trName;
-  if (abMeta) abMeta.textContent = trMeta;
+  if (abMeta) {
+    let metaTxt = trMeta;
+    const pageMatch = trMeta.match(/~(\d+)\s+pages/);
+    if (pageMatch) {
+      const p = parseInt(pageMatch[1], 10);
+      const totalMinutes = Math.round(p * 2);
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      const durationEst = hours > 0
+        ? ` · ⏱️ ~${hours} ${hours === 1 ? 'ώρα' : 'ώρες'}${mins > 0 ? ' ' + mins + ' λ' : ''} ακρόαση`
+        : ` · ⏱️ ~${mins} λεπτά ακρόαση`;
+      metaTxt = trMeta.replace(/ · Ready$/, '') + durationEst + ' · Ready';
+    }
+    abMeta.textContent = metaTxt;
+  }
 
   document.getElementById('ab-upload-zone').style.display = 'none';
   const abSel = document.getElementById('ab-selected-file');
@@ -2317,6 +2470,53 @@ function renderGeminiPoolStatus(poolData) {
       sumBadge.style.color = 'var(--emerald)';
     }
   }
+  updateNavGeminiBadge(poolData);
+}
+
+function updateNavGeminiBadge(poolData) {
+  const navBadge = document.getElementById('nav-gemini-quota-badge');
+  if (!navBadge) return;
+
+  const total = poolData?.total_keys || 0;
+  const avail = poolData?.available_keys || 0;
+  const allExh = Boolean(poolData?.all_exhausted);
+  const savedKey = (typeof localStorage !== 'undefined') ? localStorage.getItem('gemini_api_key') : null;
+
+  navBadge.style.display = 'inline-block';
+
+  if (total > 0) {
+    if (allExh || avail === 0) {
+      navBadge.style.background = 'rgba(245,158,11,0.18)';
+      navBadge.style.color = 'var(--amber, #f59e0b)';
+      navBadge.style.border = '1px solid rgba(245,158,11,0.4)';
+      navBadge.textContent = '⏳ Cooldown';
+      navBadge.title = `Όλα τα ${total} Gemini API keys βρίσκονται σε cooldown (${poolData.earliest_reset_time_str || 'σε αναμονή'})`;
+    } else if (avail < total) {
+      navBadge.style.background = 'rgba(245,158,11,0.15)';
+      navBadge.style.color = 'var(--amber, #f59e0b)';
+      navBadge.style.border = '1px solid rgba(245,158,11,0.4)';
+      navBadge.textContent = `🟡 ${avail}/${total} Keys`;
+      navBadge.title = `${avail}/${total} Gemini API Keys διαθέσιμα (${total - avail} σε cooldown)`;
+    } else {
+      navBadge.style.background = 'rgba(16,185,129,0.15)';
+      navBadge.style.color = 'var(--emerald)';
+      navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
+      navBadge.textContent = total > 1 ? `🟢 ${avail}/${total} Keys` : '✓ Active';
+      navBadge.title = `${avail}/${total} Gemini API Key(s) ενεργά (~${avail * 1500} RPD)`;
+    }
+  } else if (savedKey) {
+    navBadge.style.background = 'rgba(16,185,129,0.15)';
+    navBadge.style.color = 'var(--emerald)';
+    navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
+    navBadge.textContent = '✓ Active';
+    navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό (15 RPM / 1.500 RPD)';
+  } else {
+    navBadge.style.background = 'rgba(59,130,246,0.15)';
+    navBadge.style.color = 'var(--blue, #3b82f6)';
+    navBadge.style.border = '1px solid rgba(59,130,246,0.3)';
+    navBadge.textContent = '🆓 Free Mode';
+    navBadge.title = 'Δωρεάν μοντέλα ενεργά ως προεπιλογή (Google Translate & Edge-TTS — χωρίς API key)';
+  }
 }
 
 async function openAiPolishModal() {
@@ -2710,6 +2910,8 @@ async function checkGlobalGeminiQuotaStatus() {
     const data = await res.json();
     if (data.pool) {
       renderGeminiPoolStatus(data.pool);
+    } else {
+      updateNavGeminiBadge(null);
     }
     const isExhausted = Boolean(data.exhausted);
     const resetTs = Number(data.reset_timestamp || 0);
@@ -2717,6 +2919,15 @@ async function checkGlobalGeminiQuotaStatus() {
 
     if (isExhausted && resetTs > Date.now() / 1000) {
       startGeminiQuotaCountdown(resetTs, resetTimeStr);
+      const navBadge = document.getElementById('nav-gemini-quota-badge');
+      if (navBadge) {
+        navBadge.style.display = 'inline-block';
+        navBadge.style.background = 'rgba(245,158,11,0.18)';
+        navBadge.style.color = 'var(--amber, #f59e0b)';
+        navBadge.style.border = '1px solid rgba(245,158,11,0.4)';
+        navBadge.textContent = '⏳ Cooldown';
+        navBadge.title = `Gemini Quota εξαντλήθηκε. Επαναφορά σε: ${resetTimeStr || 'σύντομα'}`;
+      }
     } else {
       if (_geminiCountdownTimer) {
         stopGeminiQuotaCountdown(true);
@@ -2730,24 +2941,10 @@ async function checkGlobalGeminiQuotaStatus() {
         const polishTag = document.getElementById('tr-ai-polish-quota-tag');
         if (polishTag) polishTag.style.display = 'none';
 
-        const navBadge = document.getElementById('nav-gemini-quota-badge');
-        const savedKey = localStorage.getItem('gemini_api_key');
-        if (navBadge) {
-          if (savedKey) {
-            navBadge.style.display = 'inline-block';
-            navBadge.style.background = 'rgba(16,185,129,0.15)';
-            navBadge.style.color = 'var(--emerald)';
-            navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
-            navBadge.textContent = '✓ Active';
-            navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό (15 RPM / 1.500 RPD)';
-          } else {
-            navBadge.style.display = 'inline-block';
-            navBadge.style.background = 'rgba(59,130,246,0.15)';
-            navBadge.style.color = 'var(--blue, #3b82f6)';
-            navBadge.style.border = '1px solid rgba(59,130,246,0.3)';
-            navBadge.textContent = '🆓 Free Mode';
-            navBadge.title = 'Δωρεάν μοντέλα ενεργά ως προεπιλογή (Google Translate & Edge-TTS — χωρίς API key)';
-          }
+        if (data.pool) {
+          updateNavGeminiBadge(data.pool);
+        } else {
+          updateNavGeminiBadge(null);
         }
       }
     }

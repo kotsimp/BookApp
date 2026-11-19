@@ -447,6 +447,9 @@
         <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
           ⬇️ Download <span id="tr-format-label">TXT</span> File
         </a>
+        <button class="btn btn-outline" onclick="copyTranslatedText()" id="tr-copy-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet); color:var(--violet); font-weight:600">
+          📋 Αντιγραφή Κειμένου
+        </button>
         <button class="btn btn-outline" onclick="openReaderModal()" id="tr-read-now-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--emerald); color:var(--emerald); font-weight:600">
           📖 Διαβάστε Τώρα (Reader)
         </button>
@@ -788,6 +791,9 @@
       <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px">
         <a class="btn btn-download" href="#" onclick="downloadOutput('ab'); return false;" id="ab-download-btn">
           ⬇️ Download MP3 Audiobook
+        </a>
+        <a class="btn btn-outline" href="#" onclick="downloadOutputM4b(); return false;" id="ab-download-m4b-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet); color:var(--violet); font-weight:600">
+          📦 Download M4B (Audiobook)
         </a>
       </div>
     </div>
