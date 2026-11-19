@@ -1703,3 +1703,45 @@ body::after {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
+/* ---- Basic / Advanced UI Modes ---- */
+.mode-toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-card);
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  gap: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.mode-toggle-btn {
+  background: transparent;
+  border: none;
+  padding: 7px 18px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.mode-toggle-btn.active {
+  background: linear-gradient(135deg, var(--violet), #9333ea);
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(124, 58, 237, 0.45);
+}
+
+.mode-advanced-only.is-hidden,
+.mode-basic-only.is-hidden {
+  display: none !important;
+}

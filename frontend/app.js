@@ -54,6 +54,102 @@ function switchTab(tab) {
   btn.setAttribute('aria-selected', 'true');
 }
 
+// ── Global Mode Switching: Basic vs Advanced ──────────────
+let currentAppMode = (typeof localStorage !== 'undefined' && localStorage.getItem('bookapp_ui_mode')) || 'basic';
+
+function setAppMode(mode) {
+  currentAppMode = (mode === 'advanced') ? 'advanced' : 'basic';
+  try {
+    localStorage.setItem('bookapp_ui_mode', currentAppMode);
+  } catch (_) {}
+  applyAppMode(currentAppMode);
+  if (typeof toast === 'function') {
+    toast(
+      currentAppMode === 'basic'
+        ? '⚡ Ενεργοποιήθηκε η Απλή Λειτουργία (1-Click AI)'
+        : '⚙️ Ενεργοποιήθηκε η Προχωρημένη Λειτουργία (Πλήρεις Ρυθμίσεις)',
+      'info'
+    );
+  }
+}
+
+function applyAppMode(mode) {
+  currentAppMode = (mode === 'advanced') ? 'advanced' : 'basic';
+  const isBasic = currentAppMode === 'basic';
+
+  const btnBasic = document.getElementById('btn-mode-basic');
+  const btnAdv = document.getElementById('btn-mode-advanced');
+  if (btnBasic && btnBasic.classList) {
+    if (isBasic) btnBasic.classList.add('active'); else btnBasic.classList.remove('active');
+  }
+  if (btnAdv && btnAdv.classList) {
+    if (!isBasic) btnAdv.classList.add('active'); else btnAdv.classList.remove('active');
+  }
+
+  // Toggle CSS visibility classes
+  const advEls = document.querySelectorAll('.mode-advanced-only');
+  if (advEls && advEls.forEach) {
+    advEls.forEach((el) => {
+      if (el && el.classList) {
+        if (isBasic) el.classList.add('is-hidden'); else el.classList.remove('is-hidden');
+      }
+    });
+  }
+  const basicEls = document.querySelectorAll('.mode-basic-only');
+  if (basicEls && basicEls.forEach) {
+    basicEls.forEach((el) => {
+      if (el && el.classList) {
+        if (!isBasic) el.classList.add('is-hidden'); else el.classList.remove('is-hidden');
+      }
+    });
+  }
+
+  const trStart = document.getElementById('tr-start-btn');
+  const abStart = document.getElementById('ab-start-btn');
+
+  if (isBasic) {
+    // Ensure AI Polish is checked by default for both translation and audiobook
+    const trAi = document.getElementById('tr-ai-polish');
+    if (trAi) trAi.checked = true;
+    const abAi = document.getElementById('ab-ai-polish');
+    if (abAi) abAi.checked = true;
+
+    // Audiobook defaults for Basic Mode: Greek, Nestoras, Literature style
+    const abLang = document.getElementById('ab-lang-select');
+    if (abLang && abLang.value !== 'greek') {
+      abLang.value = 'greek';
+      if (typeof updateVoices === 'function') updateVoices();
+    }
+    const nestorasOpt = document.querySelector('input[name="ab-voice"][value="el-GR-NestorasNeural"]');
+    if (nestorasOpt) {
+      nestorasOpt.checked = true;
+      const vSelected = document.getElementById('ab-voice-selected');
+      if (vSelected) vSelected.value = 'el-GR-NestorasNeural';
+      state.selectedVoice = 'el-GR-NestorasNeural';
+    }
+    const styleSelect = document.getElementById('ab-narration-style');
+    if (styleSelect) {
+      styleSelect.value = 'literature:-12%';
+      if (typeof onNarrationStyleChange === 'function') onNarrationStyleChange();
+    }
+
+    if (trStart) {
+      trStart.textContent = '✨ Μετάφραση Βιβλίου με AI (1-Click)';
+    }
+    if (abStart) {
+      abStart.textContent = '🎧 Δημιουργία Audiobook με AI (1-Click)';
+    }
+  } else {
+    // In Advanced Mode, restore standard button labels
+    if (trStart) {
+      trStart.textContent = '🌐 Start Translation';
+    }
+    if (abStart) {
+      abStart.textContent = '🎧 Generate Audiobook';
+    }
+  }
+}
+
 // ── File Upload Handling ───────────────────────────────────
 function handleDragOver(e, zoneId) {
   e.preventDefault();
@@ -278,7 +374,11 @@ async function uploadFile(prefix, file) {
     const startBtn = document.getElementById(`${prefix}-start-btn`);
     if (startBtn) {
       startBtn.disabled = false;
-      if (prefix === 'tr') startBtn.textContent = '🌐 Start Translation';
+      if (prefix === 'tr') {
+        startBtn.textContent = currentAppMode === 'basic' ? '✨ Μετάφραση Βιβλίου με AI (1-Click)' : '🌐 Start Translation';
+      } else if (prefix === 'ab') {
+        startBtn.textContent = currentAppMode === 'basic' ? '🎧 Δημιουργία Audiobook με AI (1-Click)' : '🎧 Generate Audiobook';
+      }
     }
     if (prefix === 'tr' && !data.is_comic) {
       const directBtn = document.getElementById('tr-direct-polish-btn');
@@ -293,6 +393,10 @@ async function uploadFile(prefix, file) {
       const useTranslated = document.getElementById('ab-use-translated');
       if (useTranslated) useTranslated.checked = false;
       restrictAudiobookLanguage(data.detected_language || null);
+      if (currentAppMode === 'basic') {
+        const abAi = document.getElementById('ab-ai-polish');
+        if (abAi) abAi.checked = true;
+      }
     }
 
     refreshHistory();
@@ -311,6 +415,14 @@ async function uploadFile(prefix, file) {
           if (stdBtn) selectLayout('standard', stdBtn);
         } else {
           updateFormatAvailability(layout, ext);
+        }
+        // In Basic Mode, auto-match output format to input format (PDF->PDF, DOCX->DOCX, EPUB->EPUB)
+        if (currentAppMode === 'basic') {
+          const targetFormat = ['pdf', 'docx', 'epub'].includes(ext) ? ext : 'docx';
+          const fmtBtn = document.getElementById(`fmt-${targetFormat}`);
+          if (fmtBtn && !fmtBtn.disabled) {
+            selectFormat(targetFormat, fmtBtn);
+          }
         }
         checkCoverImage(data.job_id);
 
@@ -1263,7 +1375,9 @@ function setActionButtonsEnabled(prefix, enabled) {
   if (startBtn) {
     startBtn.disabled = !enabled;
     if (prefix === 'tr' && state.tr.jobId) {
-      startBtn.textContent = '🌐 Start Translation';
+      startBtn.textContent = currentAppMode === 'basic' ? '✨ Μετάφραση Βιβλίου με AI (1-Click)' : '🌐 Start Translation';
+    } else if (prefix === 'ab' && state.ab.jobId) {
+      startBtn.textContent = currentAppMode === 'basic' ? '🎧 Δημιουργία Audiobook με AI (1-Click)' : '🎧 Generate Audiobook';
     }
   }
   if (prefix === 'tr') {
@@ -3560,10 +3674,11 @@ async function clearBatchQueue() {
 
 // ── Init ───────────────────────────────────────────────────
 async function init() {
-  // Initialize Theme, Editor Sync Scroll, and Quota Behavior choice
+  // Initialize Theme, Editor Sync Scroll, Mode, and Quota Behavior choice
   initTheme();
   setupSyncScroll();
   initQuotaBehaviorSelectors();
+  applyAppMode(currentAppMode);
 
   // Auto-sync Gemini API key between localStorage and backend server
   const localKey = localStorage.getItem('gemini_api_key');

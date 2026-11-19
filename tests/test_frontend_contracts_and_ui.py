@@ -392,6 +392,27 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
   assert.strictEqual(dlAll.style.display, 'none');
   assert.strictEqual(dlAll.getAttribute('aria-disabled'), 'true');
 
+  // 11. Global Basic vs Advanced UI Modes behavior
+  const store = {};
+  ctx.localStorage.setItem = (k, v) => { store[k] = String(v); };
+  ctx.localStorage.getItem = (k) => store[k] || null;
+
+  ctx.setAppMode('basic');
+  assert.strictEqual(store['bookapp_ui_mode'], 'basic');
+  assert.strictEqual(getEl('tr-ai-polish').checked, true, 'Basic mode must enable Translation AI Polish by default');
+  assert.strictEqual(getEl('ab-ai-polish').checked, true, 'Basic mode must enable Audiobook AI Polish by default');
+  assert.strictEqual(getEl('btn-mode-basic').classList.contains('active'), true);
+  assert.strictEqual(getEl('btn-mode-advanced').classList.contains('active'), false);
+  assert(getEl('tr-start-btn').textContent.includes('(1-Click)'));
+  assert(getEl('ab-start-btn').textContent.includes('(1-Click)'));
+
+  ctx.setAppMode('advanced');
+  assert.strictEqual(store['bookapp_ui_mode'], 'advanced');
+  assert.strictEqual(getEl('btn-mode-basic').classList.contains('active'), false);
+  assert.strictEqual(getEl('btn-mode-advanced').classList.contains('active'), true);
+  assert.strictEqual(getEl('tr-start-btn').textContent, '🌐 Start Translation');
+  assert.strictEqual(getEl('ab-start-btn').textContent, '🎧 Generate Audiobook');
+
   console.log('NODE_UI_HARNESS_OK');
 })().catch((err) => {
   console.error(err);
