@@ -1110,12 +1110,16 @@ function updateProgress(prefix, data) {
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
     document.getElementById(`${prefix}-progress-step`).textContent = '✅ Complete';
     setActionButtonsEnabled(prefix, true);
+    const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
+    if (cancelBtn) cancelBtn.style.display = 'none';
     showResult(prefix, data);
     refreshHistory();
     toast(prefix === 'tr' ? '✅ Translation complete!' : '🎉 Audiobook ready!', 'success');
   } else if (data.status === 'error') {
     state[prefix].status = 'error';
     setStatusBadge(prefix, 'error');
+    const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
+    if (cancelBtn) cancelBtn.style.display = 'none';
     showError(prefix, data.error || 'An unknown error occurred.');
     setActionButtonsEnabled(prefix, true);
     refreshHistory();
@@ -1129,6 +1133,7 @@ function updateProgress(prefix, data) {
     const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
     if (cancelBtn) {
       cancelBtn.disabled = false;
+      cancelBtn.style.display = 'none';
       cancelBtn.innerHTML = prefix === 'tr' ? '🛑 Cancel Translation' : '🛑 Cancel Audiobook';
     }
     refreshHistory();
@@ -1543,10 +1548,25 @@ async function loadHistoryJob(jobId, mode) {
         const dirRadio = document.querySelector(`input[name="tr-reading-dir"][value="${data.reading_direction}"]`);
         if (dirRadio) dirRadio.checked = true;
       }
+      // Restore Quota Behavior preference
+      if (data.quota_behavior) {
+        const quotaRadio = document.querySelector(`input[name="tr-quota-behavior"][value="${data.quota_behavior}"]`);
+        if (quotaRadio) {
+          quotaRadio.checked = true;
+          onQuotaBehaviorChange('tr');
+        }
+      }
     }
 
     if (prefix === 'ab') {
       setActionButtonsEnabled('ab', true);
+      if (data.quota_behavior) {
+        const abQuotaRadio = document.querySelector(`input[name="ab-quota-behavior"][value="${data.quota_behavior}"]`);
+        if (abQuotaRadio) {
+          abQuotaRadio.checked = true;
+          onQuotaBehaviorChange('ab');
+        }
+      }
       try {
         const textRes = await fetch(`${API}/jobs/${jobId}/text`);
         if (textRes.ok) {
