@@ -23,9 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code
+# Copy application source code and initial configurations
 COPY backend /app/backend
 COPY frontend /app/frontend
+COPY config /app/config
 
 # Create persistent and runtime directories
 RUN mkdir -p /app/data /app/config /app/temp/uploads /app/temp/outputs
