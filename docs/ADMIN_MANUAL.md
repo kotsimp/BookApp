@@ -261,6 +261,8 @@ BookApp/
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Πλήρης διαχείριση της Smart Batch Queue (έως 20 αρχεία, συγχρονισμός ρυθμίσεων στο start, retry, pause/resume, ZIP export).
 * `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία από τη μνήμη, τη SQLite, την ουρά και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό, την ουρά και τα προσωρινά αρχεία (διατηρώντας τη `translation_cache`).
+* `DELETE /api/jobs/tests/cleanup`: Καθαρίζει άμεσα όλα τα δοκιμαστικά αρχεία/εργασίες που δημιουργήθηκαν από αυτοματοποιημένα τεστ (prefixes `test_`, `reg_`, `mock_`, κ.λπ.) από τη βάση SQLite, τη μνήμη και τους φακέλους `temp/`, διατηρώντας ανέπαφο το πραγματικό ιστορικό του χρήστη.
+* `GET /api/jobs?include_tests=true`: Προαιρετική παράμετρος ανάκτησης εργασιών. Από προεπιλογή (`include_tests=false`), τα δοκιμαστικά αρχεία φιλτράρονται αυτόματα ώστε να μην εμφανίζονται ποτέ στο Session History του UI.
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`).
 * `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
 * `POST /api/cover/{job_id}`: Ανέβασμα νέου προσαρμοσμένου εξωφύλλου (`multipart/form-data`) με αυτόματη ενημέρωση των αρχείων εξόδου.
@@ -307,7 +309,7 @@ BookApp/
 8. `test_database_and_cache.py`: SQLite persistence (`data/bookapp.db`), restart recovery & SHA-256 cache.
 9. `test_document_integrity_and_encoding.py`: BOM, UTF-16, CP1253, πολυτονικά ελληνικά, corrupted file handling.
 10. `test_dynamic_download.py`: Άμεση αλλαγή φορμάτ κατά τη λήψη χωρίς επανυπολογισμό.
-11. `test_e2e_regression_guard.py`: **9-σημείων E2E φύλακας παλινδρόμησης:** Single-Job Delete & Clear All (`DELETE /api/jobs`) σε API + SQLite (με διατήρηση cache), DOCX + AI Polish Single-Pass, Invalid API key fail-fast (<1s), `/health`, `/preview/{id}`, `/cover/{id}` (POST/GET/DELETE), `/debug/extract/{id}`, `/polish/status/{id}`, `/progress/{id}` SSE, Source-Anchored identical-text auto-disable, Google 429 Circuit Breaker, επανεκκίνηση `cancelled` jobs & ανάκτηση ορφανών `running` jobs, καθώς και SQLite `file_path` persistence & πλήρης επαναφορά ρυθμίσεων στο Resume.
+11. `test_e2e_regression_guard.py`: **10-σημείων E2E φύλακας παλινδρόμησης:** Single-Job Delete & Clear All (`DELETE /api/jobs`) σε API + SQLite (με διατήρηση cache και προστασία ιστορικού), DOCX + AI Polish Single-Pass, Invalid API key fail-fast (<1s), `/health`, `/preview/{id}`, `/cover/{id}` (POST/GET/DELETE), `/debug/extract/{id}`, `/polish/status/{id}`, `/progress/{id}` SSE, Source-Anchored identical-text auto-disable, Google 429 Circuit Breaker, επανεκκίνηση `cancelled` jobs & ανάκτηση ορφανών `running` jobs, SQLite `file_path` persistence & πλήρης επαναφορά ρυθμίσεων στο Resume, καθώς και καθαρισμός & απομόνωση δοκιμαστικών εργασιών (`DELETE /api/jobs/tests/cleanup`).
 12. `test_edge_cases_and_robustness.py`: Οριακές περιπτώσεις, ακραία inputs και ανθεκτικότητα.
 13. `test_editor_glossary_ai.py`: In-browser Editor, κανόνες γλωσσαρίου και AI Polish.
 14. `test_exporter.py`: Εξαγωγή σε DOCX, PDF, EPUB, TXT, CBZ, CBR.

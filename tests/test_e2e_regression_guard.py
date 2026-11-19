@@ -106,7 +106,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
             jid = up["job_id"]
 
             # Confirm present in GET /api/jobs AND SQLite
-            _, jobs_before = api_get("/jobs")
+            _, jobs_before = api_get("/jobs?include_tests=true")
             self.assertTrue(any(j["job_id"] == jid for j in jobs_before))
             self.assertIsNotNone(db_get_job(jid))
 
@@ -115,7 +115,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
             self.assertEqual(st_del, 200)
 
             # Confirm GONE from GET /api/jobs AND SQLite
-            _, jobs_after = api_get("/jobs")
+            _, jobs_after = api_get("/jobs?include_tests=true")
             self.assertFalse(any(j["job_id"] == jid for j in jobs_after), "Deleted job resurrected in GET /api/jobs!")
             self.assertIsNone(db_get_job(jid), "Deleted job still exists in SQLite jobs table!")
             print("   Single-Job Delete (API + SQLite): OK")
@@ -124,6 +124,9 @@ class TestE2ERegressionGuard(unittest.TestCase):
 
     def test_2_clear_all_jobs_empties_api_and_sqlite_preserving_cache(self):
         print("-> 2. Testing Clear All (DELETE /api/jobs) empties API + SQLite while preserving cache...")
+        from backend.job_manager import is_test_job_filename
+        existing_jobs = db_list_jobs(limit=1000)
+        existing_user_jobs = [j for j in existing_jobs if not is_test_job_filename(j.get("file_name"))]
         cache_before = db_get_cache_stats()["cached_entries"]
         tmp1 = Path("temp/reg_clear_1.docx")
         tmp2 = Path("temp/reg_clear_2.docx")
@@ -134,7 +137,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
         try:
             _, up1 = api_post_file("/upload", tmp1, "reg_clear_1.docx")
             _, up2 = api_post_file("/upload", tmp2, "reg_clear_2.docx")
-            _, jobs_before = api_get("/jobs")
+            _, jobs_before = api_get("/jobs?include_tests=true")
             self.assertGreaterEqual(len(jobs_before), 2)
 
             # Clear All
@@ -143,7 +146,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
             self.assertEqual(res_clr["status"], "cleared")
 
             # Verify GET /api/jobs AND SQLite jobs table are 100% empty
-            _, jobs_after = api_get("/jobs")
+            _, jobs_after = api_get("/jobs?include_tests=true")
             self.assertEqual(jobs_after, [], f"Clear All failed — jobs still returned: {jobs_after}")
             self.assertEqual(db_list_jobs(limit=50), [], "Clear All failed — jobs still remain in SQLite!")
 
@@ -154,6 +157,11 @@ class TestE2ERegressionGuard(unittest.TestCase):
         finally:
             tmp1.unlink(missing_ok=True)
             tmp2.unlink(missing_ok=True)
+            for uj in existing_user_jobs:
+                try:
+                    db_save_job(uj)
+                except Exception:
+                    pass
 
     def test_3_docx_with_ai_polish_routes_to_single_pass_direct_ai(self):
         print("-> 3. Testing DOCX + ai_polish=True routes through Single-Pass Direct AI...")
@@ -459,6 +467,44 @@ class TestE2ERegressionGuard(unittest.TestCase):
                     api_delete(f"/jobs/{jid}")
                 except Exception:
                     pass
+
+    def test_10_cleanup_test_jobs_endpoint_and_session_history_filter(self):
+        print("-> 10. Testing DELETE /api/jobs/tests/cleanup and Session History test-filtering...")
+        tmp = Path("temp/test_auto_purge.docx")
+        d = docx.Document()
+        d.add_paragraph("Test document that must be filtered and auto-purged.")
+        d.save(str(tmp))
+        try:
+            st, up = api_post_file("/upload", tmp, "test_auto_purge.docx")
+            self.assertEqual(st, 200)
+            jid = up["job_id"]
+
+            # 1. Normal GET /api/jobs (used by UI Session History) MUST filter out test jobs!
+            st_ui, ui_jobs = api_get("/jobs")
+            self.assertEqual(st_ui, 200)
+            self.assertFalse(any(j["job_id"] == jid for j in ui_jobs), "Test job leaked into default GET /api/jobs!")
+
+            # 2. GET /api/jobs?include_tests=true DOES include it
+            st_all, all_jobs = api_get("/jobs?include_tests=true")
+            self.assertEqual(st_all, 200)
+            self.assertTrue(any(j["job_id"] == jid for j in all_jobs))
+
+            # 3. DELETE /api/jobs/tests/cleanup removes all test jobs
+            st_cln, res_cln = api_delete("/jobs/tests/cleanup")
+            self.assertEqual(st_cln, 200)
+            self.assertEqual(res_cln["status"], "ok")
+            self.assertIn(jid, res_cln.get("deleted_jobs", []))
+
+            # Verify it's gone even when include_tests=true
+            _, all_after = api_get("/jobs?include_tests=true")
+            self.assertFalse(any(j["job_id"] == jid for j in all_after))
+            print("   DELETE /api/jobs/tests/cleanup & Session History test filter: OK")
+        finally:
+            tmp.unlink(missing_ok=True)
+            try:
+                api_delete("/jobs/tests/cleanup")
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

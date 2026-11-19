@@ -147,6 +147,10 @@ doc.add_paragraph("Another paragraph with important content. Technology is advan
 doc.save(test_docx_path)
 print(f"  Created test DOCX: {test_docx_path}")
 
+job_id = None
+gr_job_id = None
+cancel_job_id = None
+
 try:
     status, data = api_post_file("/upload", test_docx_path, "test_upload.docx")
     assert status == 200
@@ -294,20 +298,24 @@ try:
     status, sdata = api_get(f"/status/{cancel_job_id}")
     assert sdata["status"] == "cancelled", f"Expected status 'cancelled', got {sdata['status']}"
     print("  POST /jobs/{id}/cancel in-flight: OK")
-    api_delete(f"/jobs/{cancel_job_id}")
-    if os.path.exists(cancel_docx_path):
-        os.remove(cancel_docx_path)
-
-    api_delete(f"/jobs/{job_id}")
-    api_delete(f"/jobs/{gr_job_id}")
-    for tmp_f in (test_docx_path, gr_docx_path):
-        if os.path.exists(tmp_f):
-            os.remove(tmp_f)
 except Exception as e:
     import traceback
     print(f"  Integration test: FAIL - {e}")
     traceback.print_exc()
     sys.exit(1)
+finally:
+    for jid in (cancel_job_id, job_id, gr_job_id):
+        if jid:
+            try:
+                api_delete(f"/jobs/{jid}")
+            except Exception:
+                pass
+    for tmp_f in (test_docx_path, gr_docx_path, cancel_docx_path):
+        if os.path.exists(tmp_f):
+            try:
+                os.remove(tmp_f)
+            except Exception:
+                pass
 
 # Test 6g: DELETE /api/settings/gemini_api_key (restore original key if present)
 _, prev_settings = api_get("/settings")

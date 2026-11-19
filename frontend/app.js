@@ -1277,7 +1277,15 @@ function renderHistory(jobs) {
   const grid = document.getElementById('history-grid');
   const clearBtn = document.getElementById('clear-history-btn');
 
-  if (!jobs || jobs.length === 0) {
+  const testPrefixes = ['test_', 'reg_', 'mock_', 'sample_', 'q_iso_', 'cover_check', 'sse_test', 'sse_thread', 'cancel_guard', 'scanned_only', 'book_', 'path_'];
+  const testExact = ['sample.pdf', 'sample.txt', 'book.pdf', 'book.txt', 'active.pdf'];
+  const displayJobs = (jobs || []).filter(j => {
+    const fn = (j.file_name || '').toLowerCase().trim();
+    if (!fn) return true;
+    return !testPrefixes.some(p => fn.startsWith(p)) && !testExact.includes(fn);
+  });
+
+  if (!displayJobs || displayJobs.length === 0) {
     grid.innerHTML = '<p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>';
     if (clearBtn) clearBtn.style.display = 'none';
     return;
@@ -1288,7 +1296,7 @@ function renderHistory(jobs) {
   const modeIcon = { translate: '🌐', audiobook: '🎧', '': '📄' };
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
 
-  grid.innerHTML = jobs.map(j => `
+  grid.innerHTML = displayJobs.map(j => `
     <div class="history-item" onclick="loadHistoryJob('${j.job_id}', '${j.mode || ''}')">
       <span class="history-icon">${modeIcon[j.mode] || '📄'}</span>
       <div class="history-info">

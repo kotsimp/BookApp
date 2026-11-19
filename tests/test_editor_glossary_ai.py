@@ -84,46 +84,54 @@ assert status == 200
 job_id = upload_data["job_id"]
 print(f"  Uploaded test job: {job_id[:8]}...")
 
-# Translate
-api_post_json("/translate", {
-    "job_id": job_id,
-    "source_lang": "english",
-    "target_lang": "greek",
-    "output_format": "docx",
-})
+try:
+    # Translate
+    api_post_json("/translate", {
+        "job_id": job_id,
+        "source_lang": "english",
+        "target_lang": "greek",
+        "output_format": "docx",
+    })
 
-# Wait for translation done
-for _ in range(60):
-    time.sleep(0.5)
-    _, sdata = api_get(f"/status/{job_id}")
-    if sdata["status"] == "done":
-        print("  Translation finished!")
-        break
+    # Wait for translation done
+    for _ in range(60):
+        time.sleep(0.5)
+        _, sdata = api_get(f"/status/{job_id}")
+        if sdata["status"] == "done":
+            print("  Translation finished!")
+            break
 
-# 2a. GET /api/jobs/{job_id}/text
-status, text_data = api_get(f"/jobs/{job_id}/text")
-assert status == 200
-assert text_data["translated_text"] != ""
-print(f"  GET /jobs/{job_id}/text: OK ({len(text_data['translated_text'])} chars)")
+    # 2a. GET /api/jobs/{job_id}/text
+    status, text_data = api_get(f"/jobs/{job_id}/text")
+    assert status == 200
+    assert text_data["translated_text"] != ""
+    print(f"  GET /jobs/{job_id}/text: OK ({len(text_data['translated_text'])} chars)")
 
-# 2b. PUT /api/jobs/{job_id}/text (Simulate user editing the text in the editor)
-edited_text = "Αυτή είναι η χειροκίνητα διορθωμένη παράγραφος από τον χρήστη.\n\nΚαι η δεύτερη διορθωμένη πρόταση."
-status, put_res = api_put_json(f"/jobs/{job_id}/text", {"translated_text": edited_text})
-assert status == 200
-assert put_res["status"] == "saved"
-print("  PUT /jobs/{job_id}/text: OK (saved edited text)")
+    # 2b. PUT /api/jobs/{job_id}/text (Simulate user editing the text in the editor)
+    edited_text = "Αυτή είναι η χειροκίνητα διορθωμένη παράγραφος από τον χρήστη.\n\nΚαι η δεύτερη διορθωμένη πρόταση."
+    status, put_res = api_put_json(f"/jobs/{job_id}/text", {"translated_text": edited_text})
+    assert status == 200
+    assert put_res["status"] == "saved"
+    print("  PUT /jobs/{job_id}/text: OK (saved edited text)")
 
-# 2c. Verify that downloaded DOCX and PDF contain the edited text
-req = urllib.request.Request(f"{API}/download/{job_id}?format=txt")
-with urllib.request.urlopen(req) as resp:
-    txt_downloaded = resp.read().decode("utf-8")
-    assert "χειροκίνητα διορθωμένη" in txt_downloaded
-print("  Verified edited text in downloaded TXT output: OK")
+    # 2c. Verify that downloaded DOCX and PDF contain the edited text
+    req = urllib.request.Request(f"{API}/download/{job_id}?format=txt")
+    with urllib.request.urlopen(req) as resp:
+        txt_downloaded = resp.read().decode("utf-8")
+        assert "χειροκίνητα διορθωμένη" in txt_downloaded
+    print("  Verified edited text in downloaded TXT output: OK")
 
-req = urllib.request.Request(f"{API}/download/{job_id}?format=pdf")
-with urllib.request.urlopen(req) as resp:
-    pdf_bytes = resp.read()
-    assert len(pdf_bytes) > 500000
-print(f"  Verified re-exported PDF contains edited text: OK ({len(pdf_bytes)} bytes)")
+    req = urllib.request.Request(f"{API}/download/{job_id}?format=pdf")
+    with urllib.request.urlopen(req) as resp:
+        pdf_bytes = resp.read()
+        assert len(pdf_bytes) > 500000
+    print(f"  Verified re-exported PDF contains edited text: OK ({len(pdf_bytes)} bytes)")
 
-print("\nALL EDITOR, GLOSSARY, AND RE-EXPORT TESTS PASSED SUCCESSFULLY!")
+    print("\nALL EDITOR, GLOSSARY, AND RE-EXPORT TESTS PASSED SUCCESSFULLY!")
+finally:
+    try:
+        api_delete(f"/jobs/{job_id}")
+    except Exception:
+        pass
+    if os.path.exists(test_doc):
+        os.remove(test_doc)

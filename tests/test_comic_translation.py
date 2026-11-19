@@ -54,11 +54,23 @@ def api_get(path):
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
+
 def api_post_json(path, data):
     body = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(f"{API}{path}", data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
+
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
 
 def api_post_file(path, filepath, filename):
     boundary = "----TestBoundaryComic12345"
@@ -75,6 +87,12 @@ def api_post_file(path, filepath, filename):
     )
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
+
+def api_delete(path):
+    req = urllib.request.Request(f"{API}{path}", method="DELETE")
+    with urllib.request.urlopen(req) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
 
 
 def test_graphic_novel_pdf_translation():
@@ -109,41 +127,49 @@ def test_graphic_novel_pdf_translation():
     job_id = u_data["job_id"]
     print(f"  Uploaded comic PDF: job_id={job_id}")
 
-    # Start translation in comic layout mode
-    status, t_data = api_post_json("/translate", {
-        "job_id": job_id,
-        "source_lang": "english",
-        "target_lang": "greek",
-        "output_format": "pdf",
-        "layout_mode": "comic",
-    })
-    assert status == 200
+    try:
+        # Start translation in comic layout mode
+        status, t_data = api_post_json("/translate", {
+            "job_id": job_id,
+            "source_lang": "english",
+            "target_lang": "greek",
+            "output_format": "pdf",
+            "layout_mode": "comic",
+        })
+        assert status == 200
 
-    # Wait for completion
-    for _ in range(60):
-        time.sleep(0.5)
-        status, sdata = api_get(f"/status/{job_id}")
-        if sdata["status"] in ("done", "error"):
-            break
+        # Wait for completion
+        for _ in range(60):
+            time.sleep(0.5)
+            status, sdata = api_get(f"/status/{job_id}")
+            if sdata["status"] in ("done", "error"):
+                break
 
-    assert sdata["status"] == "done", f"Comic translation failed: {sdata}"
-    print("  Comic translation completed successfully (status=done)")
+        assert sdata["status"] == "done", f"Comic translation failed: {sdata}"
+        print("  Comic translation completed successfully (status=done)")
 
-    # Download translated PDF and verify
-    req = urllib.request.Request(f"{API}/download/{job_id}?format=pdf&layout=comic")
-    with urllib.request.urlopen(req) as resp:
-        assert resp.status == 200
-        pdf_bytes = resp.read()
-        assert len(pdf_bytes) > 1000
-        print(f"  Downloaded translated Graphic Novel PDF: {len(pdf_bytes)} bytes")
+        # Download translated PDF and verify
+        req = urllib.request.Request(f"{API}/download/{job_id}?format=pdf&layout=comic")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            pdf_bytes = resp.read()
+            assert len(pdf_bytes) > 1000
+            print(f"  Downloaded translated Graphic Novel PDF: {len(pdf_bytes)} bytes")
 
-    # Verify translated PDF content
-    res_doc = fitz.open("pdf", pdf_bytes)
-    assert len(res_doc) == 1
-    page_text = res_doc[0].get_text()
-    print(f"  Translated PDF text on page 1: {repr(page_text.strip())}")
-    assert any(c in page_text for c in "αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"), "Expected Greek text in translated comic PDF"
-    print("  Greek dialogue rendered in comic balloon: OK")
+        # Verify translated PDF content
+        res_doc = fitz.open("pdf", pdf_bytes)
+        assert len(res_doc) == 1
+        page_text = res_doc[0].get_text()
+        print(f"  Translated PDF text on page 1: {repr(page_text.strip())}")
+        assert any(c in page_text for c in "αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"), "Expected Greek text in translated comic PDF"
+        print("  Greek dialogue rendered in comic balloon: OK")
+    finally:
+        try:
+            api_delete(f"/jobs/{job_id}")
+        except Exception:
+            pass
+        if os.path.exists(comic_pdf_path):
+            os.remove(comic_pdf_path)
 
 
 def test_cbz_archive_translation():
@@ -168,64 +194,73 @@ def test_cbz_archive_translation():
     job_id = u_data["job_id"]
     print(f"  Uploaded CBZ archive: job_id={job_id}, type={u_data['file_type']}")
 
-    status, t_data = api_post_json("/translate", {
-        "job_id": job_id,
-        "source_lang": "english",
-        "target_lang": "greek",
-        "output_format": "pdf",
-        "layout_mode": "comic",
-    })
-    assert status == 200
+    try:
+        status, t_data = api_post_json("/translate", {
+            "job_id": job_id,
+            "source_lang": "english",
+            "target_lang": "greek",
+            "output_format": "pdf",
+            "layout_mode": "comic",
+        })
+        assert status == 200
 
-    for _ in range(60):
-        time.sleep(0.5)
-        status, sdata = api_get(f"/status/{job_id}")
-        if sdata["status"] in ("done", "error"):
-            break
+        for _ in range(60):
+            time.sleep(0.5)
+            status, sdata = api_get(f"/status/{job_id}")
+            if sdata["status"] in ("done", "error"):
+                break
 
-    assert sdata["status"] == "done", f"CBZ translation failed: {sdata}"
-    print("  CBZ translation completed successfully (status=done)")
+        assert sdata["status"] == "done", f"CBZ translation failed: {sdata}"
+        print("  CBZ translation completed successfully (status=done)")
 
-    # 3. Test Graphic Novel Output Formats: CBZ, CBR, EPUB and disabled TXT/DOCX
-    print("\n=== 3. Testing Graphic Novel Output Formats (CBZ, CBR, EPUB & Disabled TXT/DOCX) ===")
-    # Download CBZ
-    req_cbz = urllib.request.Request(f"{API}/download/{job_id}?format=cbz&layout=comic")
-    with urllib.request.urlopen(req_cbz) as resp:
-        assert resp.status == 200
-        cbz_data = resp.read()
-        assert len(cbz_data) > 500
-        with zipfile.ZipFile(io.BytesIO(cbz_data)) as zf:
-            names = zf.namelist()
-            assert any(n.endswith(".jpg") for n in names)
-        print(f"  Downloaded CBZ comic archive: {len(cbz_data)} bytes ({len(names)} pages) OK")
+        # 3. Test Graphic Novel Output Formats: CBZ, CBR, EPUB and disabled TXT/DOCX
+        print("\n=== 3. Testing Graphic Novel Output Formats (CBZ, CBR, EPUB & Disabled TXT/DOCX) ===")
+        # Download CBZ
+        req_cbz = urllib.request.Request(f"{API}/download/{job_id}?format=cbz&layout=comic")
+        with urllib.request.urlopen(req_cbz) as resp:
+            assert resp.status == 200
+            cbz_data = resp.read()
+            assert len(cbz_data) > 500
+            with zipfile.ZipFile(io.BytesIO(cbz_data)) as zf:
+                names = zf.namelist()
+                assert any(n.endswith(".jpg") for n in names)
+            print(f"  Downloaded CBZ comic archive: {len(cbz_data)} bytes ({len(names)} pages) OK")
 
-    # Download CBR
-    req_cbr = urllib.request.Request(f"{API}/download/{job_id}?format=cbr&layout=comic")
-    with urllib.request.urlopen(req_cbr) as resp:
-        assert resp.status == 200
-        cbr_data = resp.read()
-        assert len(cbr_data) > 500
-        print(f"  Downloaded CBR comic archive: {len(cbr_data)} bytes OK")
+        # Download CBR
+        req_cbr = urllib.request.Request(f"{API}/download/{job_id}?format=cbr&layout=comic")
+        with urllib.request.urlopen(req_cbr) as resp:
+            assert resp.status == 200
+            cbr_data = resp.read()
+            assert len(cbr_data) > 500
+            print(f"  Downloaded CBR comic archive: {len(cbr_data)} bytes OK")
 
-    # Download EPUB
-    req_epub = urllib.request.Request(f"{API}/download/{job_id}?format=epub&layout=comic")
-    with urllib.request.urlopen(req_epub) as resp:
-        assert resp.status == 200
-        epub_data = resp.read()
-        assert len(epub_data) > 500
-        print(f"  Downloaded Fixed-Layout Graphic Novel EPUB: {len(epub_data)} bytes OK")
+        # Download EPUB
+        req_epub = urllib.request.Request(f"{API}/download/{job_id}?format=epub&layout=comic")
+        with urllib.request.urlopen(req_epub) as resp:
+            assert resp.status == 200
+            epub_data = resp.read()
+            assert len(epub_data) > 500
+            print(f"  Downloaded Fixed-Layout Graphic Novel EPUB: {len(epub_data)} bytes OK")
 
-    # Verify TXT and DOCX are disabled (returns HTTP 400)
-    for dis_fmt in ("txt", "docx"):
-        req_dis = urllib.request.Request(f"{API}/download/{job_id}?format={dis_fmt}&layout=comic")
+        # Verify TXT and DOCX are disabled (returns HTTP 400)
+        for dis_fmt in ("txt", "docx"):
+            req_dis = urllib.request.Request(f"{API}/download/{job_id}?format={dis_fmt}&layout=comic")
+            try:
+                with urllib.request.urlopen(req_dis) as resp:
+                    assert False, f"Expected 400 for disabled format {dis_fmt}, got {resp.status}"
+            except urllib.error.HTTPError as err:
+                assert err.code == 400, f"Expected 400 for {dis_fmt}, got {err.code}"
+                print(f"  Format '{dis_fmt.upper()}' correctly rejected with HTTP 400 (Disabled for Graphic Novels) OK")
+
+        print("\nALL GRAPHIC NOVEL & COMIC TRANSLATION TESTS PASSED!")
+    finally:
         try:
-            with urllib.request.urlopen(req_dis) as resp:
-                assert False, f"Expected 400 for disabled format {dis_fmt}, got {resp.status}"
-        except urllib.error.HTTPError as err:
-            assert err.code == 400, f"Expected 400 for {dis_fmt}, got {err.code}"
-            print(f"  Format '{dis_fmt.upper()}' correctly rejected with HTTP 400 (Disabled for Graphic Novels) OK")
-
-    print("\nALL GRAPHIC NOVEL & COMIC TRANSLATION TESTS PASSED!")
+            api_delete(f"/jobs/{job_id}")
+        except Exception:
+            pass
+        for p in (cbz_path, img1_path):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 if __name__ == "__main__":

@@ -213,6 +213,40 @@ def db_clear_all_jobs() -> int:
             conn.close()
 
 
+def db_delete_test_jobs() -> List[str]:
+    """Deletes all test-generated jobs from the SQLite jobs table and returns their job IDs."""
+    test_prefixes = (
+        "test_", "reg_", "mock_", "sample_", "q_iso_",
+        "cover_check", "sse_test", "sse_thread", "cancel_guard",
+        "scanned_only", "book_", "path_"
+    )
+    exact_matches = ("sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf")
+    deleted_ids: List[str] = []
+
+    with _db_lock:
+        conn = _get_connection()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT job_id, file_name FROM jobs")
+            rows = cursor.fetchall()
+            for r in rows:
+                fname = (r["file_name"] or "").strip().lower()
+                if any(fname.startswith(p) for p in test_prefixes) or fname in exact_matches:
+                    deleted_ids.append(r["job_id"])
+
+            if deleted_ids:
+                with conn:
+                    cursor.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in deleted_ids])
+            return deleted_ids
+        except Exception as e:
+            logger.warning(f"Error deleting test jobs from DB: {e}")
+            return []
+        finally:
+            conn.close()
+
+
+
 def db_reset_orphaned_running_jobs() -> int:
     """Resets any stale 'running' or 'queued' jobs left over after a server restart to 'idle' so they can resume cleanly."""
     with _db_lock:

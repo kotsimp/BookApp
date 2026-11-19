@@ -472,3 +472,54 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
                     shutil.rmtree(str(entry), ignore_errors=True)
             except Exception:
                 pass
+
+
+def is_test_job_filename(file_name: Optional[str]) -> bool:
+    """Returns True if the filename matches test-generated job naming patterns."""
+    if not file_name:
+        return False
+    fn = file_name.strip().lower()
+    test_prefixes = (
+        "test_", "reg_", "mock_", "sample_", "q_iso_",
+        "cover_check", "sse_test", "sse_thread", "cancel_guard",
+        "scanned_only", "book_", "path_"
+    )
+    exact_matches = ("sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf")
+    return any(fn.startswith(p) for p in test_prefixes) or fn in exact_matches
+
+
+def cleanup_test_jobs() -> list[str]:
+    """Purges all test-generated jobs from in-memory cache, SQLite database, and disk directories."""
+    import shutil
+
+    deleted_ids: list[str] = []
+
+    # 1. Purge from in-memory _jobs
+    for jid, job in list(_jobs.items()):
+        if is_test_job_filename(job.file_name):
+            _jobs.pop(jid, None)
+            deleted_ids.append(jid)
+
+    # 2. Purge from SQLite
+    try:
+        from backend.database import db_delete_test_jobs
+        db_deleted = db_delete_test_jobs()
+        for jid in db_deleted:
+            if jid not in deleted_ids:
+                deleted_ids.append(jid)
+    except Exception:
+        pass
+
+    # 3. Clean up disk directories for purged test jobs
+    base_temp = Path(__file__).resolve().parent.parent / "temp"
+    for jid in deleted_ids:
+        for sub in ("uploads", "outputs"):
+            target_dir = base_temp / sub / jid
+            if target_dir.exists() and target_dir.is_dir():
+                try:
+                    shutil.rmtree(str(target_dir), ignore_errors=True)
+                except Exception:
+                    pass
+
+    return deleted_ids
+

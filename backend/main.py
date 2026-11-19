@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
     cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled,
-    is_valid_job_id,
+    is_valid_job_id, cleanup_test_jobs, is_test_job_filename,
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     logger.info("DocTranslate & AudioBook Generator started.")
     cleanup_old_jobs()
+    cleanup_test_jobs()
     yield
 
 
@@ -1063,8 +1064,8 @@ async def list_voices():
 
 
 @app.get("/api/jobs")
-async def all_jobs():
-    """Returns all jobs (for session history)."""
+async def all_jobs(include_tests: bool = False):
+    """Returns all jobs (for session history). Hides test-generated jobs by default."""
     jobs = list_jobs()
     return [
         {
@@ -1077,7 +1078,15 @@ async def all_jobs():
             "has_output": j.output_path is not None,
         }
         for j in jobs
+        if include_tests or not is_test_job_filename(j.file_name)
     ]
+
+
+@app.delete("/api/jobs/tests/cleanup")
+async def clean_test_jobs_endpoint():
+    """Removes all test-generated jobs from session history, SQLite and disk."""
+    deleted = cleanup_test_jobs()
+    return {"status": "ok", "deleted_count": len(deleted), "deleted_jobs": deleted}
 
 @app.get("/api/debug/extract/{job_id}")
 async def debug_extract(job_id: str, max_chars: int = 500):
