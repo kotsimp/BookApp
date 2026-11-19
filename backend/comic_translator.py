@@ -17,6 +17,8 @@ import re
 import json
 import logging
 import asyncio
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List, Tuple
 
@@ -427,6 +429,11 @@ async def _ai_polish_comic_balloons(
     if not balloons or not api_key:
         return [b["draft"] for b in balloons]
 
+    from backend.ai_polisher import is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
+    if is_gemini_quota_exhausted():
+        logger.info("Gemini daily quota exhausted; using standard translated text for comic balloons without AI polish.")
+        return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
+
     lang_norm = (target_lang or "greek").strip().lower()
     is_greek = lang_norm in ("greek", "el")
 
@@ -520,7 +527,30 @@ async def _ai_polish_comic_balloons(
                 pol = polished_map.get(item_id)
                 results.append(pol if pol else sanitize_comic_dialogue(b["draft"], target_lang))
             return results
+        except urllib.error.HTTPError as h_err:
+            if h_err.code == 429:
+                err_body = ""
+                try:
+                    err_body = h_err.read().decode("utf-8")
+                except Exception:
+                    pass
+                err_low = err_body.lower()
+                if (
+                    "requests per day limit exceeded" in err_low
+                    or "quota exceeded" in err_low
+                    or "resource_exhausted" in err_low
+                    or "per day" in err_low
+                    or "retrydelay" in err_low
+                ):
+                    logger.warning("Gemini daily quota exhausted during comic polish. Tripping circuit breaker and skipping AI polish.")
+                    trip_gemini_quota_exhaustion(3600.0)
+                    break
+            logger.debug(f"AI Polish attempt with {model} failed: {h_err}")
         except Exception as ex:
+            err_low = str(ex).lower()
+            if "requests per day limit exceeded" in err_low or "quota exceeded" in err_low or "resource_exhausted" in err_low:
+                trip_gemini_quota_exhaustion(3600.0)
+                break
             logger.debug(f"AI Polish attempt with {model} failed: {ex}")
 
     return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
@@ -553,6 +583,8 @@ async def _translate_page_vector(
             tr = sanitize_comic_dialogue(tr, target_lang)
             translated_balloons.append(tr)
             page_dialogues.append(tr)
+            # Gentle pacing to avoid rapid burst rate limits on public translation endpoints
+            await asyncio.sleep(0.04)
         except Exception as ex:
             logger.warning(f"Error translating balloon '{orig[:30]}': {ex}")
             translated_balloons.append(orig)
@@ -805,7 +837,13 @@ async def _detect_comic_balloons_vision_async(
         "If the page has ONLY artwork and NO text at all, return []."
     )
 
-    from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason
+    from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason, is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
+
+    if is_gemini_quota_exhausted():
+        if status_out is not None:
+            status_out["succeeded"] = False
+            status_out["error"] = "Gemini daily quota exhausted"
+        return []
 
     base_payload = {
         "contents": [{
@@ -962,7 +1000,19 @@ async def _detect_comic_balloons_vision_async(
                             last_error = f"{model}: HTTP {resp.status}"
                         elif resp.status in (429, 503):
                             rate_limited_round = True
+                            err_detail = await resp.text()
                             last_error = f"{model}: HTTP {resp.status} (quota/demand limit)"
+                            err_low = err_detail.lower()
+                            if (
+                                "requests per day limit exceeded" in err_low
+                                or "quota exceeded" in err_low
+                                or "resource_exhausted" in err_low
+                                or "per day" in err_low
+                                or "retrydelay" in err_low
+                            ):
+                                logger.warning("Gemini daily quota exhausted in comic Vision. Tripping circuit breaker.")
+                                trip_gemini_quota_exhaustion(3600.0)
+                                break
                             if _CACHED_VISION_MODEL == model:
                                 _CACHED_VISION_MODEL = None
                             await asyncio.sleep(1.0)

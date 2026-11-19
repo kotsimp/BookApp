@@ -257,6 +257,73 @@ class TestAIPolisherAndTranslatorResilience(unittest.TestCase):
             db_delete_job(job.job_id)
         print("   Translator resilience & MyMemory error filtering: OK")
 
+    def test_daily_quota_circuit_breaker_and_comic_skip(self):
+        print("-> 7. Testing Gemini Daily Quota Circuit Breaker & Comic skip...")
+        ap.reset_model_cache()
+        self.assertFalse(ap.is_gemini_quota_exhausted())
+
+        quota_429_payload = json.dumps({
+            "error": {
+                "code": 429,
+                "message": "Resource exhausted",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {"description": "Generate content requests per day limit exceeded on Free Tier."}
+                        ]
+                    },
+                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3600s"}
+                ]
+            }
+        })
+
+        call_count = 0
+        def fake_post(url, kw):
+            nonlocal call_count
+            call_count += 1
+            return _FakeResponse(429, text_data=quota_429_payload)
+
+        sess = _FakeSession(post_handler=fake_post)
+
+        async def _test_breaker():
+            with patch("backend.ai_polisher._get_available_models", return_value=["m1", "m2", "m3"]):
+                with self.assertRaises(ap.DailyQuotaExhaustedError):
+                    await ap._call_gemini_api(
+                        "Sample text",
+                        api_key="valid-mock-key-12345",
+                        system_prompt="Test prompt",
+                        session=sess,
+                    )
+
+            # Circuit breaker must stop after exactly 1 model call instead of exhausting all models!
+            self.assertEqual(call_count, 1)
+            self.assertTrue(ap.is_gemini_quota_exhausted())
+
+            # Immediate subsequent call must fail fast (0 HTTP calls)
+            with self.assertRaises(ap.DailyQuotaExhaustedError):
+                await ap._call_gemini_api(
+                    "Sample text 2",
+                    api_key="valid-mock-key-12345",
+                    system_prompt="Test prompt",
+                    session=sess,
+                )
+            self.assertEqual(call_count, 1)
+
+            # Comic balloon polish must skip AI polish cleanly and return drafts
+            from backend.comic_translator import _ai_polish_comic_balloons
+            balloons = [{"source": "Look!", "draft": "Κοιτάξτε!"}]
+            res = await _ai_polish_comic_balloons(balloons, api_key="valid-mock-key-12345", target_lang="greek")
+            self.assertEqual(res, ["Κοιτάξτε!"])
+
+        asyncio.run(_test_breaker())
+
+        # Resetting model cache clears the circuit breaker
+        ap.reset_model_cache()
+        self.assertFalse(ap.is_gemini_quota_exhausted())
+        print("   Daily Quota Circuit Breaker & Comic skip: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

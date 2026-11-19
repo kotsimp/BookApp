@@ -9,6 +9,7 @@ rolling narrative context, and smart disk checkpointing.
 import os
 import re
 import json
+import time
 import hashlib
 import logging
 import asyncio
@@ -145,6 +146,7 @@ def reset_model_cache():
     global _CACHED_WORKING_MODEL, _CACHED_AVAILABLE_MODELS
     _CACHED_WORKING_MODEL = None
     _CACHED_AVAILABLE_MODELS = None
+    reset_gemini_quota_exhaustion()
 
 
 EXCLUDE_PATTERNS = [
@@ -181,6 +183,30 @@ _LITERARY_SAFETY_SETTINGS = [
 ]
 
 _TRANSIENT_RETRY_DELAY = 2.0
+
+
+class DailyQuotaExhaustedError(RuntimeError):
+    """Raised when Gemini returns 429 quota exhaustion or requests per day limit exceeded."""
+
+
+_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL: float = 0.0
+
+
+def is_gemini_quota_exhausted() -> bool:
+    """Returns True if Gemini daily quota was tripped and is currently in cooldown."""
+    return time.time() < _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+
+
+def trip_gemini_quota_exhaustion(cooldown_seconds: float = 3600.0) -> None:
+    """Trip Gemini daily quota circuit breaker to fail-fast across all modules."""
+    global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+    _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = max(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL, time.time() + cooldown_seconds)
+
+
+def reset_gemini_quota_exhaustion() -> None:
+    """Reset the circuit breaker (e.g. if the user enters a new API key)."""
+    global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
+    _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL = 0.0
 
 
 class _TruncatedOutputError(RuntimeError):
@@ -1069,7 +1095,7 @@ async def polish_text_with_gemini(
                         right_err: Optional[Exception] = None
                         try:
                             left_txt, left_ok = await _polish_items_reliably(batch_items[:mid], prev_snippet, depth + 1)
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_l:
                             left_err = ex_l
@@ -1077,7 +1103,7 @@ async def polish_text_with_gemini(
                         right_prev = _extract_clean_tail_context(left_txt if left_ok else batch_items[mid - 1][1])
                         try:
                             right_txt, right_ok = await _polish_items_reliably(batch_items[mid:], right_prev, depth + 1)
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_r:
                             right_err = ex_r
@@ -1229,7 +1255,7 @@ async def polish_text_with_gemini(
                             polished_res, _ = await _polish_items_reliably(batch_items, prev_snippet=prev_snippet)
                             last_ex = None
                             break
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex:
                             last_ex = ex
@@ -1376,7 +1402,7 @@ async def polish_text_with_gemini(
                             res_text, _ = await _polish_chunk_reliably(c_text, prev_snippet=prev_snippet)
                             last_ex = None
                             break
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex:
                             last_ex = ex
@@ -1446,6 +1472,10 @@ async def _call_gemini_api(
     meta_out: Optional[dict[str, Any]] = None,
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
+    if is_gemini_quota_exhausted():
+        rem = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
+        raise DailyQuotaExhaustedError(f"Gemini daily quota exhausted (cooldown active for next {rem}s).")
+
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
         for tag in ("DRAFT_TO_POLISH", "TEXT_TO_POLISH", "TEXT_TO_TRANSLATE"):
@@ -1625,6 +1655,31 @@ async def _call_gemini_api(
                         elif resp.status == 429:
                             err_text = await resp.text()
                             last_error = f"Gemini API error (429): {err_text}"
+
+                            cooldown_sec = 3600.0
+                            m_delay = re.search(r'"retryDelay":\s*"(\d+)s"', err_text)
+                            if m_delay:
+                                try:
+                                    cooldown_sec = max(300.0, float(m_delay.group(1)))
+                                except Exception:
+                                    pass
+
+                            err_low = err_text.lower()
+                            if (
+                                "requests per day limit exceeded" in err_low
+                                or "quota exceeded" in err_low
+                                or "resource_exhausted" in err_low
+                                or "per day" in err_low
+                                or cooldown_sec >= 180.0
+                            ):
+                                logger.warning(
+                                    f"Gemini daily quota exhausted ({resp.status}). Tripping circuit breaker for {int(cooldown_sec)}s. Skipping all remaining candidate models."
+                                )
+                                trip_gemini_quota_exhaustion(cooldown_sec)
+                                raise DailyQuotaExhaustedError(
+                                    f"Gemini daily quota limit exceeded: please retry in {int(cooldown_sec)}s."
+                                )
+
                             logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
                             if attempt < max_attempts - 1:
                                 await asyncio.sleep(2.5)
@@ -1649,7 +1704,7 @@ async def _call_gemini_api(
                                 raise PermissionError(last_error)
                             logger.warning(f"Model {model} failed: {last_error}")
                             break
-                except (PermissionError, _TruncatedOutputError):
+                except (PermissionError, _TruncatedOutputError, DailyQuotaExhaustedError):
                     raise
                 except asyncio.TimeoutError:
                     last_error = f"Model {model} timed out after 60s."
@@ -1916,7 +1971,7 @@ async def translate_and_polish_direct_with_gemini(
                         try:
                             left_res = await _translate_items_reliably([(only_pn, l_txt)], prev_tail, depth + 1)
                             left_ok = True
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_l:
                             left_err = ex_l
@@ -1926,7 +1981,7 @@ async def translate_and_polish_direct_with_gemini(
                         try:
                             right_res = await _translate_items_reliably([(None, r_txt)], _extract_clean_tail_context(l_txt), depth + 1)
                             right_ok = True
-                        except PermissionError:
+                        except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_r:
                             right_err = ex_r

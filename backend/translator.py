@@ -226,15 +226,22 @@ async def _translate_with_retry(
                     await asyncio.sleep(0.5 * (attempt + 1))
 
     # 2. Fast MyMemory fallback for short chunks when GTX is rate-limited
-    if session is not None and len(text) <= 480:
-        mm_res = await _translate_mymemory_async(session, text, source_lang, target_lang)
-        if mm_res:
-            if cache_key and _db_set_cached:
-                try:
-                    _db_set_cached(cache_key, text, mm_res, source_lang, target_lang, engine="google")
-                except Exception:
-                    pass
-            return mm_res
+    if len(text) <= 490:
+        try:
+            from deep_translator import MyMemoryTranslator
+            src_norm = "english" if (source_lang or "").lower().startswith("en") else source_lang
+            tgt_norm = "greek" if (target_lang or "").lower().startswith(("el", "gr")) else target_lang
+            mm_trans = MyMemoryTranslator(source=src_norm, target=tgt_norm)
+            mm_res = await loop.run_in_executor(None, mm_trans.translate, text)
+            if mm_res and mm_res.strip() and not any(m in mm_res.upper() for m in _MYMEMORY_ERROR_MARKERS):
+                if cache_key and _db_set_cached:
+                    try:
+                        _db_set_cached(cache_key, text, mm_res, source_lang, target_lang, engine="google")
+                    except Exception:
+                        pass
+                return mm_res
+        except Exception as mm_err:
+            logger.debug(f"MyMemory fallback failed: {mm_err}")
 
     # 3. Fallback to deep_translator (only if not actively in Google 429 cooldown)
     if time.time() >= _GTX_COOLDOWN_UNTIL:
@@ -268,23 +275,29 @@ async def _translate_with_retry(
         from backend.settings_manager import get_setting
         gemini_key = (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
         if gemini_key and not gemini_key.startswith(("AQ.Test", "AIzaTest")):
-            from backend.ai_polisher import _call_gemini_api
-            tgt_label = "Greek" if target_lang.lower().startswith(("gr", "el")) else "English"
-            src_label = "English" if source_lang.lower().startswith("en") else "Greek"
-            prompt = (
-                f"Translate the following text accurately and naturally from {src_label} to {tgt_label}. "
-                f"Preserve paragraph structure and punctuation. Return ONLY the translated text without comments."
-            )
-            gem_res = await _call_gemini_api(text, gemini_key, prompt, session=session, temperature=0.2)
-            if gem_res and gem_res.strip():
-                if cache_key and _db_set_cached:
-                    try:
-                        _db_set_cached(cache_key, text, gem_res, source_lang, target_lang, engine="google")
-                    except Exception:
-                        pass
-                return gem_res.strip()
-    except Exception as gem_err:
-        logger.warning(f"Gemini automatic failover failed: {gem_err}")
+            from backend.ai_polisher import _call_gemini_api, is_gemini_quota_exhausted, DailyQuotaExhaustedError
+            if not is_gemini_quota_exhausted():
+                tgt_label = "Greek" if target_lang.lower().startswith(("gr", "el")) else "English"
+                src_label = "English" if source_lang.lower().startswith("en") else "Greek"
+                prompt = (
+                    f"Translate the following text accurately and naturally from {src_label} to {tgt_label}. "
+                    f"Preserve paragraph structure and punctuation. Return ONLY the translated text without comments."
+                )
+                try:
+                    gem_res = await _call_gemini_api(text, gemini_key, prompt, session=session, temperature=0.2)
+                    if gem_res and gem_res.strip():
+                        if cache_key and _db_set_cached:
+                            try:
+                                _db_set_cached(cache_key, text, gem_res, source_lang, target_lang, engine="google")
+                            except Exception:
+                                pass
+                        return gem_res.strip()
+                except DailyQuotaExhaustedError as dq_err:
+                    logger.warning(f"Gemini failover skipped (daily quota exhausted): {dq_err}")
+                except Exception as ex:
+                    logger.warning(f"Gemini automatic failover failed: {ex}")
+    except Exception as ex:
+        logger.debug(f"Gemini failover check error: {ex}")
 
     logger.error("All translation retries failed for chunk. Returning original text.")
     return text
