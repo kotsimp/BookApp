@@ -3,7 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-39%2F39%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-38%2F38%20Suites%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **Single-Pass Direct AI Translation & Polish**, **in-place format preservation** (fonts, sizes, headings, tables, styles), **automatic Graphic Novel / Scanned Comic & Manga translation** with 100% artwork preservation, and **professional AI audiobooks** (including multi-voice dramatization and M4B export) using Microsoft Edge neural voices. Supports a **Hybrid AI Architecture** allowing seamless operation with Google Gemini or completely free, local/web alternatives.
 
@@ -22,6 +22,7 @@ A modern, high-performance local web application to **translate documents** betw
 
 | Feature | Details |
 |---|---|
+| **Gemini Multi-Key API Pool & Auto-Failover (Up to 4 Keys)** | Configure **up to 4 free Google Gemini API keys** simultaneously in the Settings modal (Slot 1 Primary + Slots 2–4 Backups). When Slot 1 encounters HTTP 429 / daily quota exhaustion (1,500 requests/day per key), the engine **seamlessly and instantaneously rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress. Provides **up to 6,000 free AI requests/day ($0 cost)** using standard free Google accounts. Features thread-safe per-key cooldown management (`GeminiKeyPool`), individual slot status badges (`🟢 Active`, `🟡 Standby`, `⏳ Exhausted with Reset Countdown`, `⚪ Empty`), and UI pool health diagnostics. The global quota timer triggers only if all configured keys are exhausted. |
 | **Advanced UI/UX Suite: Reader, Player, Smart Resume & Live ETA** | **1.** 📖 **Distraction-Free "Read Now" Reader View**: Clean in-browser reading modal with serif typography, font-size zoom, 3 themes (Paper, Sepia, Dark), and instant Single-Column or Side-by-Side (English ↔ Greek) bilingual comparison. **2.** 🎧 **Pro Audiobook Player**: Built-in player with playback rate presets (`0.8x`, `1.0x`, `1.2x`, `1.5x`), quick skip buttons (`⏪ 15s`, `⏩ 15s`), track metadata, and Chapter/Part selector. **3.** 📌 **Smart Resume Banner**: Automatically detects interrupted or checkpointed jobs on startup and offers instant 1-click resumption. **4.** ⏱️ **Live ETA & Speed Indicator**: Real-time remaining time calculation (`~7λ 30δ`) and throughput tracking (`22 σελ/λ` or `1.5 batches/δ`). **5.** 🏷️ **Hybrid Engine Badge**: Live visual indicator in progress card showing whether Gemini Flash or the Free Neural Engine is actively translating. **6.** 🗣️ **Contextual Voice Sample**: Voice audition box supporting custom user phrases or excerpts from the uploaded book. |
 | **Prior Choice Quota Routing & Free Models Default (`Free Mode`)** | Prior to translating or generating an audiobook, users can choose their preferred behavior when Gemini API quota is exhausted: `⏳ Αναμονή για επαναφορά (Wait for Reset)` (pausing safely at disk checkpoint with live countdown timer and resume button, preserving 100% Gemini quality) or `🔄 Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback)` (seamlessly falling back to free Google Translate & Edge-TTS without stopping). **When no Gemini API key is configured, BookApp automatically activates Free Mode as the default** across all modules: translation, editorial typography, and neural audiobooks run 100% free with zero keys, subscriptions, or credit card requirements. |
 | **Hybrid AI Architecture** | Modular three-tier architecture (Polishing, Translation, TTS) with independent provider routing between primary (Google Gemini) and secondary completely free self-hosted / local engines (Edge-TTS, Piper TTS `el_GR-joy-medium`, NLLB-200, and OpenAI-compatible endpoints like VoiceStudio). |
@@ -111,6 +112,7 @@ BookApp/
 │   ├── exporter.py          # Exporter for DOCX, PDF, EPUB, TXT, CBZ, CBR
 │   ├── glossary.py          # Categorized custom terminology mapping & regex replacement
 │   ├── settings_manager.py  # Thread-safe persistent application settings
+│   ├── gemini_key_pool.py   # Multi-Key Gemini API Pool & Failover Manager (up to 4 keys)
 │   ├── translator.py        # High-speed chunked Google GTX translation engine
 │   ├── tts_engine.py        # Multi-voice Edge-TTS neural audio generator & M4B exporter
 │   ├── job_manager.py       # Persistent job state tracking, SQLite sync, file_path healing & cleanup
@@ -128,7 +130,7 @@ BookApp/
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide in Greek
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 37 Automated Test Suites (100% PASS · 40/40 Endpoints)
+├── tests/                   # 38 Automated Test Suites (100% PASS · 45/45 Endpoints)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt

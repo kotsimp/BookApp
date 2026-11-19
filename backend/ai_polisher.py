@@ -196,6 +196,17 @@ def is_gemini_quota_exhausted() -> bool:
     """Returns True if Gemini daily quota was tripped and is currently in cooldown."""
     global _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL
     now = time.time()
+    if now < _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL:
+        return True
+
+    try:
+        from backend.gemini_key_pool import GeminiKeyPool
+        # If pool has keys configured and all are exhausted
+        if GeminiKeyPool.get_keys() and not GeminiKeyPool.get_active_key():
+            return True
+    except Exception:
+        pass
+
     try:
         from backend.settings_manager import get_setting
         persisted = float(get_setting("gemini_quota_exhausted_until", 0.0) or 0.0)
@@ -233,6 +244,13 @@ def reset_gemini_quota_exhaustion() -> None:
 
 def get_gemini_quota_info() -> dict[str, Any]:
     """Returns a dict with quota status, remaining seconds, exact reset clock time, and user-facing message."""
+    pool_status: dict[str, Any] = {}
+    try:
+        from backend.gemini_key_pool import GeminiKeyPool
+        pool_status = GeminiKeyPool.get_pool_status()
+    except Exception:
+        pass
+
     exhausted = is_gemini_quota_exhausted()
     if not exhausted:
         return {
@@ -242,10 +260,16 @@ def get_gemini_quota_info() -> dict[str, Any]:
             "reset_time_str": "",
             "cooldown_time_str": "",
             "message": None,
+            "pool": pool_status,
         }
-    rem_sec = int(max(1.0, _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL - time.time()))
+
+    now = time.time()
+    earliest = pool_status.get("earliest_reset_timestamp", 0.0) if pool_status else 0.0
+    reset_ts = earliest if earliest > now else max(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL, now + 1.0)
+    rem_sec = int(max(1.0, reset_ts - now))
+
     import datetime
-    reset_dt = datetime.datetime.fromtimestamp(_GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL)
+    reset_dt = datetime.datetime.fromtimestamp(reset_ts)
     reset_time_str = reset_dt.strftime("%H:%M:%S")
     rem_min = rem_sec // 60
     if rem_min > 60:
@@ -263,10 +287,11 @@ def get_gemini_quota_info() -> dict[str, Any]:
     return {
         "exhausted": True,
         "remaining_seconds": rem_sec,
-        "reset_timestamp": _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL,
+        "reset_timestamp": reset_ts,
         "reset_time_str": reset_time_str,
         "cooldown_time_str": time_str,
         "message": msg,
+        "pool": pool_status,
     }
 
 
@@ -1551,7 +1576,21 @@ async def _call_gemini_api(
     meta_out: Optional[dict[str, Any]] = None,
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
-    if not api_key.startswith(("AQ.Test", "AIzaTest")) and is_gemini_quota_exhausted():
+    from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
+
+    # Resolve active key: use provided key or next available key from the 4-key pool
+    attempted_keys: set[str] = set()
+    pool_keys = GeminiKeyPool.get_keys()
+    initial_key = (api_key or "").strip()
+    if not initial_key or (not initial_key.startswith(("AQ.Test", "AIzaTest")) and GeminiKeyPool.is_key_exhausted(initial_key)):
+        initial_key = GeminiKeyPool.get_active_key() or initial_key
+
+    # Allow rotation across pool if no key was explicitly pinned, or if the provided key belongs to the configured pool
+    allow_pool_rotation = (not (api_key or "").strip()) or (initial_key in pool_keys)
+
+    current_key = initial_key
+
+    if not current_key.startswith(("AQ.Test", "AIzaTest")) and is_gemini_quota_exhausted():
         q_info = get_gemini_quota_info()
         raise DailyQuotaExhaustedError(
             f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
@@ -1559,7 +1598,7 @@ async def _call_gemini_api(
             f"Αλλάξτε API Key στις Ρυθμίσεις ή περιμένετε την αντίστροφη μέτρηση για αυτόματη συνέχιση."
         )
 
-    if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
+    if current_key.startswith("AQ.Test") or current_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
         for tag in ("DRAFT_TO_POLISH", "TEXT_TO_POLISH", "TEXT_TO_TRANSLATE"):
             m_tag = re.search(rf"<{tag}>(.*?)</{tag}>", content_text, re.DOTALL | re.IGNORECASE)
@@ -1618,214 +1657,246 @@ async def _call_gemini_api(
     if owns_session:
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60))
     try:
-        candidates = []
+        while current_key:
+            attempted_keys.add(current_key)
+            active_key = current_key
+            switched_key = False
 
-        # If a full (non-lite, non-gemma) working model was already cached, try it first
-        if (
-            _CACHED_WORKING_MODEL
-            and not _CACHED_WORKING_MODEL.startswith("gemma")
-            and "lite" not in _CACHED_WORKING_MODEL.lower()
-        ):
-            candidates.append(_CACHED_WORKING_MODEL)
+            candidates = []
 
-        discovered = await _get_available_models(api_key, session)
-        if discovered:
-            # 1. Preferred full Flash models first, then Flash-Lite
-            for pref in PREFERRED_FLASH_MODELS:
-                if pref in discovered and pref not in candidates:
-                    candidates.append(pref)
+            # If a full (non-lite, non-gemma) working model was already cached, try it first
+            if (
+                _CACHED_WORKING_MODEL
+                and not _CACHED_WORKING_MODEL.startswith("gemma")
+                and "lite" not in _CACHED_WORKING_MODEL.lower()
+            ):
+                candidates.append(_CACHED_WORKING_MODEL)
 
-            # 2. Other non-gemma, non-lite models
-            for m in discovered:
-                if not m.startswith("gemma") and "lite" not in m.lower() and m not in candidates:
-                    candidates.append(m)
+            discovered = await _get_available_models(active_key, session)
+            if discovered:
+                # 1. Preferred full Flash models first, then Flash-Lite
+                for pref in PREFERRED_FLASH_MODELS:
+                    if pref in discovered and pref not in candidates:
+                        candidates.append(pref)
 
-            # 3. Remaining non-gemma (lite) models
-            for m in discovered:
-                if not m.startswith("gemma") and m not in candidates:
-                    candidates.append(m)
+                # 2. Other non-gemma, non-lite models
+                for m in discovered:
+                    if not m.startswith("gemma") and "lite" not in m.lower() and m not in candidates:
+                        candidates.append(m)
 
-            # 4. Gemma models as last resort
-            for m in discovered:
-                if m.startswith("gemma") and m not in candidates:
-                    candidates.append(m)
-        else:
-            for fb in PREFERRED_FLASH_MODELS:
-                if fb not in candidates:
-                    candidates.append(fb)
+                # 3. Remaining non-gemma (lite) models
+                for m in discovered:
+                    if not m.startswith("gemma") and m not in candidates:
+                        candidates.append(m)
 
-        if exclude_models:
-            filtered = [m for m in candidates if m not in exclude_models]
-            if filtered:
-                candidates = filtered
+                # 4. Gemma models as last resort
+                for m in discovered:
+                    if m.startswith("gemma") and m not in candidates:
+                        candidates.append(m)
+            else:
+                for fb in PREFERRED_FLASH_MODELS:
+                    if fb not in candidates:
+                        candidates.append(fb)
 
-        last_error = None
-        saw_truncation = False
-        saw_block = False
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        }
-        for model in candidates:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            # Disable hidden thinking on Flash models (2.5 & 3.x) so output budget isn't eaten by chain-of-thought
-            m_low = model.lower()
-            use_no_thinking = (
-                "flash" in m_low
-                and "pro" not in m_low
-                and not m_low.startswith("gemma")
-                and ("2.5" in m_low or "3" in m_low or "latest" in m_low)
-            )
-            req_payload: dict[str, Any] = (
-                {
-                    **base_payload,
-                    "generationConfig": {
-                        **base_payload["generationConfig"],
-                        "thinkingConfig": {"thinkingBudget": 0},
-                    },
-                }
-                if use_no_thinking
-                else dict(base_payload)
-            )
+            if exclude_models:
+                filtered = [m for m in candidates if m not in exclude_models]
+                if filtered:
+                    candidates = filtered
 
-            max_attempts = 3
-            for attempt in range(max_attempts):
-                try:
-                    req_timeout = aiohttp.ClientTimeout(total=60)
-                    async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            raw_text, finish_reason = _extract_gemini_text_and_reason(result)
-                            if not raw_text:
-                                saw_block = True
-                                last_error = f"Model {model} returned empty/blocked content (reason: {finish_reason or 'UNKNOWN'})"
-                                logger.warning(f"Model {model} candidate returned no content parts (finishReason: {finish_reason or 'UNKNOWN'})")
+            last_error = None
+            saw_truncation = False
+            saw_block = False
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": active_key,
+            }
+
+            for model in candidates:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                # Disable hidden thinking on Flash models (2.5 & 3.x) so output budget isn't eaten by chain-of-thought
+                m_low = model.lower()
+                use_no_thinking = (
+                    "flash" in m_low
+                    and "pro" not in m_low
+                    and not m_low.startswith("gemma")
+                    and ("2.5" in m_low or "3" in m_low or "latest" in m_low)
+                )
+                req_payload: dict[str, Any] = (
+                    {
+                        **base_payload,
+                        "generationConfig": {
+                            **base_payload["generationConfig"],
+                            "thinkingConfig": {"thinkingBudget": 0},
+                        },
+                    }
+                    if use_no_thinking
+                    else dict(base_payload)
+                )
+
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    try:
+                        req_timeout = aiohttp.ClientTimeout(total=60)
+                        async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
+                            if resp.status == 200:
+                                result = await resp.json()
+                                raw_text, finish_reason = _extract_gemini_text_and_reason(result)
+                                if not raw_text:
+                                    saw_block = True
+                                    last_error = f"Model {model} returned empty/blocked content (reason: {finish_reason or 'UNKNOWN'})"
+                                    logger.warning(f"Model {model} candidate returned no content parts (finishReason: {finish_reason or 'UNKNOWN'})")
+                                    break
+                                if finish_reason == "MAX_TOKENS":
+                                    logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
+                                    saw_truncation = True
+                                    raise _TruncatedOutputError(f"Model {model} hit MAX_TOKENS")
+                                polished = sanitize_ai_output(raw_text)
+                                if not polished:
+                                    saw_block = True
+                                    last_error = f"Model {model} returned empty text after sanitization."
+                                    break
+                                # Only pin full non-lite Flash models as the cached primary model
+                                if "lite" not in m_low and not m_low.startswith("gemma"):
+                                    _CACHED_WORKING_MODEL = model
+                                if meta_out is not None:
+                                    meta_out["model"] = model
+                                    meta_out["finish_reason"] = finish_reason
+                                logger.info(f"Gemini API success using model: {model}")
+                                if cache_key and not detect_greek_output_issues(polished, source_text=content_text):
+                                    try:
+                                        from backend.database import db_set_cached_translation
+                                        db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v4")
+                                    except Exception:
+                                        pass
+                                return polished
+                            elif resp.status in (401, 403):
+                                err_text = await resp.text()
+                                raise PermissionError(f"Gemini API authentication error ({resp.status}): {err_text}")
+                            elif resp.status == 404:
+                                logger.debug(f"Model {model} returned 404, trying next candidate...")
+                                if _CACHED_WORKING_MODEL == model:
+                                    _CACHED_WORKING_MODEL = None
                                 break
-                            if finish_reason == "MAX_TOKENS":
-                                logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
-                                saw_truncation = True
-                                raise _TruncatedOutputError(f"Model {model} hit MAX_TOKENS")
-                            polished = sanitize_ai_output(raw_text)
-                            if not polished:
-                                saw_block = True
-                                last_error = f"Model {model} returned empty text after sanitization."
+                            elif resp.status in (500, 502, 503, 504):
+                                err_text = await resp.text()
+                                last_error = f"Gemini API error ({resp.status}): {err_text}"
+                                logger.info(f"Model {model} overloaded/unavailable ({resp.status}). Immediately trying next candidate...")
+                                if _CACHED_WORKING_MODEL == model:
+                                    _CACHED_WORKING_MODEL = None
                                 break
-                            # Only pin full non-lite Flash models as the cached primary model
-                            if "lite" not in m_low and not m_low.startswith("gemma"):
-                                _CACHED_WORKING_MODEL = model
-                            if meta_out is not None:
-                                meta_out["model"] = model
-                                meta_out["finish_reason"] = finish_reason
-                            logger.info(f"Gemini API success using model: {model}")
-                            if cache_key and not detect_greek_output_issues(polished, source_text=content_text):
-                                try:
-                                    from backend.database import db_set_cached_translation
-                                    db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v4")
-                                except Exception:
-                                    pass
-                            return polished
-                        elif resp.status in (401, 403):
-                            err_text = await resp.text()
-                            raise PermissionError(f"Gemini API authentication error ({resp.status}): {err_text}")
-                        elif resp.status == 404:
-                            logger.debug(f"Model {model} returned 404, trying next candidate...")
-                            if _CACHED_WORKING_MODEL == model:
-                                _CACHED_WORKING_MODEL = None
-                            break
-                        elif resp.status in (500, 502, 503, 504):
-                            err_text = await resp.text()
-                            last_error = f"Gemini API error ({resp.status}): {err_text}"
-                            logger.info(f"Model {model} overloaded/unavailable ({resp.status}). Immediately trying next candidate...")
-                            if _CACHED_WORKING_MODEL == model:
-                                _CACHED_WORKING_MODEL = None
-                            break
-                        elif resp.status == 429:
-                            err_text = await resp.text()
-                            last_error = f"Gemini API error (429): {err_text}"
+                            elif resp.status == 429:
+                                err_text = await resp.text()
+                                last_error = f"Gemini API error (429): {err_text}"
 
-                            cooldown_sec = 3600.0
-                            m_delay = re.search(r'"retryDelay":\s*"(\d+)s"', err_text)
-                            if m_delay:
-                                try:
-                                    cooldown_sec = max(300.0, float(m_delay.group(1)))
-                                except Exception:
-                                    pass
+                                cooldown_sec = 3600.0
+                                m_delay = re.search(r'"retryDelay":\s*"(\d+)s"', err_text)
+                                if m_delay:
+                                    try:
+                                        cooldown_sec = max(300.0, float(m_delay.group(1)))
+                                    except Exception:
+                                        pass
 
-                            err_low = err_text.lower()
-                            if (
-                                "requests per day limit exceeded" in err_low
-                                or "quota exceeded" in err_low
-                                or "resource_exhausted" in err_low
-                                or "per day" in err_low
-                                or cooldown_sec >= 180.0
-                            ):
-                                trip_gemini_quota_exhaustion(cooldown_sec)
-                                q_info = get_gemini_quota_info()
-                                logger.warning(
-                                    f"Gemini daily quota exhausted ({resp.status}). Tripping circuit breaker for {int(cooldown_sec)}s. Skipping all remaining candidate models."
-                                )
-                                raise DailyQuotaExhaustedError(
-                                    f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
-                                    f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                                    f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
-                                    f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
-                                )
+                                err_low = err_text.lower()
+                                if (
+                                    "requests per day limit exceeded" in err_low
+                                    or "quota exceeded" in err_low
+                                    or "resource_exhausted" in err_low
+                                    or "per day" in err_low
+                                    or cooldown_sec >= 180.0
+                                ):
+                                    GeminiKeyPool.mark_key_exhausted(active_key, cooldown_sec, reason=err_text[:120])
+                                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
+                                    if next_pool_key:
+                                        logger.warning(
+                                            f"[Gemini Key Pool] Active key {mask_api_key(active_key)} reached quota. "
+                                            f"Seamlessly rotating to next available key {mask_api_key(next_pool_key)}..."
+                                        )
+                                        current_key = next_pool_key
+                                        switched_key = True
+                                        break
 
-                            logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
-                            if attempt < max_attempts - 1:
-                                await asyncio.sleep(2.5)
-                                continue
-                            break
-                        else:
-                            err_text = await resp.text()
-                            # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
-                            if resp.status == 400 and "thinking" in err_text.lower() and "thinkingConfig" in req_payload.get("generationConfig", {}):
-                                req_payload = {
-                                    **req_payload,
-                                    "generationConfig": {
-                                        k: v for k, v in req_payload["generationConfig"].items() if k != "thinkingConfig"
-                                    },
-                                }
-                                continue
-                            if resp.status == 400 and "safety" in err_text.lower() and "safetySettings" in req_payload:
-                                req_payload = {k: v for k, v in req_payload.items() if k != "safetySettings"}
-                                continue
-                            last_error = f"Gemini API error ({resp.status}): {err_text}"
-                            if resp.status == 400 and "API_KEY_INVALID" in err_text:
-                                raise PermissionError(last_error)
-                            logger.warning(f"Model {model} failed: {last_error}")
-                            break
-                except (PermissionError, _TruncatedOutputError, DailyQuotaExhaustedError):
-                    raise
-                except asyncio.TimeoutError:
-                    last_error = f"Model {model} timed out after 60s."
-                    logger.warning(f"Model {model} timed out after 60s. Switching immediately to next candidate...")
-                    if _CACHED_WORKING_MODEL == model:
-                        _CACHED_WORKING_MODEL = None
+                                    trip_gemini_quota_exhaustion(cooldown_sec)
+                                    q_info = get_gemini_quota_info()
+                                    logger.warning(
+                                        f"Gemini daily quota exhausted ({resp.status}). All {len(attempted_keys)} pool keys exhausted. Tripping circuit breaker for {int(cooldown_sec)}s."
+                                    )
+                                    raise DailyQuotaExhaustedError(
+                                        f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+                                        f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                                        f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+                                        f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+                                    )
+
+                                logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
+                                if attempt < max_attempts - 1:
+                                    await asyncio.sleep(2.5)
+                                    continue
+                                break
+                            else:
+                                err_text = await resp.text()
+                                # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
+                                if resp.status == 400 and "thinking" in err_text.lower() and "thinkingConfig" in req_payload.get("generationConfig", {}):
+                                    req_payload = {
+                                        **req_payload,
+                                        "generationConfig": {
+                                            k: v for k, v in req_payload["generationConfig"].items() if k != "thinkingConfig"
+                                        },
+                                    }
+                                    continue
+                                if resp.status == 400 and "safety" in err_text.lower() and "safetySettings" in req_payload:
+                                    req_payload = {k: v for k, v in req_payload.items() if k != "safetySettings"}
+                                    continue
+                                last_error = f"Gemini API error ({resp.status}): {err_text}"
+                                if resp.status == 400 and "API_KEY_INVALID" in err_text:
+                                    raise PermissionError(last_error)
+                                logger.warning(f"Model {model} failed: {last_error}")
+                                break
+                    except (PermissionError, _TruncatedOutputError, DailyQuotaExhaustedError):
+                        raise
+                    except asyncio.TimeoutError:
+                        last_error = f"Model {model} timed out after 60s."
+                        logger.warning(f"Model {model} timed out after 60s. Switching immediately to next candidate...")
+                        if _CACHED_WORKING_MODEL == model:
+                            _CACHED_WORKING_MODEL = None
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.warning(f"Call to {model} failed (attempt {attempt + 1}/{max_attempts}): {e}")
+                        if _CACHED_WORKING_MODEL == model:
+                            _CACHED_WORKING_MODEL = None
+                        if attempt < max_attempts - 1:
+                            await asyncio.sleep(1.0)
+
+                if switched_key:
                     break
-                except Exception as e:
-                    last_error = str(e)
-                    logger.warning(f"Call to {model} failed (attempt {attempt + 1}/{max_attempts}): {e}")
-                    if _CACHED_WORKING_MODEL == model:
-                        _CACHED_WORKING_MODEL = None
-                    if attempt < max_attempts - 1:
-                        await asyncio.sleep(1.0)
 
-        if saw_truncation:
-            raise _TruncatedOutputError(last_error or "Gemini output truncated by MAX_TOKENS.")
-        if saw_block:
-            raise _ContentBlockedError(last_error or "Gemini content blocked/empty across all candidates.")
-        err_low = (last_error or "").lower()
-        if "429" in err_low or "quota" in err_low or "resource_exhausted" in err_low or "rate limit" in err_low:
-            trip_gemini_quota_exhaustion(3600.0)
-            q_info = get_gemini_quota_info()
-            raise DailyQuotaExhaustedError(
-                f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
-                f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
-                f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
-            )
-        raise RuntimeError(last_error or "All Gemini candidate models failed.")
+            if switched_key:
+                continue
+
+            if saw_truncation:
+                raise _TruncatedOutputError(last_error or "Gemini output truncated by MAX_TOKENS.")
+            if saw_block:
+                raise _ContentBlockedError(last_error or "Gemini content blocked/empty across all candidates.")
+            err_low = (last_error or "").lower()
+            if "429" in err_low or "quota" in err_low or "resource_exhausted" in err_low or "rate limit" in err_low:
+                GeminiKeyPool.mark_key_exhausted(active_key, 3600.0, reason=err_low[:120])
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
+                if next_pool_key:
+                    logger.warning(
+                        f"[Gemini Key Pool] Active key {mask_api_key(active_key)} rate limited. Seamlessly rotating to next key {mask_api_key(next_pool_key)}..."
+                    )
+                    current_key = next_pool_key
+                    continue
+
+                trip_gemini_quota_exhaustion(3600.0)
+                q_info = get_gemini_quota_info()
+                raise DailyQuotaExhaustedError(
+                    f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+                    f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                    f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+                    f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+                )
+            raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:
         if owns_session:
             await session.close()

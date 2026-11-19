@@ -1353,20 +1353,26 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
 
 class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
+    gemini_api_keys: Optional[list[str]] = None
     default_quota_behavior: Optional[str] = None
 
 
 @app.get("/api/settings")
 async def get_app_settings():
     from backend.settings_manager import get_setting
-    key = (get_setting("gemini_api_key", "") or "").strip()
+    from backend.gemini_key_pool import GeminiKeyPool
+    keys = GeminiKeyPool.get_keys()
+    key = keys[0] if keys else ""
     has_key = bool(key)
     default_behavior = "wait" if has_key else "fallback"
     quota_behavior = get_setting("default_quota_behavior", default_behavior) or default_behavior
     if not has_key:
         quota_behavior = "fallback"
+    pool_status = GeminiKeyPool.get_pool_status()
     return {
         "gemini_api_key": key,
+        "gemini_api_keys": keys,
+        "pool": pool_status,
         "default_quota_behavior": quota_behavior,
         "has_gemini_key": has_key,
         "default_engine": "gemini" if has_key else "free",
@@ -1378,26 +1384,62 @@ async def update_app_settings(req: SettingsRequest):
     from backend.settings_manager import save_setting
     from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
     from backend.comic_translator import reset_vision_model_cache
-    if req.gemini_api_key is not None:
-        save_setting("gemini_api_key", req.gemini_api_key.strip())
+    from backend.gemini_key_pool import GeminiKeyPool
+
+    if req.gemini_api_keys is not None:
+        GeminiKeyPool.set_keys(req.gemini_api_keys)
         reset_gemini_quota_exhaustion()
         reset_model_cache()
         reset_vision_model_cache()
+    elif req.gemini_api_key is not None:
+        k = req.gemini_api_key.strip()
+        GeminiKeyPool.set_keys([k] if k else [])
+        reset_gemini_quota_exhaustion()
+        reset_model_cache()
+        reset_vision_model_cache()
+
     if req.default_quota_behavior is not None:
         val = req.default_quota_behavior.strip().lower()
         if val in ("wait", "fallback"):
             save_setting("default_quota_behavior", val)
-    return {"status": "ok"}
+    return {"status": "ok", "pool": GeminiKeyPool.get_pool_status()}
+
+
+@app.get("/api/gemini/pool")
+async def get_gemini_pool_status():
+    """Returns detailed real-time health diagnostics for the Gemini Multi-Key Pool."""
+    from backend.gemini_key_pool import GeminiKeyPool
+    return GeminiKeyPool.get_pool_status()
+
+
+@app.post("/api/gemini/pool")
+async def update_gemini_pool_keys(payload: dict):
+    """Sets or updates the pool keys (list of up to 4 keys)."""
+    keys = payload.get("keys", [])
+    if not isinstance(keys, list):
+        raise HTTPException(400, "'keys' must be a list of API key strings.")
+    from backend.gemini_key_pool import GeminiKeyPool
+    from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
+    from backend.comic_translator import reset_vision_model_cache
+    saved = GeminiKeyPool.set_keys(keys)
+    reset_gemini_quota_exhaustion()
+    reset_model_cache()
+    reset_vision_model_cache()
+    return {"status": "ok", "keys_count": len(saved), "pool": GeminiKeyPool.get_pool_status()}
 
 
 @app.delete("/api/settings/{key}")
 async def delete_app_setting(key: str):
-    if key not in {"gemini_api_key"}:
+    if key not in {"gemini_api_key", "gemini_api_keys"}:
         raise HTTPException(400, f"Unsupported setting key '{key}'.")
     from backend.settings_manager import delete_setting
-    from backend.ai_polisher import reset_model_cache
+    from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
     from backend.comic_translator import reset_vision_model_cache
-    delete_setting(key)
+    from backend.gemini_key_pool import GeminiKeyPool
+    GeminiKeyPool.set_keys([])
+    delete_setting("gemini_api_key")
+    delete_setting("gemini_api_keys")
+    reset_gemini_quota_exhaustion()
     reset_model_cache()
     reset_vision_model_cache()
     return {"status": "deleted", "key": key}
@@ -1416,9 +1458,9 @@ async def get_gemini_status():
 
 @app.post("/api/gemini/reset-quota")
 async def reset_gemini_quota_endpoint():
-    """Manually resets the Gemini daily quota circuit breaker cooldown."""
-    from backend.ai_polisher import reset_gemini_quota_exhaustion
-    reset_gemini_quota_exhaustion()
+    """Manually resets the Gemini daily quota circuit breaker cooldown and per-key cooldowns."""
+    from backend.gemini_key_pool import GeminiKeyPool
+    GeminiKeyPool.reset_quota()
     return {"status": "ok", "message": "Gemini quota circuit breaker reset."}
 
 

@@ -2112,46 +2112,123 @@ let _polishPollTimer = null;
 let _polishRunning = false;
 
 function toggleApiKeyVisibility() {
-  const input = document.getElementById('gemini-api-key');
+  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const firstInput = document.getElementById('gemini-api-key');
+  const isPass = firstInput && firstInput.type === 'password';
+  const newType = isPass ? 'text' : 'password';
+  const labelEl = document.getElementById('toggle-key-label');
+
+  slotIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.type = newType;
+  });
+
   const btn = document.getElementById('btn-toggle-key');
-  if (input.type === 'password') {
-    input.type = 'text';
-    btn.textContent = '🔒';
-  } else {
-    input.type = 'password';
-    btn.textContent = '👁️';
+  if (btn) {
+    const iconSpan = btn.querySelector('span:first-child');
+    if (iconSpan) iconSpan.textContent = isPass ? '🔒' : '👁️';
+  }
+  if (labelEl) {
+    labelEl.textContent = isPass ? 'Απόκρυψη' : 'Εμφάνιση';
+  }
+}
+
+function renderGeminiPoolStatus(poolData) {
+  if (!poolData) return;
+  const slots = poolData.slots || [];
+  const total = poolData.total_keys || 0;
+  const avail = poolData.available_keys || 0;
+  const allExh = Boolean(poolData.all_exhausted);
+
+  for (let i = 1; i <= 4; i++) {
+    const badge = document.getElementById(`pool-slot-status-${i}`);
+    if (!badge) continue;
+    const slotInfo = slots[i - 1];
+    if (!slotInfo) {
+      badge.textContent = '⚪ Κενό';
+      badge.style.background = 'rgba(255,255,255,0.06)';
+      badge.style.color = 'var(--text-muted)';
+      continue;
+    }
+    if (slotInfo.is_exhausted) {
+      badge.textContent = `⏳ Όριο (${slotInfo.reset_time_str || 'σε αναμονή'})`;
+      badge.style.background = 'rgba(245,158,11,0.18)';
+      badge.style.color = 'var(--amber)';
+    } else if (slotInfo.is_active) {
+      badge.textContent = '🟢 Ενεργό (Active)';
+      badge.style.background = 'rgba(16,185,129,0.18)';
+      badge.style.color = 'var(--emerald)';
+    } else {
+      badge.textContent = '🟡 Εφεδρικό (Standby)';
+      badge.style.background = 'rgba(124,58,237,0.15)';
+      badge.style.color = 'var(--violet)';
+    }
+  }
+
+  const sumBadge = document.getElementById('gemini-pool-summary-badge');
+  if (sumBadge) {
+    if (total === 0) {
+      sumBadge.textContent = 'Pool: 0 κλειδιά (Δωρεάν fallback)';
+      sumBadge.style.color = 'var(--text-muted)';
+    } else if (allExh) {
+      sumBadge.textContent = `⚠️ Όλα τα ${total} κλειδιά εξαντλήθηκαν`;
+      sumBadge.style.color = 'var(--amber)';
+    } else {
+      sumBadge.textContent = `🟢 ${avail}/${total} Κλειδιά Διαθέσιμα (~${avail * 1500} αιτήματα)`;
+      sumBadge.style.color = 'var(--emerald)';
+    }
   }
 }
 
 async function openAiPolishModal() {
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
-  let savedKey = localStorage.getItem('gemini_api_key') || '';
 
-  // If not found in browser localStorage, load from persistent server settings
-  if (!savedKey) {
-    try {
-      const sRes = await fetch(`${API}/settings`);
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        if (sData.gemini_api_key) {
-          savedKey = sData.gemini_api_key;
-          localStorage.setItem('gemini_api_key', savedKey);
-        }
-      }
-    } catch (_) {}
+  let poolKeys = [];
+  try {
+    const rawLocal = localStorage.getItem('gemini_api_keys');
+    if (rawLocal) {
+      poolKeys = JSON.parse(rawLocal);
+    }
+  } catch (_) {}
+
+  if (!Array.isArray(poolKeys) || poolKeys.length === 0) {
+    const single = localStorage.getItem('gemini_api_key');
+    if (single) poolKeys = [single];
   }
 
-  const input = document.getElementById('gemini-api-key');
-  input.value = savedKey;
+  // Fetch latest settings & pool state from server
+  try {
+    const sRes = await fetch(`${API}/settings`);
+    if (sRes.ok) {
+      const sData = await sRes.json();
+      if (Array.isArray(sData.gemini_api_keys) && sData.gemini_api_keys.length > 0) {
+        poolKeys = sData.gemini_api_keys;
+      } else if (sData.gemini_api_key && poolKeys.length === 0) {
+        poolKeys = [sData.gemini_api_key];
+      }
+      if (sData.pool) {
+        renderGeminiPoolStatus(sData.pool);
+      }
+    }
+  } catch (_) {}
 
+  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  slotIds.forEach((id, idx) => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.value = poolKeys[idx] || '';
+    }
+  });
+
+  const hasAnyKey = poolKeys.length > 0;
   const badge = document.getElementById('gemini-key-saved-badge');
   if (badge) {
-    badge.style.display = savedKey ? 'inline' : 'none';
+    badge.style.display = hasAnyKey ? 'inline' : 'none';
   }
   const clearBtn = document.getElementById('btn-clear-key');
   if (clearBtn) {
-    clearBtn.style.display = savedKey ? 'inline' : 'none';
+    clearBtn.style.display = hasAnyKey ? 'inline' : 'none';
   }
 
   const layout = document.getElementById('tr-layout-mode')?.value;
@@ -2402,23 +2479,50 @@ function onGeminiQuotaRestored() {
 }
 
 async function saveGeminiKeyOnly() {
-  const input = document.getElementById('gemini-api-key');
-  const apiKey = (input ? input.value : '').trim();
-  if (!apiKey) {
-    toast('Παρακαλώ εισάγετε το Gemini API Key σας.', 'error');
+  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const keys = [];
+  for (const id of slotIds) {
+    const input = document.getElementById(id);
+    const val = (input ? input.value : '').trim();
+    if (val) {
+      const isValid = (val.startsWith('AQ.') && val.length >= 25) ||
+                      (val.startsWith('AIza') && val.length >= 35) ||
+                      (val.length >= 25);
+      if (!isValid) {
+        toast('Μη έγκυρη μορφή API Key. Τα κλειδιά Google Gemini ξεκινούν με AIzaSy... ή AQ.', 'error');
+        return;
+      }
+      if (!keys.includes(val)) {
+        keys.push(val);
+      }
+    }
+  }
+
+  if (keys.length === 0) {
+    toast('Παρακαλώ εισάγετε τουλάχιστον ένα Gemini API Key.', 'error');
     return;
   }
-  localStorage.setItem('gemini_api_key', apiKey);
+
+  const primaryKey = keys[0] || '';
+  localStorage.setItem('gemini_api_key', primaryKey);
+  localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
+
   try {
-    await fetch(`${API}/settings`, {
+    const res = await fetch(`${API}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gemini_api_key: apiKey }),
+      body: JSON.stringify({ gemini_api_key: primaryKey, gemini_api_keys: keys }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.pool) renderGeminiPoolStatus(data.pool);
+    }
   } catch (_) {}
+
   try {
     await fetch(`${API}/gemini/reset-quota`, { method: 'POST' });
   } catch (_) {}
+
   stopGeminiQuotaCountdown(false);
   const badge = document.getElementById('gemini-key-saved-badge');
   if (badge) badge.style.display = 'inline';
@@ -2427,21 +2531,26 @@ async function saveGeminiKeyOnly() {
   const mBanner = document.getElementById('ai-polish-quota-warning-banner');
   if (mBanner) mBanner.style.display = 'none';
   await checkGlobalGeminiQuotaStatus();
-  toast('Το Gemini API Key αποθηκεύτηκε επιτυχώς και το όριο μηδενίστηκε!', 'success');
+  toast(`Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά στο Gemini Pool! Αυτόματη εναλλαγή ενεργή.`, 'success');
 }
 
 async function clearGeminiKey() {
   localStorage.removeItem('gemini_api_key');
-  const input = document.getElementById('gemini-api-key');
-  if (input) input.value = '';
+  localStorage.removeItem('gemini_api_keys');
+  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  slotIds.forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.value = '';
+  });
   const badge = document.getElementById('gemini-key-saved-badge');
   if (badge) badge.style.display = 'none';
   const clearBtn = document.getElementById('btn-clear-key');
   if (clearBtn) clearBtn.style.display = 'none';
   try {
-    await fetch(`${API}/settings/gemini_api_key`, { method: 'DELETE' });
+    await fetch(`${API}/settings/gemini_api_keys`, { method: 'DELETE' });
   } catch (_) {}
   stopGeminiQuotaCountdown(false);
+  renderGeminiPoolStatus({ total_keys: 0, available_keys: 0, slots: [] });
   // Default selectors to free models (fallback) when key is removed
   ['tr', 'ab'].forEach((prefix) => {
     localStorage.setItem(`${prefix}_quota_behavior`, 'fallback');
@@ -2452,7 +2561,7 @@ async function clearGeminiKey() {
     }
   });
   await checkGlobalGeminiQuotaStatus();
-  toast('Το Gemini API Key αφαιρέθηκε. Τα δωρεάν μοντέλα είναι πλέον η ενεργή προεπιλογή.', 'info');
+  toast('Όλα τα Gemini API Keys αφαιρέθηκαν. Τα δωρεάν μοντέλα είναι πλέον η ενεργή προεπιλογή.', 'info');
 }
 
 async function checkGlobalGeminiQuotaStatus() {
@@ -2460,6 +2569,9 @@ async function checkGlobalGeminiQuotaStatus() {
     const res = await fetch(`${API}/gemini/status`);
     if (!res.ok) return;
     const data = await res.json();
+    if (data.pool) {
+      renderGeminiPoolStatus(data.pool);
+    }
     const isExhausted = Boolean(data.exhausted);
     const resetTs = Number(data.reset_timestamp || 0);
     const resetTimeStr = data.reset_time_str || '';

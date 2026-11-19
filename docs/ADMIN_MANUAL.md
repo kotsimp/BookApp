@@ -246,6 +246,7 @@ BookApp/
 │   ├── exporter.py          # Εξαγωγή TXT, DOCX, EPUB, Rich PDF, CBZ, CBR & Literature layout
 │   ├── glossary.py          # Διαχείριση κατηγοριοποιημένου γλωσσαρίου όρων
 │   ├── settings_manager.py  # Αποθήκευση/ανάγνωση ρυθμίσεων (config/settings.json)
+│   ├── gemini_key_pool.py   # Multi-Key Gemini API Pool & Failover Manager (up to 4 keys)
 │   ├── translator.py        # Μηχανή μετάφρασης (Google GTX POST + 429 Circuit Breaker + Gemini failover)
 │   ├── tts_engine.py        # Πολυφωνική παραγωγή ήχου edge-tts (Nestoras / Athina) & M4B export
 │   ├── job_manager.py       # Διαχείριση εργασιών, SQLite metadata sync, file_path healing & cleanup
@@ -264,7 +265,7 @@ BookApp/
 ```
 
 ### Διαχείριση Εργασιών, Ουράς, Ρυθμίσεων & Εξωφύλλων μέσω REST Endpoints
-Η εφαρμογή παρέχει ολοκληρωμένο REST API (**43 endpoints**) για τη διαχείριση εργασιών, Smart Batch Queue, ρυθμίσεων, επιλογών Quota και εικόνων εξωφύλλου:
+Η εφαρμογή παρέχει ολοκληρωμένο REST API (**45 endpoints**) για τη διαχείριση εργασιών, Smart Batch Queue, ρυθμίσεων, Gemini Multi-Key Pool, επιλογών Quota και εικόνων εξωφύλλου:
 * `POST /api/translate`: Εκκίνηση μετάφρασης. Υποστηρίζει `quota_behavior: "wait" | "fallback"` (προεπιλογή `"fallback"` όταν δεν υπάρχει API Key).
 * `POST /api/audiobook`: Εκκίνηση παραγωγής ηχοβιβλίου. Υποστηρίζει `quota_behavior: "wait" | "fallback"` (αυτόματη χρήση Edge-TTS χωρίς διακοπή).
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Πλήρης διαχείριση της Smart Batch Queue (έως 20 αρχεία, συγχρονισμός ρυθμίσεων και `quota_behavior` στο start, retry, pause/resume, ZIP export).
@@ -272,9 +273,11 @@ BookApp/
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό, την ουρά και τα προσωρινά αρχεία (διατηρώντας τη `translation_cache`).
 * `DELETE /api/jobs/tests/cleanup`: Καθαρίζει άμεσα όλα τα δοκιμαστικά αρχεία/εργασίες που δημιουργήθηκαν από αυτοματοποιημένα τεστ (prefixes `test_`, `reg_`, `mock_`, κ.λπ.) από τη βάση SQLite, τη μνήμη και τους φακέλους `temp/`, διατηρώντας ανέπαφο το πραγματικό ιστορικό του χρήστη.
 * `GET /api/jobs?include_tests=true`: Προαιρετική παράμετρος ανάκτησης εργασιών. Από προεπιλογή (`include_tests=false`), τα δοκιμαστικά αρχεία φιλτράρονται αυτόματα ώστε να μην εμφανίζονται ποτέ στο Session History του UI.
-* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων. Το `GET /api/settings` επιστρέφει `{"gemini_api_key", "default_quota_behavior", "has_gemini_key", "default_engine"}`. Κατά την αποθήκευση νέου κλειδιού, μηδενίζεται αυτόματα ο cooldown διακόπτης του Gemini.
-* `GET /api/gemini/status`: Επιστρέφει την κατάσταση του διακόπτη προστασίας Gemini Quota (`exhausted: bool`), τα εναπομείναντα δευτερόλεπτα (`remaining_seconds: int`), το Unix timestamp επαναφοράς (`reset_timestamp: float`), την ακριβή τοπική ώρα επαναφοράς (`reset_time_str: "HH:MM:SS"`), το φορμαρισμένο κείμενο (`cooldown_time_str`) και το αναλυτικό μήνυμα προς το χρήστη.
-* `POST /api/gemini/reset-quota`: Μηδενίζει άμεσα τον διακόπτη προστασίας Quota Circuit Breaker και αποκαθιστά την άμεση διαθεσιμότητα των κλήσεων AI Polish.
+* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων. Υποστηρίζει `gemini_api_keys: list[str]` (έως 4 κλειδιά για το Gemini Pool). Το `GET /api/settings` επιστρέφει `{"gemini_api_key", "gemini_api_keys", "pool", "default_quota_behavior", "has_gemini_key", "default_engine"}`. Κατά την αποθήκευση νέου κλειδιού ή pool, μηδενίζεται αυτόματα ο cooldown διακόπτης του Gemini.
+* `GET /api/gemini/pool`: Επιστρέφει την αναλυτική κατάσταση του Gemini Multi-Key Pool (σύνολο κλειδιών, διαθέσιμα κλειδιά, κατάσταση κάθε slot ξεχωριστά με ένδειξη `is_active`, `is_exhausted`, χρόνο αναμονής και ακριβή ώρα επαναφοράς).
+* `POST /api/gemini/pool`: Ρύθμιση ή ενημέρωση της λίστας κλειδιών του pool (`{"keys": ["AIzaSy...", ...]}`), αυτόματος μηδενισμός quota cooldowns και εκκαθάριση των caches μοντέλων.
+* `GET /api/gemini/status`: Επιστρέφει την κατάσταση του διακόπτη προστασίας Gemini Quota (`exhausted: bool`), τα εναπομείναντα δευτερόλεπτα (`remaining_seconds: int`), το Unix timestamp επαναφοράς (`reset_timestamp: float`), την ακριβή τοπική ώρα επαναφοράς (`reset_time_str: "HH:MM:SS"`), το φορμαρισμένο κείμενο (`cooldown_time_str`), το αντικείμενο `pool` και το αναλυτικό μήνυμα προς το χρήστη.
+* `POST /api/gemini/reset-quota`: Μηδενίζει άμεσα τον διακόπτη προστασίας Quota Circuit Breaker και όλα τα per-key cooldowns στο Multi-Key Pool, αποκαθιστώντας την άμεση διαθεσιμότητα των κλήσεων AI Polish.
 * `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
 * `POST /api/cover/{job_id}`: Ανέβασμα νέου προσαρμοσμένου εξωφύλλου (`multipart/form-data`) με αυτόματη ενημέρωση των αρχείων εξόδου.
 * `DELETE /api/cover/{job_id}`: Αφαίρεση του εξωφύλλου για τη συγκεκριμένη εργασία.
@@ -349,8 +352,9 @@ BookApp/
 37. `test_frontend_contracts_and_ui.py`: Αυστηρός έλεγχος `(HTTP method, path)` απέναντι στο live `app.routes` του FastAPI, αντιστοίχιση JSON payload keys με τα Pydantic models, στατικός έλεγχος XSS/API origin/`node --check`, καθώς και runtime Node.js VM DOM & state test harness (10 assertions, συμπεριλαμβανομένου του download button gating) για το `frontend/app.js`.
 38. `test_gemini_quota_warning.py`: Έλεγχος εντοπισμού εξάντλησης ορίου Gemini (RPD/RPM), λειτουργία διακόπτη προστασίας Quota Circuit Breaker, live endpoint `/api/gemini/status`, αντίστροφος μετρητής, cooldown messages και άμεσο reset στο `/api/gemini/reset-quota`.
 39. `test_quota_behavior_choice.py`: Προηγούμενη επιλογή συμπεριφοράς σε εξάντληση ορίου (`wait` vs `fallback`), ασφαλής διατήρηση checkpoint και χρονοδιακόπτη στο `wait`, άμεση αυτόματη συνέχιση με δωρεάν μηχανή στο `fallback`, αυτόματη ενεργοποίηση `Free Mode` ως προεπιλογή όταν δεν υπάρχει API Key (σε settings, μετάφραση, ηχοβιβλίο και AI Polish), και απόλυτη υγιεινή Session History (0 test jobs).
+40. `test_gemini_key_pool.py`: Πλήρης έλεγχος λειτουργίας Gemini Multi-Key Pool (έως 4 κλειδιά, deduplication, thread-safety, ασφαλές masking `AIzaSy...2345`), αυτόματη εναλλαγή κλειδιού σε 429 / quota exhaustion, ενεργοποίηση circuit breaker μόνο αν εξαντληθούν και τα 4 κλειδιά, καθώς και έλεγχος REST endpoints `/api/gemini/pool` (GET/POST), `/api/settings` (GET/POST) και `/api/settings/gemini_api_keys` (DELETE).
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`39/39 PASS (34/34 σε --fast · 43/43 FastAPI endpoints)`** και αυτόματο καθαρισμό test sessions.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`40/40 PASS (35/35 σε --fast · 45/45 FastAPI endpoints)`** και αυτόματο καθαρισμό test sessions.
 
 ---
 
