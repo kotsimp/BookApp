@@ -117,8 +117,11 @@ function applyAppMode(mode) {
     // Audiobook defaults for Basic Mode: Greek, Nestoras, Literature style
     const abLang = document.getElementById('ab-lang-select');
     if (abLang && abLang.value !== 'greek') {
-      abLang.value = 'greek';
-      if (typeof updateVoices === 'function') updateVoices();
+      const greekOpt = abLang.querySelector ? abLang.querySelector('option[value="greek"]') : null;
+      if (!greekOpt || !greekOpt.disabled) {
+        abLang.value = 'greek';
+        if (typeof updateVoices === 'function') updateVoices();
+      }
     }
     const nestorasCard = document.querySelector('.voice-card[data-voice^="Nestoras"]');
     if (nestorasCard && typeof selectVoice === 'function') {
@@ -404,6 +407,14 @@ async function uploadFile(prefix, file) {
     if (prefix === 'tr') {
       state.tr.file = file;
       const ext = file.name.split('.').pop().toLowerCase();
+
+      // Auto-align translation language direction based on detected document language
+      if (data.detected_language === 'greek') {
+        setLangs('greek', 'english');
+      } else if (data.detected_language === 'english') {
+        setLangs('english', 'greek');
+      }
+
       const autoDetectedComic = Boolean(data.is_comic) || ['cbz', 'cbr', 'zip'].includes(ext);
       if (autoDetectedComic) {
         setGraphicNovelLock(true, data.comic_reason || '', Boolean(data.is_scanned));

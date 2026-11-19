@@ -75,6 +75,11 @@ class GeminiKeyPool:
             else:
                 delete_setting("gemini_api_key")
 
+            # Prune cooldown entries for keys no longer in the pool
+            for stale_key in list(_KEY_COOLDOWNS.keys()):
+                if stale_key not in cleaned_keys:
+                    _KEY_COOLDOWNS.pop(stale_key, None)
+
             return cleaned_keys
 
     @staticmethod
