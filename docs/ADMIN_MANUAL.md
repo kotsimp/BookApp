@@ -203,6 +203,58 @@ python run.py
    sudo systemctl status bookapp
    ```
 
+### Επιλογή Γ: Λειτουργία μέσω Docker & Docker Compose (Ubuntu, Synology NAS, MacBook)
+
+Η εφαρμογή περιλαμβάνει βελτιστοποιημένο **`Dockerfile`** και **`docker-compose.yml`** με ενσωματωμένο `ffmpeg` (για M4B/audiobooks), γραμματοσειρές Unicode για PDFs και αυτόματη διατήρηση δεδομένων (Persistent Volumes).
+
+#### 1. Γρήγορη Εκκίνηση (Ubuntu / Linux / MacBook):
+```bash
+# Clone του αποθετηρίου
+git clone https://github.com/kotsimp/BookApp.git
+cd BookApp
+
+# Εκκίνηση με Docker Compose
+docker compose up -d --build
+```
+Η εφαρμογή είναι άμεσα διαθέσιμη στο `http://localhost:8000` (ή στην IP του server).
+
+#### 2. Εγκατάσταση σε Synology NAS:
+- **Μέσω Container Manager (DSM 7.2+):**
+  1. Ανοίξτε το **Container Manager** ➔ **Project** ➔ **Create**.
+  2. Ορίστε όνομα (`bookapp`) και διαδρομή φακέλου (π.χ. `/docker/bookapp`).
+  3. Επιλέξτε το `docker-compose.yml` ή επικολλήστε το περιεχόμενό του.
+  4. Πατήστε **Next** και **Done**.
+- **Μέσω SSH στο NAS:**
+  ```bash
+  cd /volume1/docker
+  git clone https://github.com/kotsimp/BookApp.git
+  cd BookApp
+  docker compose up -d --build
+  ```
+
+#### 3. Ανέβασμα Image στο Docker Hub (Προαιρετικό):
+```bash
+# 1. Build του image με το username σας
+docker build -t yourusername/bookapp:latest .
+
+# 2. Σύνδεση στο Docker Hub
+docker login
+
+# 3. Push στο Docker Hub
+docker push yourusername/bookapp:latest
+```
+Στη συνέχεια, σε οποιοδήποτε μηχάνημα (ή στο Container Manager του Synology), εκτελείτε απλά:
+```bash
+docker run -d \
+  --name bookapp \
+  -p 8000:8000 \
+  -v /path/to/data:/app/data \
+  -v /path/to/config:/app/config \
+  -v /path/to/outputs:/app/temp/outputs \
+  --restart unless-stopped \
+  yourusername/bookapp:latest
+```
+
 ---
 
 ### Διαμόρφωση Reverse Proxy (Nginx) με υποστήριξη SSE

@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  bookapp:
+    build: .
+    image: bookapp:latest
+    container_name: bookapp
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./temp/outputs:/app/temp/outputs
+    environment:
+      - PYTHONUNBUFFERED=1

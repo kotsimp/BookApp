@@ -1,0 +1,11 @@
+.git
+.github
+.gemini
+.venv
+__pycache__
+*.pyc
+temp
+data
+tests
+.pytest_cache
+*.log

@@ -95,6 +95,15 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 Open **[http://localhost:8000](http://localhost:8000)** in your browser.
 
+### 🐳 Run with Docker & Docker Compose (Ubuntu, Synology NAS, MacBook)
+```bash
+# Clone and run with one command
+git clone https://github.com/kotsimp/BookApp.git
+cd BookApp
+docker compose up -d --build
+```
+Access the application at **`http://localhost:8000`** (or your server's IP). All database files (`data/`), settings (`config/`), and outputs are automatically persisted outside the container.
+
 ---
 
 ## 📁 Project Structure (Δομή Έργου)
