@@ -1786,6 +1786,7 @@ async function saveGeminiKeyOnly() {
   if (clearBtn) clearBtn.style.display = 'inline';
   const mBanner = document.getElementById('ai-polish-quota-warning-banner');
   if (mBanner) mBanner.style.display = 'none';
+  await checkGlobalGeminiQuotaStatus();
   toast('Το Gemini API Key αποθηκεύτηκε επιτυχώς!', 'success');
 }
 
@@ -1800,7 +1801,70 @@ async function clearGeminiKey() {
   try {
     await fetch(`${API}/settings/gemini_api_key`, { method: 'DELETE' });
   } catch (_) {}
+  await checkGlobalGeminiQuotaStatus();
   toast('Saved Gemini API key cleared.', 'info');
+}
+
+async function checkGlobalGeminiQuotaStatus() {
+  try {
+    const res = await fetch(`${API}/gemini/status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const isExhausted = Boolean(data.exhausted);
+    const msg = data.message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1.500 RPD).';
+    const cdStr = data.cooldown_time_str ? ` (~${data.cooldown_time_str})` : '';
+
+    // 1. Home page banner at top of Translate tab
+    const homeBanner = document.getElementById('home-gemini-quota-banner');
+    const homeText = document.getElementById('home-gemini-quota-text');
+    if (homeBanner) {
+      homeBanner.style.display = isExhausted ? 'block' : 'none';
+      if (homeText && isExhausted) {
+        homeText.textContent = msg;
+      }
+    }
+
+    // 2. Top navbar badge next to Gemini API Key
+    const navBadge = document.getElementById('nav-gemini-quota-badge');
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (navBadge) {
+      if (isExhausted) {
+        navBadge.style.display = 'inline-block';
+        navBadge.style.background = 'rgba(245,158,11,0.2)';
+        navBadge.style.color = 'var(--amber)';
+        navBadge.style.border = '1px solid rgba(245,158,11,0.5)';
+        navBadge.textContent = `⚠️ Quota${cdStr}`;
+        navBadge.title = msg;
+      } else if (savedKey) {
+        navBadge.style.display = 'inline-block';
+        navBadge.style.background = 'rgba(16,185,129,0.15)';
+        navBadge.style.color = 'var(--emerald)';
+        navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
+        navBadge.textContent = '✓ Active';
+        navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό (15 RPM / 1.500 RPD)';
+      } else {
+        navBadge.style.display = 'none';
+      }
+    }
+
+    // 3. AI Polish checkbox tag in Translation Settings
+    const polishTag = document.getElementById('tr-ai-polish-quota-tag');
+    if (polishTag) {
+      polishTag.style.display = isExhausted ? 'inline-block' : 'none';
+      if (isExhausted) {
+        polishTag.textContent = `⚠️ Όριο Quota${cdStr}`;
+        polishTag.title = msg;
+      }
+    }
+
+    // 4. Batch queue banner
+    const qBanner = document.getElementById('queue-quota-warning-banner');
+    const qText = document.getElementById('queue-quota-warning-text');
+    if (qBanner) {
+      qBanner.style.display = isExhausted ? 'block' : 'none';
+      if (qText && isExhausted) qText.textContent = msg;
+    }
+  } catch (_) {}
 }
 
 function openDirectPolishModal() {
@@ -2538,11 +2602,15 @@ function renderBatchQueue(q) {
       }
       if (!_seenQuotaWarning) {
         _seenQuotaWarning = true;
+        checkGlobalGeminiQuotaStatus();
         toast('⚠️ Εξαντλήθηκε το ημερήσιο όριο Gemini Free Tier — η μετάφραση συνεχίζεται αυτόματα χωρίς AI polish.', 'warning');
       }
     } else {
       quotaBanner.style.display = 'none';
-      _seenQuotaWarning = false;
+      if (_seenQuotaWarning) {
+        _seenQuotaWarning = false;
+        checkGlobalGeminiQuotaStatus();
+      }
     }
   }
 
@@ -2761,21 +2829,9 @@ async function init() {
   // Load voices
   await loadVoices();
 
-  // Check Gemini daily quota status on initial load
-  try {
-    const gq = await fetch(`${API}/gemini/status`);
-    if (gq.ok) {
-      const qd = await gq.json();
-      if (qd.exhausted) {
-        const qBanner = document.getElementById('queue-quota-warning-banner');
-        const qText = document.getElementById('queue-quota-warning-text');
-        if (qBanner && qText) {
-          qBanner.style.display = 'block';
-          qText.textContent = qd.message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini API.';
-        }
-      }
-    }
-  } catch (_) {}
+  // Check Gemini daily quota status on initial load and keep updated periodically
+  await checkGlobalGeminiQuotaStatus();
+  setInterval(checkGlobalGeminiQuotaStatus, 30000);
 
   // Load history & any active batch queue
   await refreshHistory();
