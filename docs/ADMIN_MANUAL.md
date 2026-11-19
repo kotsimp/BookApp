@@ -257,13 +257,15 @@ BookApp/
 ```
 
 ### Διαχείριση Εργασιών, Ουράς, Ρυθμίσεων & Εξωφύλλων μέσω REST Endpoints
-Η εφαρμογή παρέχει ολοκληρωμένο REST API (**40 endpoints**) για τη διαχείριση εργασιών, Smart Batch Queue, ρυθμίσεων και εικόνων εξωφύλλου:
-* `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Πλήρης διαχείριση της Smart Batch Queue (έως 20 αρχεία, συγχρονισμός ρυθμίσεων στο start, retry, pause/resume, ZIP export).
+Η εφαρμογή παρέχει ολοκληρωμένο REST API (**43 endpoints**) για τη διαχείριση εργασιών, Smart Batch Queue, ρυθμίσεων, επιλογών Quota και εικόνων εξωφύλλου:
+* `POST /api/translate`: Εκκίνηση μετάφρασης. Υποστηρίζει `quota_behavior: "wait" | "fallback"` (προεπιλογή `"fallback"` όταν δεν υπάρχει API Key).
+* `POST /api/audiobook`: Εκκίνηση παραγωγής ηχοβιβλίου. Υποστηρίζει `quota_behavior: "wait" | "fallback"` (αυτόματη χρήση Edge-TTS χωρίς διακοπή).
+* `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Πλήρης διαχείριση της Smart Batch Queue (έως 20 αρχεία, συγχρονισμός ρυθμίσεων και `quota_behavior` στο start, retry, pause/resume, ZIP export).
 * `DELETE /api/jobs/{job_id}`: Διαγράφει συγκεκριμένη εργασία από τη μνήμη, τη SQLite, την ουρά και αφαιρεί οριστικά τους φακέλους `temp/uploads/{job_id}` και `temp/outputs/{job_id}` από το δίσκο.
 * `DELETE /api/jobs`: Καθαρίζει ολόκληρο το ιστορικό, την ουρά και τα προσωρινά αρχεία (διατηρώντας τη `translation_cache`).
 * `DELETE /api/jobs/tests/cleanup`: Καθαρίζει άμεσα όλα τα δοκιμαστικά αρχεία/εργασίες που δημιουργήθηκαν από αυτοματοποιημένα τεστ (prefixes `test_`, `reg_`, `mock_`, κ.λπ.) από τη βάση SQLite, τη μνήμη και τους φακέλους `temp/`, διατηρώντας ανέπαφο το πραγματικό ιστορικό του χρήστη.
 * `GET /api/jobs?include_tests=true`: Προαιρετική παράμετρος ανάκτησης εργασιών. Από προεπιλογή (`include_tests=false`), τα δοκιμαστικά αρχεία φιλτράρονται αυτόματα ώστε να μην εμφανίζονται ποτέ στο Session History του UI.
-* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων (π.χ. `gemini_api_key`). Κατά την αποθήκευση νέου κλειδιού, μηδενίζεται αυτόματα ο cooldown διακόπτης του Gemini.
+* `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Ανάγνωση, αποθήκευση και διαγραφή τοπικών ρυθμίσεων. Το `GET /api/settings` επιστρέφει `{"gemini_api_key", "default_quota_behavior", "has_gemini_key", "default_engine"}`. Κατά την αποθήκευση νέου κλειδιού, μηδενίζεται αυτόματα ο cooldown διακόπτης του Gemini.
 * `GET /api/gemini/status`: Επιστρέφει την κατάσταση του διακόπτη προστασίας Gemini Quota (`exhausted: bool`), τα εναπομείναντα δευτερόλεπτα (`remaining_seconds: int`), το Unix timestamp επαναφοράς (`reset_timestamp: float`), την ακριβή τοπική ώρα επαναφοράς (`reset_time_str: "HH:MM:SS"`), το φορμαρισμένο κείμενο (`cooldown_time_str`) και το αναλυτικό μήνυμα προς το χρήστη.
 * `POST /api/gemini/reset-quota`: Μηδενίζει άμεσα τον διακόπτη προστασίας Quota Circuit Breaker και αποκαθιστά την άμεση διαθεσιμότητα των κλήσεων AI Polish.
 * `GET/HEAD /api/cover/{job_id}`: Ελέγχει αν υπάρχει ενεργό εξώφυλλο για τη συγκεκριμένη εργασία και επιστρέφει το αρχείο εικόνας.
@@ -338,8 +340,10 @@ BookApp/
 35. `test_comic_and_tts_edge_cases.py`: Προστασία CBZ Zip Slip, φυσική ταξινόμηση σελίδων (`page_1`, `page_2`, `page_10`), σεβασμός `target_lang="english"` σε vector comics, fail-loud έλεγχος απουσίας κλειδιού σε σκαναρισμένα κόμικς, clamped Vision `box_2d`, `ΐ`/`ΰ` ➔ `Ϊ`/`Ϋ` σε κεφαλαία μπαλόνια, TTS voice code resolution, `edge_tts`/`ffmpeg` timeouts, M4B cover attachment και εγγυημένος καθαρισμός `tts_tmp_*`.
 36. `test_concurrency_persistence_and_lifecycle.py`: Thread-safe off-loop SSE delivery, διατήρηση συνδρομητών σε γεμάτη ουρά, προστασία `cancelled` jobs από overwrites, partial-update same-lang guard & comic PDF preservation στην ουρά, `None` coercion στη SQLite, reset ορφανών `queued` jobs, backup κατεστραμμένου `settings.json` και προστασία ενεργών jobs στον `storage_cleaner`.
 37. `test_frontend_contracts_and_ui.py`: Αυστηρός έλεγχος `(HTTP method, path)` απέναντι στο live `app.routes` του FastAPI, αντιστοίχιση JSON payload keys με τα Pydantic models, στατικός έλεγχος XSS/API origin/`node --check`, καθώς και runtime Node.js VM DOM & state test harness (10 assertions, συμπεριλαμβανομένου του download button gating) για το `frontend/app.js`.
+38. `test_gemini_quota_warning.py`: Έλεγχος εντοπισμού εξάντλησης ορίου Gemini (RPD/RPM), λειτουργία διακόπτη προστασίας Quota Circuit Breaker, live endpoint `/api/gemini/status`, αντίστροφος μετρητής, cooldown messages και άμεσο reset στο `/api/gemini/reset-quota`.
+39. `test_quota_behavior_choice.py`: Προηγούμενη επιλογή συμπεριφοράς σε εξάντληση ορίου (`wait` vs `fallback`), ασφαλής διατήρηση checkpoint και χρονοδιακόπτη στο `wait`, άμεση αυτόματη συνέχιση με δωρεάν μηχανή στο `fallback`, αυτόματη ενεργοποίηση `Free Mode` ως προεπιλογή όταν δεν υπάρχει API Key (σε settings, μετάφραση, ηχοβιβλίο και AI Polish), και απόλυτη υγιεινή Session History (0 test jobs).
 
-Όλοι οι έλεγχοι ολοκληρώνονται με **`37/37 PASS (32/32 σε --fast · 40/40 FastAPI endpoints)`** και αυτόματο καθαρισμό test sessions.
+Όλοι οι έλεγχοι ολοκληρώνονται με **`39/39 PASS (34/34 σε --fast · 43/43 FastAPI endpoints)`** και αυτόματο καθαρισμό test sessions.
 
 ---
 

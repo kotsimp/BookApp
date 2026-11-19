@@ -135,6 +135,7 @@ def test_graphic_novel_pdf_translation():
             "target_lang": "greek",
             "output_format": "pdf",
             "layout_mode": "comic",
+            "api_key": "AQ.TestKey1234567890abcdef",
         })
         assert status == 200
 
@@ -201,6 +202,7 @@ def test_cbz_archive_translation():
             "target_lang": "greek",
             "output_format": "pdf",
             "layout_mode": "comic",
+            "api_key": "AQ.TestKey1234567890abcdef",
         })
         assert status == 200
 

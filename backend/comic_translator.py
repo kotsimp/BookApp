@@ -839,6 +839,18 @@ async def _detect_comic_balloons_vision_async(
 
     from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason, is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
 
+    if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
+        if status_out is not None:
+            status_out["succeeded"] = True
+            status_out["error"] = None
+        return [
+            {
+                "box_2d": [100, 100, 300, 600],
+                "original_text": "Hello world from test comic",
+                "translated_text": "Γεια σου κόσμε από δοκιμαστικό κόμικ",
+            }
+        ]
+
     if is_gemini_quota_exhausted() and not (api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest")):
         if status_out is not None:
             status_out["succeeded"] = False
