@@ -413,6 +413,50 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
   assert.strictEqual(getEl('tr-start-btn').textContent, '🌐 Start Translation');
   assert.strictEqual(getEl('ab-start-btn').textContent, '🎧 Generate Audiobook');
 
+  // 12. Live Multi-Key Pool Badge rendering (updateNavGeminiBadge)
+  ctx.updateNavGeminiBadge({ total_keys: 4, available_keys: 4, all_exhausted: false });
+  assert.strictEqual(getEl('nav-gemini-quota-badge').textContent, '🟢 4/4 Keys');
+
+  ctx.updateNavGeminiBadge({ total_keys: 4, available_keys: 2, all_exhausted: false });
+  assert.strictEqual(getEl('nav-gemini-quota-badge').textContent, '🟡 2/4 Keys');
+
+  ctx.updateNavGeminiBadge({ total_keys: 4, available_keys: 0, all_exhausted: true });
+  assert.strictEqual(getEl('nav-gemini-quota-badge').textContent, '⏳ Cooldown');
+
+  ctx.updateNavGeminiBadge({ total_keys: 0, available_keys: 0, all_exhausted: false });
+  assert.strictEqual(getEl('nav-gemini-quota-badge').textContent, '🆓 Free Mode');
+
+  // 13. Download M4B calls downloadOutput('ab', 'm4b')
+  appState.ab.jobId = 'ab-job-42';
+  ctx.window.location.href = '';
+  ctx.downloadOutputM4b();
+  assert.strictEqual(ctx.window.location.href, 'http://127.0.0.1:8000/api/download/ab-job-42?format=m4b');
+
+  // 14. 1-Click Copy Translated Text to clipboard
+  appState.tr.jobId = 'tr-job-1';
+  getEl('tr-copy-btn').innerHTML = '📋 Αντιγραφή Κειμένου';
+  nextFetchImpl = async (url) => {
+    if (url.includes('/text')) {
+      return { ok: true, status: 200, json: async () => ({ translated_text: 'Αυτό είναι το μεταφρασμένο κείμενο.', original_text: 'This is the original text.' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  await ctx.copyTranslatedText();
+  assert.strictEqual(getEl('tr-copy-btn').innerHTML, '✅ Αντιγράφηκε!');
+
+  // 15. Audiobook Duration Estimation in uploadFile('ab')
+  nextFetchImpl = async (url) => {
+    if (url.endsWith('/upload')) {
+      return { ok: true, status: 200, json: async () => ({ job_id: 'ab-dur-1', file_type: 'pdf', estimated_pages: 45, detected_language: 'greek', is_comic: false }) };
+    }
+    return { ok: true, status: 200, json: async () => ([]) };
+  };
+  await ctx.uploadFile('ab', { name: 'novel_long.pdf', size: 2097152 });
+  assert(getEl('ab-file-meta').textContent.includes('⏱️ ~1 ώρα 30 λ ακρόαση'), `Duration estimate missing in meta: ${getEl('ab-file-meta').textContent}`);
+
+  // 16. playCompletionNotification runs safely in Node VM without throwing
+  ctx.playCompletionNotification('Test Title', 'Test Body');
+
   console.log('NODE_UI_HARNESS_OK');
 })().catch((err) => {
   console.error(err);
@@ -422,7 +466,7 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
         res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"Node UI harness failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
         self.assertIn("NODE_UI_HARNESS_OK", res.stdout)
-        print("   Node.js runtime DOM & state tests (10 assertions): OK")
+        print("   Node.js runtime DOM & state tests (16 assertions): OK")
 
 
 if __name__ == "__main__":

@@ -175,6 +175,16 @@ class TestGeminiKeyPool(unittest.TestCase):
         self.assertEqual(res_del["status"], "deleted")
         self.assertEqual(GeminiKeyPool.get_keys(), [])
 
+    def test_07_gemini_status_endpoint_returns_pool_and_reset_info(self):
+        from backend.main import get_gemini_status
+        GeminiKeyPool.set_keys(["KeyAlpha", "KeyBeta"])
+        status = asyncio.run(get_gemini_status())
+        self.assertIn("pool", status)
+        self.assertEqual(status["pool"]["total_keys"], 2)
+        self.assertEqual(status["pool"]["available_keys"], 2)
+        self.assertFalse(status["pool"]["all_exhausted"])
+        self.assertFalse(status["exhausted"])
+
 
 if __name__ == "__main__":
     unittest.main()

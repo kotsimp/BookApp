@@ -1616,15 +1616,17 @@ async function copyTranslatedText() {
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(textToCopy);
     } else if (typeof document !== 'undefined') {
-      const ta = document.createElement('textarea');
-      ta.value = textToCopy;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        if (document.body && document.body.appendChild) document.body.appendChild(ta);
+        if (ta.focus) ta.focus();
+        if (ta.select) ta.select();
+        if (document.execCommand) document.execCommand('copy');
+        if (document.body && document.body.removeChild) document.body.removeChild(ta);
+      } catch (_) {}
     }
 
     if (btn) {
@@ -1767,7 +1769,7 @@ function sendToAudiobook() {
       const durationEst = hours > 0
         ? ` · ⏱️ ~${hours} ${hours === 1 ? 'ώρα' : 'ώρες'}${mins > 0 ? ' ' + mins + ' λ' : ''} ακρόαση`
         : ` · ⏱️ ~${mins} λεπτά ακρόαση`;
-      metaTxt = trMeta.replace(/ · Ready$/, '') + durationEst + ' · Ready';
+      metaTxt = trMeta.replace(/\s*·\s*⏱️.*?ακρόαση/g, '').replace(/ · Ready$/, '') + durationEst + ' · Ready';
     }
     abMeta.textContent = metaTxt;
   }

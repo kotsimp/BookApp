@@ -127,6 +127,37 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
         self.assertGreater(Path(res).stat().st_size, 0)
         print("   M4B export & fallback tagging: OK")
 
+    def test_m4b_on_demand_download_endpoint(self):
+        print("-> 5. Testing On-Demand M4B Download Endpoint...")
+        import asyncio
+        from starlette.requests import Request
+        from backend.job_manager import create_job, update_job, cleanup_test_jobs
+        from backend.main import download_output, OUTPUT_DIR
+
+        job = create_job("", "test_audio.mp3", "mp3")
+        out_dir = OUTPUT_DIR / job.job_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        sample_mp3 = out_dir / "test_audio.mp3"
+        sample_mp3.write_bytes(b"\xFF\xFB\x90\x64" + b"\x00" * 1500)
+        update_job(job.job_id, status="done", output_format="mp3")
+
+        mock_scope = {
+            "type": "http",
+            "method": "GET",
+            "path": f"/api/download/{job.job_id}",
+            "headers": [],
+        }
+        req = Request(mock_scope)
+
+        try:
+            resp = asyncio.run(download_output(req, job.job_id, format="m4b"))
+            self.assertEqual(resp.media_type, "audio/mp4")
+            self.assertTrue(resp.path.endswith(".m4b"))
+            self.assertTrue(Path(resp.path).exists())
+        finally:
+            cleanup_test_jobs()
+        print("   On-demand M4B download endpoint: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

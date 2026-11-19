@@ -27,7 +27,7 @@ from backend.job_manager import (
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
-from backend.tts_engine import generate_audiobook, get_available_voices
+from backend.tts_engine import generate_audiobook, get_available_voices, export_audiobook_m4b
 from backend.exporter import export_text
 from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
 from backend.ai_polisher import POLISH_STATUS
@@ -972,7 +972,6 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                     mp3_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                     src_mp3 = mp3_files[0]
                     target_m4b = out_dir / f"{src_mp3.stem}.m4b"
-                    from backend.tts_engine import export_audiobook_m4b
                     cov_img = None
                     for cname in ("cover_image.jpg", "cover_image.png", "cover.jpg", "cover.png"):
                         cand = out_dir / cname
@@ -991,7 +990,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                         update_job(job_id, output_path=str(out_path), output_format="m4b")
 
             # 3. Standard text formats
-            if not out_path and out_dir.exists():
+            if not out_path and out_dir.exists() and fmt in ("txt", "docx", "doc", "pdf", "epub"):
                 txt_files = list(out_dir.glob("*_translated_*.txt")) or [
                     f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
                 ]

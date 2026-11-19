@@ -243,7 +243,7 @@ server {
 ```
 BookApp/
 ├── backend/
-│   ├── main.py              # FastAPI endpoints (40 REST routes & SSE streaming)
+│   ├── main.py              # FastAPI endpoints (45 REST routes & SSE streaming)
 │   ├── ai_polisher.py       # Single-Pass AI Translation & Gemini Polish (Semaphore(5), thinkingBudget: 0)
 │   ├── comic_translator.py  # Graphic Novel / Scanned PDF / Manga (RTL) Vision AI (4 parallel workers)
 │   ├── queue_manager.py     # Smart Batch Queue serial engine (max 20 files, isolated cancel, retry)
@@ -269,7 +269,7 @@ BookApp/
 ├── temp/
 │   ├── uploads/{job_id}/    # Αποθηκευμένα αρχεία εισόδου
 │   └── outputs/{job_id}/    # Μεταφρασμένα αρχεία, checkpoints και MP3/M4B audiobooks
-├── tests/                   # 37 Αυτοματοποιημένα test suites (100% PASS)
+├── tests/                   # 40 Αυτοματοποιημένα test suites (100% PASS)
 └── requirements.txt
 ```
 
@@ -311,17 +311,17 @@ BookApp/
 
 ## 6. Εκτέλεση Αυτοματοποιημένων Ελέγχων (Testing)
 
-Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **37 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 40 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη), αυτόματο καθαρισμό test sessions μετά την ολοκλήρωση και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
+Η εφαρμογή περιλαμβάνει θωρακισμένη (**bulletproof**) σουίτα **40 αυτοματοποιημένων ελέγχων (test suites)** στο φάκελο `tests/` με **100% κάλυψη όλων των 45 FastAPI endpoints**, αυτόματη προστασία/επαναφορά του `config/settings.json` (ώστε τα tests να μην διαγράφουν ή αλλοιώνουν ποτέ το API Key του χρήστη), αυτόματο καθαρισμό test sessions μετά την ολοκλήρωση και αυτόματη εκκίνηση προσωρινού Uvicorn server αν δεν τρέχει ήδη:
 
 ```bash
-# Εκτέλεση όλων των 37 suites (Full Suite):
+# Εκτέλεση όλων των 40 suites (Full Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Ταχεία εκτέλεση (32 local static/unit/security/contract/resilience/UI/queue/benchmark suites σε ~50s):
+# Ταχεία εκτέλεση (35 local static/unit/security/contract/resilience/UI/queue/benchmark suites σε ~45s):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
-Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **37 σουίτες δοκιμών**:
+Ο master runner ανακαλύπτει και εκτελεί αυτόματα όλες τις **40 σουίτες δοκιμών**:
 1. `test_ai_polish_advanced.py`: Δίγλωσση επιμέλεια, Audiobook phonetics, consistency dossier & checkpoints.
 2. `test_ai_polisher_deep.py`: Όλα τα 6 στυλ επιμέλειας, temperatures, multi-page splitting, cache invalidation, `BLOCK_NONE` & `promptFeedback`, αναδρομικός διχασμός (pages ➔ paragraphs) σε safety blocks, αποδιπλασιασμός ορίων & `[...]` sanitization, whole-book stratified dossier sampling και mixed-script token detector (9 tests).
 3. `test_api.py`: Ολοκληρωμένοι έλεγχοι REST endpoints, upload, translation & streaming.
