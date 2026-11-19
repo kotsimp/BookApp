@@ -79,6 +79,27 @@
       </div>
     </div>
 
+    <!-- Smart Resume Banner for Incomplete / Checkpointed Jobs -->
+    <div id="smart-resume-banner" style="display:none; margin-bottom:16px; padding:12px 18px; background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(124,58,237,0.10)); border:1.5px solid var(--emerald); border-radius:12px; font-size:0.88rem; color:var(--text-primary); line-height:1.45; box-shadow:0 3px 12px rgba(16,185,129,0.15)">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
+        <div style="display:flex; align-items:center; gap:10px">
+          <span style="font-size:1.35rem">📌</span>
+          <div>
+            <strong>Ημιτελής Εργασία σε Checkpoint:</strong>
+            <span id="smart-resume-text">Βρέθηκε εργασία έτοιμη για άμεση συνέχιση.</span>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center">
+          <button type="button" class="btn btn-sm btn-primary" id="smart-resume-btn" onclick="executeSmartResume()" style="background:var(--emerald); border:none; font-weight:600; padding:6px 14px; box-shadow:0 2px 8px rgba(16,185,129,0.3)">
+            ▶️ Συνέχιση ΤΩΡΑ
+          </button>
+          <button type="button" class="btn btn-sm btn-icon" onclick="dismissSmartResume()" title="Παράβλεψη" style="opacity:0.7">
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Unified Upload & Smart Batch Queue Card -->
     <div class="card animate-in" id="tr-upload-card"
          ondragover="handleDragOver(event, 'tr-upload-card')"
@@ -365,9 +386,15 @@
         </div>
       </div>
 
-      <div class="progress-header">
-        <span class="progress-label" id="tr-progress-step">Starting...</span>
-        <span class="progress-pct" id="tr-progress-pct">0%</span>
+      <div class="progress-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+        <div style="display:flex; align-items:center; gap:8px">
+          <span class="progress-label" id="tr-progress-step">Starting...</span>
+          <span id="tr-engine-badge" class="engine-pill engine-gemini" style="display:none">✨ Gemini Flash</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px">
+          <span id="tr-progress-eta" class="progress-eta" style="display:none"></span>
+          <span class="progress-pct" id="tr-progress-pct">0%</span>
+        </div>
       </div>
       <div class="progress-bar-track">
         <div class="progress-bar-fill shimmer" id="tr-progress-bar" style="width:0%"></div>
@@ -400,6 +427,9 @@
         <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
           ⬇️ Download <span id="tr-format-label">TXT</span> File
         </a>
+        <button class="btn btn-outline" onclick="openReaderModal()" id="tr-read-now-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--emerald); color:var(--emerald); font-weight:600">
+          📖 Διαβάστε Τώρα (Reader)
+        </button>
         <button class="btn btn-secondary" onclick="openEditor()" id="tr-edit-btn" style="display:inline-flex; align-items:center; gap:8px">
           ✏️ Review &amp; Edit (Έλεγχος)
         </button>
@@ -543,6 +573,12 @@
           <!-- Populated by JS -->
         </div>
         <input type="hidden" id="ab-voice-selected" value="" />
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center">
+          <input type="text" id="ab-custom-preview-text" class="form-input" placeholder="🗣️ Προαιρετική φράση για δοκιμή φωνής (π.χ. απόσπασμα βιβλίου)..." style="font-size:0.82rem; padding:6px 12px; flex:1" />
+          <button type="button" class="btn btn-secondary btn-sm" onclick="playActiveVoiceCustomPreview()" title="Ακρόαση της επιλεγμένης φωνής με αυτό το κείμενο" style="white-space:nowrap; padding:6px 12px; font-size:0.82rem">
+            🔊 Δοκιμή Φωνής
+          </button>
+        </div>
       </div>
 
       <div class="form-group">
@@ -648,9 +684,15 @@
         </span>
       </div>
 
-      <div class="progress-header">
-        <span class="progress-label" id="ab-progress-step">Starting...</span>
-        <span class="progress-pct" id="ab-progress-pct">0%</span>
+      <div class="progress-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+        <div style="display:flex; align-items:center; gap:8px">
+          <span class="progress-label" id="ab-progress-step">Starting...</span>
+          <span id="ab-engine-badge" class="engine-pill engine-free" style="display:none">⚡ Edge-TTS Neural</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px">
+          <span id="ab-progress-eta" class="progress-eta" style="display:none"></span>
+          <span class="progress-pct" id="ab-progress-pct">0%</span>
+        </div>
       </div>
       <div class="progress-bar-track">
         <div class="progress-bar-fill shimmer" id="ab-progress-bar" style="width:0%"></div>
@@ -668,9 +710,53 @@
       <div style="font-size:3rem; margin-bottom:12px">🎉</div>
       <h3>Audiobook Ready!</h3>
       <p id="ab-result-meta">Your audiobook has been generated successfully.</p>
-      <a class="btn btn-download" href="#" onclick="downloadOutput('ab'); return false;" id="ab-download-btn">
-        ⬇️ Download MP3 Audiobook
-      </a>
+
+      <!-- Built-in Pro Audiobook Player Widget -->
+      <div class="audiobook-player-card" id="ab-player-container" style="display:none">
+        <div class="ab-player-top">
+          <div class="ab-track-info">
+            <span class="ab-track-icon">🎧</span>
+            <div>
+              <div class="ab-track-title" id="ab-player-title">Audiobook</div>
+              <div class="ab-track-subtitle" id="ab-player-voice">Neural Voice · MP3 High Fidelity</div>
+            </div>
+          </div>
+          <!-- Chapter / Part Selector -->
+          <div class="ab-chapter-select-wrap" id="ab-chapter-wrap" style="display:none">
+            <label for="ab-chapter-select" style="font-size:0.75rem; color:var(--text-muted); margin-bottom:2px">Κεφάλαιο:</label>
+            <select id="ab-chapter-select" class="form-select-sm" onchange="onAudioChapterSelect(this.value)">
+              <option value="0">Πλήρες Audiobook</option>
+            </select>
+          </div>
+        </div>
+
+        <audio id="ab-audio-element" controls preload="metadata" style="width:100%; margin:12px 0 8px 0; border-radius:8px"></audio>
+
+        <div class="ab-player-controls">
+          <div class="ab-skip-btns">
+            <button type="button" class="btn btn-sm btn-outline ab-btn-round" onclick="audioSkip(-15)" title="Πίσω 15 δευτερόλεπτα">
+              ⏪ 15s
+            </button>
+            <button type="button" class="btn btn-sm btn-outline ab-btn-round" onclick="audioSkip(15)" title="Εμπρός 15 δευτερόλεπτα">
+              ⏩ 15s
+            </button>
+          </div>
+          <!-- Playback Speed Pills -->
+          <div class="ab-speed-pills">
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-right:4px">Ταχύτητα:</span>
+            <button type="button" class="speed-pill" onclick="setAudioSpeed(0.8, this)">0.8x</button>
+            <button type="button" class="speed-pill active" onclick="setAudioSpeed(1.0, this)">1.0x</button>
+            <button type="button" class="speed-pill" onclick="setAudioSpeed(1.2, this)">1.2x</button>
+            <button type="button" class="speed-pill" onclick="setAudioSpeed(1.5, this)">1.5x</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px">
+        <a class="btn btn-download" href="#" onclick="downloadOutput('ab'); return false;" id="ab-download-btn">
+          ⬇️ Download MP3 Audiobook
+        </a>
+      </div>
     </div>
 
     <!-- Error Card -->
@@ -859,6 +945,54 @@
           <button class="btn-sm btn-outline" id="glossary-prev-btn" onclick="changeGlossaryPage(-1)">◀ Προηγούμενη</button>
           <span id="glossary-page-indicator" style="display:inline-flex; align-items:center; padding:0 8px; font-weight:600">1</span>
           <button class="btn-sm btn-outline" id="glossary-next-btn" onclick="changeGlossaryPage(1)">Επόμενη ▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════
+     MODAL: DISTRACTION-FREE READER
+     ════════════════════════════════════ -->
+<div class="modal-overlay" id="reader-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="reader-book-title">
+  <div class="modal-card reader-modal-card" id="reader-card">
+    <div class="reader-header">
+      <div class="reader-meta">
+        <span style="font-size:1.25rem">📖</span>
+        <span class="reader-title" id="reader-book-title">Βιβλίο</span>
+        <span class="reader-badge" id="reader-badge">Ελληνική Μετάφραση</span>
+      </div>
+      <div class="reader-controls">
+        <!-- View mode toggle -->
+        <div class="reader-btn-group">
+          <button type="button" class="reader-btn active" id="reader-btn-single" onclick="setReaderViewMode('single')">📄 Μονή Στήλη</button>
+          <button type="button" class="reader-btn" id="reader-btn-split" onclick="setReaderViewMode('split')">↔️ Side-by-Side</button>
+        </div>
+        <!-- Theme toggle -->
+        <div class="reader-btn-group">
+          <button type="button" class="reader-theme-btn active" id="r-theme-paper" onclick="setReaderTheme('paper')" title="Χαρτί">📄</button>
+          <button type="button" class="reader-theme-btn" id="r-theme-sepia" onclick="setReaderTheme('sepia')" title="Σέπια">📜</button>
+          <button type="button" class="reader-theme-btn" id="r-theme-dark" onclick="setReaderTheme('dark')" title="Σκούρο">🌙</button>
+        </div>
+        <!-- Font size controls -->
+        <div class="reader-btn-group">
+          <button type="button" class="reader-btn" onclick="adjustReaderFontSize(-1)" title="Μικρότερη γραμματοσειρά">A-</button>
+          <span id="reader-font-size-label" style="font-size:0.8rem; font-weight:600; padding:0 4px">100%</span>
+          <button type="button" class="reader-btn" onclick="adjustReaderFontSize(1)" title="Μεγαλύτερη γραμματοσειρά">A+</button>
+        </div>
+        <button type="button" class="btn-sm btn-icon" onclick="closeReaderModal()" title="Κλείσιμο Αναγνώστη">✕</button>
+      </div>
+    </div>
+    <div class="reader-body theme-paper" id="reader-body">
+      <div class="reader-content" id="reader-single-content"></div>
+      <div class="reader-split-content" id="reader-split-content" style="display:none">
+        <div class="reader-split-col reader-orig-col">
+          <div class="reader-col-header">Πρωτότυπο Κείμενο (Original)</div>
+          <div class="reader-col-body" id="reader-orig-text"></div>
+        </div>
+        <div class="reader-split-col reader-trans-col">
+          <div class="reader-col-header">Μετάφραση (Greek)</div>
+          <div class="reader-col-body" id="reader-trans-text"></div>
         </div>
       </div>
     </div>

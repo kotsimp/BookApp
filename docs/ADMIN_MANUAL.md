@@ -78,6 +78,13 @@
 * **Literature / E-Reader Formatter:** Λειτουργία `layout=literature` για εξαγωγή 6×9 trade-paperback PDF/DOCX (Georgia + Georgia Italic/Bold για πραγματικά `*πλάγια*`/`**έντονα**`, `_sanitize_for_pdf_font` για μηδέν tofu `□`, `_split_oversized_token` για καθαρή αναδίπλωση URLs) και reflowable Kindle/iPad EPUB (`<em>`/`<strong>`) με TOC.
 * **Multi-Page Front Matter Preservation:** Καθαρισμός κεφαλίδων σε επίπεδο γραμμής (`_clean_page_blocks`), διασφαλίζοντας ότι πίνακες περιεχομένων, προμετωπίδες (epigraphs) και πρόλογοι στις αρχικές σελίδες διατηρούνται 100% ακέραιοι.
 * **Style-Aware Categorized Glossary Engine:** Κατηγοριοποιημένη ορολογία (`technical`, `literary`, `general`) με hyphen-safe word boundaries (`(?<![\w-])` / `(?![\w-])`), αυτόματο αποκλεισμό IT όρων σε λογοτεχνία/comics/audiobooks και προστασία αγγλικών βιβλιογραφικών γραμμών (`GET`/`POST`/`DELETE /api/glossary`).
+* **Distraction-Free Reader, Smart Resume Banner & Pro Audio Player (`frontend/app.js`, `frontend/style.css`):**
+  * **Distraction-Free Reader (`#reader-modal`):** Πλήρης ενσωματωμένος αναγνώστης με serif τυπογραφία, 3 θέματα (Paper `#fbfbfb`, Sepia `#f6eedb`, Dark `#0f111a`), κλιμάκωση γραμματοσειράς και υποστήριξη παράθεσης (Side-by-Side: Original ↔ Greek).
+  * **Smart Resume Banner (`#smart-resume-banner`):** Αυτόματος εντοπισμός διακοπεισών εργασιών με αποθηκευμένο checkpoint κατά την είσοδο στην εφαρμογή και άμεση συνέχιση με 1 κλικ.
+  * **Live ETA & Throughput Meter (`.progress-eta`):** Ζωντανός υπολογισμός υπολειπόμενου χρόνου (`~Χλ Υδ`) και ρυθμού επεξεργασίας (`σελ/λ` ή `batches/δ`).
+  * **Hybrid Engine Badge (`.engine-pill`):** Οπτική ένδειξη ενεργού κινητήρα (`✨ Gemini Flash` vs `⚡ Free Engine` vs `⚡ Edge-TTS Neural`).
+  * **Pro Audiobook Player (`#ab-player-container`):** Ενσωματωμένος player με presets ταχύτητας (`0.8x`, `1.0x`, `1.2x`, `1.5x`), κουμπιά skip 15s (`⏪`, `⏩`) και πλοήγηση κεφαλαίων.
+  * **Contextual Voice Audition:** Δυνατότητα δοκιμής νευρωνικής φωνής με πραγματικό απόσπασμα του βιβλίου ή προσαρμοσμένο κείμενο (`#ab-custom-preview-text`).
 
 ---
 

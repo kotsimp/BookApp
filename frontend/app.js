@@ -705,18 +705,48 @@ function updateVoices() {
 }
 
 let currentAudioPreview = null;
-function playVoicePreview(voiceCode, event) {
+function playVoicePreview(voiceCode, event, customText = null) {
   if (event) event.stopPropagation();
   if (currentAudioPreview) {
     currentAudioPreview.pause();
     currentAudioPreview = null;
   }
-  const url = `${API}/tts/preview?voice=${encodeURIComponent(voiceCode)}`;
+  const customInput = document.getElementById('ab-custom-preview-text')?.value?.trim();
+  const sample = (customText || customInput || '').slice(0, 150);
+  let url = `${API}/tts/preview?voice=${encodeURIComponent(voiceCode)}`;
+  if (sample) {
+    url += `&text=${encodeURIComponent(sample)}`;
+  }
   currentAudioPreview = new Audio(url);
   toast(`🔊 Παραγωγή δείγματος για ${voiceCode}...`, 'info');
   currentAudioPreview.play().catch(e => {
     console.debug('Preview audio playback failed:', e);
   });
+}
+
+async function playActiveVoiceCustomPreview() {
+  const selectedVoiceName = document.getElementById('ab-voice-selected')?.value || state.selectedVoice;
+  const lang = document.getElementById('ab-lang-select')?.value || 'english';
+  const voices = _voicesCache[lang] || [];
+  const matched = voices.find(v => v.name === selectedVoiceName || v.code === selectedVoiceName) || voices[0];
+  const voiceCode = matched ? matched.code : (lang === 'greek' ? 'el-GR-NestorasNeural' : 'en-US-GuyNeural');
+
+  let customText = document.getElementById('ab-custom-preview-text')?.value?.trim();
+  if (!customText && state.ab.jobId) {
+    try {
+      const res = await fetch(`${API}/jobs/${state.ab.jobId}/text`);
+      if (res.ok) {
+        const d = await res.json();
+        const text = (d.translated_text || d.original_text || '').trim();
+        if (text) {
+          customText = text.slice(0, 130).replace(/\s+/g, ' ');
+          const inputEl = document.getElementById('ab-custom-preview-text');
+          if (inputEl) inputEl.value = customText;
+        }
+      }
+    } catch (_) {}
+  }
+  playVoicePreview(voiceCode, null, customText);
 }
 
 function toggleMultiVoiceSelect() {
@@ -780,6 +810,7 @@ async function startTranslation() {
     trCancelBtn.innerHTML = '🛑 Cancel Translation';
   }
   setStatusBadge('tr', 'running');
+  state.tr.startTime = Date.now();
 
   try {
     const res = await fetch(`${API}/translate`, {
@@ -936,6 +967,7 @@ async function startAudiobook() {
     abCancelBtn.innerHTML = '🛑 Cancel Audiobook';
   }
   setStatusBadge('ab', 'running');
+  state.ab.startTime = Date.now();
 
   try {
     const isMultiVoice = document.getElementById('ab-multi-voice')?.checked || false;
@@ -1054,6 +1086,54 @@ function updateProgress(prefix, data) {
   document.getElementById(`${prefix}-progress-pct`).textContent = `${pct}%`;
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
   document.getElementById(`${prefix}-progress-step`).textContent = step;
+
+  // Update Hybrid Engine Badge
+  const engineBadge = document.getElementById(`${prefix}-engine-badge`);
+  if (engineBadge) {
+    if (prefix === 'tr') {
+      const stepLower = (data.current_step || '').toLowerCase();
+      if (data.quota_behavior === 'fallback' && (stepLower.includes('όριο') || stepLower.includes('δωρεάν') || data.gemini_quota_exhausted)) {
+        engineBadge.style.display = 'inline-flex';
+        engineBadge.className = 'engine-pill engine-free';
+        engineBadge.textContent = '⚡ Free Engine';
+      } else if (data.ai_polish) {
+        engineBadge.style.display = 'inline-flex';
+        engineBadge.className = 'engine-pill engine-gemini';
+        engineBadge.textContent = '✨ Gemini Flash';
+      } else {
+        engineBadge.style.display = 'inline-flex';
+        engineBadge.className = 'engine-pill engine-free';
+        engineBadge.textContent = '⚡ Google Translate';
+      }
+    } else {
+      engineBadge.style.display = 'inline-flex';
+      engineBadge.className = 'engine-pill engine-free';
+      engineBadge.textContent = '⚡ Edge-TTS Neural';
+    }
+  }
+
+  // Update Live ETA & Processing Speed
+  const etaEl = document.getElementById(`${prefix}-progress-eta`);
+  if (etaEl) {
+    if (!state[prefix].startTime && data.status === 'running') {
+      state[prefix].startTime = Date.now();
+    }
+    const elapsed = state[prefix].startTime ? (Date.now() - state[prefix].startTime) / 1000 : 0;
+    const done = Number(data.done_chunks || data.done_pages || 0);
+    const total = Number(data.total_chunks || data.total_pages || 0);
+    if (elapsed >= 3 && done > 0 && total > done && data.status === 'running') {
+      const rate = done / elapsed;
+      const remSec = Math.max(1, Math.round((total - done) / rate));
+      const remMin = Math.floor(remSec / 60);
+      const s = remSec % 60;
+      const timeStr = remMin > 0 ? `~${remMin}λ ${s}δ` : `~${s}δ`;
+      const unitStr = (prefix === 'tr' && data.total_pages > 0) ? `${Math.round(rate * 60)} σελ/λ` : `${rate.toFixed(1)} τμήματα/δ`;
+      etaEl.innerHTML = `⏳ Απομένουν: <strong>${timeStr}</strong> (${unitStr})`;
+      etaEl.style.display = 'inline-block';
+    } else {
+      etaEl.style.display = 'none';
+    }
+  }
 
   // Single-document Gemini quota warning banner
   const quotaBanner = document.getElementById(`${prefix}-quota-warning-banner`);
@@ -1191,6 +1271,11 @@ function resetProgress(prefix, keepButtonsEnabled = false) {
   if (!keepButtonsEnabled) {
     setActionButtonsEnabled(prefix, false);
   }
+  const etaEl = document.getElementById(`${prefix}-progress-eta`);
+  if (etaEl) { etaEl.style.display = 'none'; etaEl.textContent = ''; }
+  const eng = document.getElementById(`${prefix}-engine-badge`);
+  if (eng) eng.style.display = 'none';
+  state[prefix].startTime = null;
   const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
   if (cancelBtn) {
     cancelBtn.disabled = false;
@@ -1252,7 +1337,20 @@ function showResult(prefix, data) {
       audioLangSelect.value = targetLang;
     }
   } else {
-    meta.textContent = 'Your audiobook has been generated. Click below to download the MP3 file.';
+    meta.textContent = 'Your audiobook has been generated. Click below to download or listen to the MP3 file.';
+    const playerWrap = document.getElementById('ab-player-container');
+    const audio = document.getElementById('ab-audio-element');
+    const trackTitle = document.getElementById('ab-player-title');
+    const trackVoice = document.getElementById('ab-player-voice');
+    if (playerWrap && audio && state.ab.jobId) {
+      playerWrap.style.display = 'block';
+      audio.src = `${API}/download/${state.ab.jobId}`;
+      if (trackTitle) trackTitle.textContent = (data && data.file_name) || state.ab.file?.name || 'Audiobook';
+      if (trackVoice) {
+        const vName = (data && data.voice_name) || state.selectedVoice || 'Neural Voice';
+        trackVoice.textContent = `${vName} · MP3 High Fidelity`;
+      }
+    }
   }
   card.classList.add('visible');
 }
@@ -1311,6 +1409,33 @@ async function downloadOutput(prefix) {
     window.location.href = targetUrl;
   } else {
     window.location.href = `${API}/download/${jobId}`;
+  }
+}
+
+function audioSkip(seconds) {
+  const audio = document.getElementById('ab-audio-element');
+  if (audio) {
+    audio.currentTime = Math.max(0, Math.min(audio.duration || Infinity, audio.currentTime + seconds));
+  }
+}
+
+function setAudioSpeed(rate, btn) {
+  const audio = document.getElementById('ab-audio-element');
+  if (audio) {
+    audio.playbackRate = rate;
+  }
+  document.querySelectorAll('.ab-speed-pills .speed-pill').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function onAudioChapterSelect(val) {
+  const audio = document.getElementById('ab-audio-element');
+  if (audio && val) {
+    const sec = parseFloat(val);
+    if (!isNaN(sec) && sec >= 0) {
+      audio.currentTime = sec;
+      audio.play().catch(() => {});
+    }
   }
 }
 
@@ -1394,7 +1519,9 @@ async function refreshHistory() {
     const res = await fetch(`${API}/jobs`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const jobs = await res.json();
-    renderHistory(Array.isArray(jobs) ? jobs : []);
+    const jobList = Array.isArray(jobs) ? jobs : [];
+    renderHistory(jobList);
+    checkSmartResume(jobList);
   } catch (e) {
     console.warn('Could not refresh history:', e);
   }
@@ -1785,6 +1912,172 @@ async function saveEditorText() {
     btn.disabled = false;
     btn.textContent = '💾 Save & Update Files';
   }
+}
+
+// ── Distraction-Free Reader ────────────────────────────────
+let _readerFontSizeScale = 1.0;
+let _readerData = null;
+
+async function openReaderModal() {
+  const jobId = state.tr.jobId;
+  if (!jobId) {
+    toast('Δεν υπάρχει επιλεγμένο έγγραφο για ανάγνωση.', 'error');
+    return;
+  }
+  const modal = document.getElementById('reader-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  const titleEl = document.getElementById('reader-book-title');
+  const fileName = document.getElementById('tr-file-name')?.textContent || 'Βιβλίο';
+  if (titleEl) titleEl.textContent = fileName;
+
+  const singleContent = document.getElementById('reader-single-content');
+  const origText = document.getElementById('reader-orig-text');
+  const transText = document.getElementById('reader-trans-text');
+  if (singleContent) singleContent.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">⏳ Φόρτωση κειμένου ανάγνωσης...</div>';
+
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/text`);
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to fetch book text'));
+    _readerData = await res.json();
+    const greekText = (_readerData.translated_text || '').trim() || (_readerData.original_text || '').trim();
+    const englishText = (_readerData.original_text || '').trim();
+
+    if (singleContent) {
+      if (greekText) {
+        singleContent.innerHTML = formatReaderText(greekText);
+      } else {
+        singleContent.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Δεν βρέθηκε μεταφρασμένο κείμενο για ανάγνωση.</div>';
+      }
+    }
+    if (transText) transText.innerHTML = formatReaderText(greekText);
+    if (origText) origText.innerHTML = formatReaderText(englishText);
+  } catch (err) {
+    if (singleContent) singleContent.innerHTML = `<div style="color:var(--rose); padding:20px">Σφάλμα φόρτωσης: ${err.message}</div>`;
+  }
+}
+
+function formatReaderText(raw) {
+  if (!raw) return '';
+  return raw
+    .split(/\n{2,}/)
+    .map(p => {
+      const clean = p.trim();
+      if (!clean) return '';
+      if (/^={3,}.*?={3,}$/.test(clean) || /^PAGE\s+\d+$/i.test(clean)) {
+        return `<div class="reader-page-divider" style="text-align:center; font-family:sans-serif; font-size:0.75rem; letter-spacing:0.1em; opacity:0.5; margin:24px 0">❖ ${escHtml(clean.replace(/=/g, '').trim())} ❖</div>`;
+      }
+      return `<p style="margin-bottom:1.4em; text-indent:1.5em">${escHtml(clean)}</p>`;
+    })
+    .join('');
+}
+
+function closeReaderModal() {
+  const modal = document.getElementById('reader-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function setReaderViewMode(mode) {
+  const singleBtn = document.getElementById('reader-btn-single');
+  const splitBtn = document.getElementById('reader-btn-split');
+  const singleContent = document.getElementById('reader-single-content');
+  const splitContent = document.getElementById('reader-split-content');
+
+  if (mode === 'split') {
+    if (singleBtn) singleBtn.classList.remove('active');
+    if (splitBtn) splitBtn.classList.add('active');
+    if (singleContent) singleContent.style.display = 'none';
+    if (splitContent) splitContent.style.display = 'grid';
+  } else {
+    if (splitBtn) splitBtn.classList.remove('active');
+    if (singleBtn) singleBtn.classList.add('active');
+    if (splitContent) splitContent.style.display = 'none';
+    if (singleContent) singleContent.style.display = 'block';
+  }
+}
+
+function setReaderTheme(theme) {
+  const body = document.getElementById('reader-body');
+  if (!body) return;
+  body.classList.remove('theme-paper', 'theme-sepia', 'theme-dark');
+  body.classList.add(`theme-${theme}`);
+  ['paper', 'sepia', 'dark'].forEach(t => {
+    const btn = document.getElementById(`r-theme-${t}`);
+    if (btn) btn.classList.toggle('active', t === theme);
+  });
+}
+
+function adjustReaderFontSize(delta) {
+  _readerFontSizeScale = Math.max(0.75, Math.min(1.6, _readerFontSizeScale + delta * 0.1));
+  const body = document.getElementById('reader-body');
+  if (body) {
+    body.style.setProperty('--reader-font-scale', _readerFontSizeScale);
+  }
+  const label = document.getElementById('reader-font-size-label');
+  if (label) {
+    label.textContent = `${Math.round(_readerFontSizeScale * 100)}%`;
+  }
+}
+
+// ── Smart Resume Banner Logic ──────────────────────────────
+let _smartResumeJob = null;
+
+function checkSmartResume(jobs) {
+  const banner = document.getElementById('smart-resume-banner');
+  if (!banner) return;
+
+  if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  // Find most recent job that was interrupted or has uncompleted checkpoint
+  const candidate = jobs.find(j => {
+    if (!j.job_id || j.status === 'done' || j.status === 'cancelled') return false;
+    const dismissed = sessionStorage.getItem(`dismiss_resume_${j.job_id}`);
+    if (dismissed) return false;
+    const done = Number(j.done_chunks || j.done_pages || 0);
+    const total = Number(j.total_chunks || j.total_pages || 0);
+    return done > 0 || j.status === 'error';
+  });
+
+  if (candidate) {
+    _smartResumeJob = candidate;
+    const textEl = document.getElementById('smart-resume-text');
+    const done = Number(candidate.done_chunks || candidate.done_pages || 0);
+    const total = Number(candidate.total_chunks || candidate.total_pages || 0);
+    const pct = candidate.progress || (total > 0 ? Math.round((done / total) * 100) : 0);
+    const info = total > 0 ? `${done}/${total} τμήματα · ${pct}% ολοκληρωμένο` : `${pct}%`;
+    if (textEl) {
+      textEl.innerHTML = `«<strong>${escHtml(candidate.file_name || 'Έγγραφο')}</strong>» (${info}). Πατήστε για άμεση συνέχιση από το checkpoint.`;
+    }
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+async function executeSmartResume() {
+  if (!_smartResumeJob) return;
+  const job = _smartResumeJob;
+  dismissSmartResume();
+  await loadHistoryJob(job.job_id, job.mode || 'translate');
+  toast('▶️ Συνέχιση εργασίας από το αποθηκευμένο checkpoint...', 'info');
+  if ((job.mode || 'translate') === 'translate') {
+    await startTranslation();
+  } else {
+    await startAudiobook();
+  }
+}
+
+function dismissSmartResume() {
+  if (_smartResumeJob) {
+    sessionStorage.setItem(`dismiss_resume_${_smartResumeJob.job_id}`, '1');
+    _smartResumeJob = null;
+  }
+  const banner = document.getElementById('smart-resume-banner');
+  if (banner) banner.style.display = 'none';
 }
 
 // ── AI Polish via Gemini ───────────────────────────────────
@@ -3187,6 +3480,10 @@ async function init() {
       const glossaryModal = document.getElementById('glossary-modal');
       if (glossaryModal && glossaryModal.style.display !== 'none') {
         closeGlossaryModal();
+      }
+      const readerModal = document.getElementById('reader-modal');
+      if (readerModal && readerModal.style.display !== 'none') {
+        closeReaderModal();
       }
       return;
     }

@@ -82,6 +82,7 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
                 tmp_txt.unlink()
             if tmp_out.exists():
                 tmp_out.unlink()
+            Path(f"{tmp_txt.stem}_original.txt").unlink(missing_ok=True)
             cp_file = tmp_out.with_suffix(".direct_ai_checkpoint.json")
             if cp_file.exists():
                 cp_file.unlink()
@@ -125,6 +126,7 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
                 tmp_txt.unlink()
             if tmp_out.exists():
                 tmp_out.unlink()
+            Path(f"{tmp_txt.stem}_original.txt").unlink(missing_ok=True)
             cp_file = tmp_out.with_suffix(".direct_ai_checkpoint.json")
             if cp_file.exists():
                 cp_file.unlink()
