@@ -163,6 +163,15 @@ class GeminiKeyPool:
                 trip_gemini_quota_exhaustion(earliest_cooldown)
 
     @staticmethod
+    def mark_all_exhausted(cooldown_seconds: float = 3600.0) -> None:
+        """Marks all currently configured keys in the pool as exhausted for cooldown_seconds."""
+        now = time.time()
+        target = now + max(10.0, cooldown_seconds)
+        with _pool_lock:
+            for k in GeminiKeyPool.get_keys():
+                _KEY_COOLDOWNS[k] = max(_KEY_COOLDOWNS.get(k, 0.0), target)
+
+    @staticmethod
     def reset_quota(key: Optional[str] = None) -> None:
         """Resets quota exhaustion for a specific key or for all keys in the pool."""
         with _pool_lock:

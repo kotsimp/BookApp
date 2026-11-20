@@ -156,21 +156,17 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    # Full Flash models FIRST: dramatically higher Greek accuracy & zero multilingual subword bleed
-    "gemini-3-flash-preview",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
-    "gemini-2.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
-    "gemini-3.8-flash",
-    "gemini-2.0-flash",
-    "gemini-pro-latest",
-    # Flash-Lite models as secondary fallback only
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
+    # High-availability, active models with generous Free Tier quota (no subword bleed)
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-pro-latest",
 ]
 
 # Permissive safety settings for literary/sci-fi/historical translation so fictional violence,
@@ -229,6 +225,11 @@ def trip_gemini_quota_exhaustion(cooldown_seconds: float = 3600.0) -> None:
         save_setting("gemini_quota_exhausted_until", _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL)
     except Exception:
         pass
+    try:
+        from backend.gemini_key_pool import GeminiKeyPool
+        GeminiKeyPool.mark_all_exhausted(cooldown_seconds)
+    except Exception:
+        pass
 
 
 def reset_gemini_quota_exhaustion() -> None:
@@ -238,6 +239,12 @@ def reset_gemini_quota_exhaustion() -> None:
     try:
         from backend.settings_manager import delete_setting
         delete_setting("gemini_quota_exhausted_until")
+    except Exception:
+        pass
+    try:
+        from backend.gemini_key_pool import _KEY_COOLDOWNS, _pool_lock
+        with _pool_lock:
+            _KEY_COOLDOWNS.clear()
     except Exception:
         pass
 
@@ -1741,6 +1748,7 @@ async def _call_gemini_api(
                 use_no_thinking = (
                     "flash" in m_low
                     and "pro" not in m_low
+                    and "lite" not in m_low
                     and not m_low.startswith("gemma")
                     and ("2.5" in m_low or "3" in m_low or "latest" in m_low)
                 )
@@ -1832,6 +1840,12 @@ async def _call_gemini_api(
                                     except Exception:
                                         pass
 
+                                # If it is a model-specific tier limit ("check your plan and billing details"),
+                                # do NOT kill the key! Immediately try the next candidate model on the same key!
+                                if "billing details" in err_low or "plan" in err_low:
+                                    logger.info(f"Model {model} unavailable on current key tier ({resp.status}). Trying next candidate model...")
+                                    break
+
                                 # Differentiate transient burst rate-limits (e.g. 15 RPM, retryDelay <= 60s)
                                 # from daily / persistent quota exhaustion
                                 is_daily_quota = (
@@ -1865,7 +1879,16 @@ async def _call_gemini_api(
                                     switched_key = True
                                     break
 
-                                trip_gemini_quota_exhaustion(cooldown_sec)
+                                cooldown_to_trip = cooldown_sec
+                                try:
+                                    pool_st = GeminiKeyPool.get_pool_status()
+                                    if pool_st.get("total_keys", 0) > 0:
+                                        earliest_ts = pool_st.get("earliest_reset_timestamp", 0.0)
+                                        if earliest_ts > time.time():
+                                            cooldown_to_trip = max(5.0, earliest_ts - time.time())
+                                except Exception:
+                                    pass
+                                trip_gemini_quota_exhaustion(cooldown_to_trip)
                                 q_info = get_gemini_quota_info()
                                 logger.warning(
                                     f"Gemini daily quota exhausted ({resp.status}). All {len(attempted_keys)} pool keys exhausted. Tripping circuit breaker for {int(cooldown_sec)}s."
@@ -1879,7 +1902,7 @@ async def _call_gemini_api(
                             else:
                                 err_text = await resp.text()
                                 # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
-                                if resp.status == 400 and "thinking" in err_text.lower() and "thinkingConfig" in req_payload.get("generationConfig", {}):
+                                if resp.status == 400 and "thinkingConfig" in req_payload.get("generationConfig", {}):
                                     req_payload = {
                                         **req_payload,
                                         "generationConfig": {
@@ -1943,7 +1966,16 @@ async def _call_gemini_api(
                     current_key = next_pool_key
                     continue
 
-                trip_gemini_quota_exhaustion(3600.0)
+                cooldown_to_trip = 3600.0
+                try:
+                    pool_st = GeminiKeyPool.get_pool_status()
+                    if pool_st.get("total_keys", 0) > 0:
+                        earliest_ts = pool_st.get("earliest_reset_timestamp", 0.0)
+                        if earliest_ts > time.time():
+                            cooldown_to_trip = max(5.0, earliest_ts - time.time())
+                except Exception:
+                    pass
+                trip_gemini_quota_exhaustion(cooldown_to_trip)
                 q_info = get_gemini_quota_info()
                 raise DailyQuotaExhaustedError(
                     f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "

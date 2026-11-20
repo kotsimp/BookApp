@@ -2909,6 +2909,11 @@ function onGeminiQuotaRestored() {
     setTimeout(() => {
       resumeTranslation('tr');
     }, 2000);
+  } else if (_smartResumeJob) {
+    console.log(`Auto-resuming checkpoint job ${_smartResumeJob.job_id} after quota restoration...`);
+    setTimeout(() => {
+      executeSmartResume();
+    }, 2000);
   } else if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
     console.log('Auto-resuming batch queue after quota restoration...');
     setTimeout(() => {
@@ -3001,6 +3006,15 @@ async function saveGeminiKeyOnly() {
     return;
   }
 
+  if (_smartResumeJob) {
+    closeAiPolishModal();
+    toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση από checkpoint...`, 'success');
+    setTimeout(() => {
+      executeSmartResume();
+    }, 400);
+    return;
+  }
+
   if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση της ουράς...`, 'success');
@@ -3062,7 +3076,7 @@ async function checkGlobalGeminiQuotaStatus() {
     } else {
       updateNavGeminiBadge(null);
     }
-    const isExhausted = Boolean(data.exhausted);
+    const isExhausted = Boolean(data.exhausted) && (!data.pool || data.pool.available_keys === 0);
     const resetTs = Number(data.reset_timestamp || 0);
     const resetTimeStr = data.reset_time_str || '';
 
@@ -3078,23 +3092,20 @@ async function checkGlobalGeminiQuotaStatus() {
         navBadge.title = `Gemini Quota εξαντλήθηκε. Επαναφορά σε: ${resetTimeStr || 'σύντομα'}`;
       }
     } else {
-      if (_geminiCountdownTimer) {
-        stopGeminiQuotaCountdown(true);
-      } else {
-        const homeBanner = document.getElementById('home-gemini-quota-banner');
-        if (homeBanner) homeBanner.style.display = 'none';
-        const trQuotaBanner = document.getElementById('tr-quota-warning-banner');
-        if (trQuotaBanner) trQuotaBanner.style.display = 'none';
-        const qBanner = document.getElementById('queue-quota-warning-banner');
-        if (qBanner) qBanner.style.display = 'none';
-        const polishTag = document.getElementById('tr-ai-polish-quota-tag');
-        if (polishTag) polishTag.style.display = 'none';
+      stopGeminiQuotaCountdown(false);
+      const homeBanner = document.getElementById('home-gemini-quota-banner');
+      if (homeBanner) homeBanner.style.display = 'none';
+      const trQuotaBanner = document.getElementById('tr-quota-warning-banner');
+      if (trQuotaBanner) trQuotaBanner.style.display = 'none';
+      const qBanner = document.getElementById('queue-quota-warning-banner');
+      if (qBanner) qBanner.style.display = 'none';
+      const polishTag = document.getElementById('tr-ai-polish-quota-tag');
+      if (polishTag) polishTag.style.display = 'none';
 
-        if (data.pool) {
-          updateNavGeminiBadge(data.pool);
-        } else {
-          updateNavGeminiBadge(null);
-        }
+      if (data.pool) {
+        updateNavGeminiBadge(data.pool);
+      } else {
+        updateNavGeminiBadge(null);
       }
     }
   } catch (_) {}
