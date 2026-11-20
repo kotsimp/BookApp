@@ -165,8 +165,9 @@ def _sanitize_pua(text: str) -> str:
     text = _EXPORT_SPECIAL_TOKEN_RE.sub("", text)
     text = _EXPORT_HTML_TAG_RE.sub("", text)
     try:
-        from backend.typography import fix_broken_hyphens
+        from backend.typography import fix_broken_hyphens, sanitize_editorial_pass
         text = fix_broken_hyphens(text)
+        text = sanitize_editorial_pass(text)
     except Exception:
         pass
     return text

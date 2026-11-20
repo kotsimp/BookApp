@@ -471,8 +471,9 @@ def sanitize_ai_output(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
     try:
-        from backend.typography import fix_broken_hyphens
+        from backend.typography import fix_broken_hyphens, sanitize_editorial_pass
         cleaned = fix_broken_hyphens(cleaned)
+        cleaned = sanitize_editorial_pass(cleaned)
     except Exception:
         pass
 

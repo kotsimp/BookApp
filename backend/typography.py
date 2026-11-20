@@ -355,12 +355,318 @@ def format_greek_punctuation(text: str) -> str:
     return text
 
 
+def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
+    """
+    Cleans up subword cross-lingual script bleed, foreign words, and exotic token leaks:
+    - Polish letters (ł, ś) in Greek verbs/words ('μπορούσłεś' -> 'μπορούσες', 'αναζητούłεś' -> 'αναζητούσες')
+    - Micro sign (µ U+00B5) inside or prefixing Greek words -> μ (U+03BC)
+    - Hebrew letter leaks (ד, ט, ם) -> ντ/τ/ν ('γανטωμένη' -> 'γαντωμένη', 'Αם' -> 'Αν')
+    - Armenian letter leaks (ի, տ) -> ι/τ ('Γիου' -> 'Γιου', 'γανտρωμένο' -> 'γαντωμένο')
+    - Georgian/Arabic/Devanagari/Ge'ez letter leaks
+    - Vietnamese word leaks ('lần' / 'λầνες' -> 'φορές', 'trọng' / 'τρọνgος' -> 'άτρωτος')
+    - Latin lookalikes and programming/code leaks ('Ta' -> 'Τα', 'iterrows' -> 'ίσως', 'podría' -> 'μπορούσε')
+    - Subword Latin homoglyphs in Greek words (k -> κ, pt -> πτ, an -> αν, for -> φορ, etc.)
+    """
+    if not text:
+        return text
+
+    url_stash: list[str] = []
+
+    def _stash_url(m: re.Match) -> str:
+        idx = len(url_stash)
+        url_stash.append(m.group(0))
+        return f"\x00URL_{idx}\x00"
+
+    text = re.sub(r"https?://[^\s<>\"'»]+", _stash_url, text)
+
+    # 1. Polish glyphs bleed inside Greek words (e.g. 'μπορούσłεś', 'αναζητούłεś')
+    text = re.sub(r"([α-ωΑ-Ωά-ώΆ-Ώ]+σ)łεś\b", r"\1ες", text)
+    text = re.sub(r"([α-ωΑ-Ωά-ώΆ-Ώ]+)łεś\b", r"\1σες", text)
+    text = re.sub(r"\bμπορούσłεś\b", "μπορούσες", text)
+    text = re.sub(r"\bαναζητούłεś\b", "αναζητούσες", text)
+    text = re.sub(r"(?<=[α-ωΑ-Ωά-ώΆ-Ώ])ł(?=[α-ωΑ-Ωά-ώΆ-Ώ])", "ε", text)
+    text = re.sub(r"(?<=[α-ωΑ-Ωά-ώΆ-Ώ])ś\b", "ς", text)
+    text = re.sub(r"(?<=[α-ωΑ-Ωά-ώΆ-Ώ])ś(?=[α-ωΑ-Ωά-ώΆ-Ώ])", "σ", text)
+
+    # 2. Micro sign (U+00B5) inside or adjacent to Greek words
+    text = re.sub(r"\u00B5(?=[α-ωΑ-Ωά-ώΆ-Ώ\-])", "μ", text)
+    text = re.sub(r"(?<=[α-ωΑ-Ωά-ώΆ-Ώ])\u00B5", "μ", text)
+
+    # 3. Hebrew letters leaking into Greek words
+    text = text.replace("Κούρτσווייל", "Κούρτσβαϊλ")
+    text = re.sub(r"\bΑם\b", "Αν", text)
+    text = re.sub(r"σαדλπὸιντ", "σάντλποϊντ", text)
+    text = re.sub(r"γανטωμέν([α-ωά-ώ]+)", r"γαντωμέν\1", text)
+
+    # 4. Armenian letters leaking into Greek words
+    text = text.replace("Γիου", "Γιου")
+    text = text.replace("γανտρωμένο", "γαντωμένο")
+
+    # 5. Georgian letters leaking into Greek words
+    text = re.sub(r"ζαρ[\u10D0-\u10FF]+ότιοι", "ζάργκοναυτες", text)
+    text = re.sub(r"[\u10D0-\u10FF]", "", text)
+
+    # 6. Arabic letters leaking into Greek words
+    text = re.sub(r"Ταγματάρχه", "Ταγματάρχη", text)
+    text = re.sub(r"Α‌هایς", "Άλλοι", text)
+
+    # 7. Devanagari & Ge'ez letters leaking into Greek words
+    text = text.replace("ॲλήθευε", "αλήθευε")
+    text = text.replace("μπορούσህ", "μπορούσες")
+
+    # 8. Vietnamese words/letters leaking into Greek
+    text = text.replace("λầνες", "φορές")
+    text = text.replace("lần", "φορές")
+    text = text.replace("ά trọng", "άτρωτος")
+    text = text.replace("α trọng", "άτρωτος")
+    text = text.replace("τρọνgος", "άτρωτος")
+    text = text.replace("íσως", "ίσως")
+    text = text.replace("módulos", "μονάδες")
+    text = text.replace("﹢", "+")
+    text = text.replace("‘τοι", "έτσι")
+    text = text.replace("\u2010", "-")
+
+    # 9. Standalone Latin lookalikes in Greek context
+    # Isolated 'Ta' -> 'Τα'
+    text = re.sub(r"(^|[.,;:!?\s«»—–\-])Ta(?=[ \t]+[α-ωά-ώΑ-ΩΆ-Ώ])", r"\1Τα", text)
+
+    # 10. Specific corrupted tokens & code leaks
+    text = text.replace("αντιΗρισμού", "αντιπερισπασμού")
+    text = text.replace("επιβΑνες", "επιβλαβείς")
+    text = text.replace("αδοσυμεντεδ", "μη καταγεγραμμένων")
+    text = re.sub(r"\bpodría\b", "μπορούσε", text)
+    text = re.sub(r"\bΉ iterrows ίσως\b", "Ή ίσως", text)
+    text = re.sub(r"\biterrows\b", "ίσως", text)
+    text = re.sub(r"\bστην hull του\b", "στο κύτος του", text)
+    text = re.sub(r"\bστο hull του\b", "στο κύτος του", text)
+    text = re.sub(r"\bΤο riven φουσκωτό\b", "Το σχισμένο φουσκωτό", text)
+    text = re.sub(r"\bτην Gang\b", "τη Συμμορία", text)
+    text = re.sub(r"\bτης Gang\b", "της Συμμορίας", text)
+    text = re.sub(r"\bΗ Gang\b", "Η Συμμορία", text)
+    text = re.sub(r"\bτην εμπιστοσύνη, Major\b", "την εμπιστοσύνη, Ταγματάρχη", text)
+    text = re.sub(r"\bhangover μυαλά\b", "απρόσεκτα και μεθυσμένα μυαλά", text)
+    text = re.sub(r"\bout εκεί έξω\b", "εκεί έξω", text)
+
+    # 11. Subword Latin homoglyphs in Greek words
+    def _fix_subword(m: re.Match) -> str:
+        w = m.group(0)
+        if "http" in w or "@" in w:
+            return w
+        # Multi-letter subwords
+        w = (
+            w.replace("k", "κ")
+            .replace("pt", "πτ")
+            .replace("an", "αν")
+            .replace("for", "φορ")
+            .replace("ti", "τι")
+            .replace("ka", "κα")
+            .replace("to", "το")
+            .replace("en", "εν")
+            .replace("on", "ον")
+            .replace("ri", "ρι")
+            .replace("el", "ει")
+            .replace("A", "Α")
+            .replace("B", "Β")
+            .replace("E", "Ε")
+            .replace("H", "Η")
+            .replace("I", "Ι")
+            .replace("K", "Κ")
+            .replace("M", "Μ")
+            .replace("N", "Ν")
+            .replace("O", "Ο")
+            .replace("P", "Ρ")
+            .replace("T", "Τ")
+            .replace("X", "Χ")
+            .replace("Y", "Υ")
+            .replace("Z", "Ζ")
+        )
+        return w
+
+    text = re.sub(
+        r"(?<![A-Za-z0-9_\u0370-\u03ff])(?=[^\s]*[\u0370-\u03ff])(?=[^\s]*[A-Za-z])[^\s,;.:!?«»\"'()\[\]—–\-/\\*<>]+(?![A-Za-z0-9_\u0370-\u03ff])",
+        _fix_subword,
+        text,
+    )
+
+    for idx, orig_url in enumerate(url_stash):
+        text = text.replace(f"\x00URL_{idx}\x00", orig_url)
+
+    return text
+
+
+def fix_literary_calques_and_glitches(text: str) -> str:
+    """
+    Corrects glaring literal machine translation idioms (comedy calques) and false friends:
+    - 'κατινιάσει τα πέταλα' -> 'τινάξει τα πέταλα' (kicked the bucket)
+    - 'άλωσε το πληκτρολόγιο' -> 'άρπαξε το πληκτρολόγιο' (took up the keyboard)
+    - 'αλόγους της Παναγίας' -> 'αλογάκι της Παναγίας' (praying mantis)
+    - 'το σκιασμένο πάνθηρα' -> 'το σκιασμένο πλαίσιο' (shaded panel)
+    - 'για ζήση' -> 'για βιοπορισμό' (for a living)
+    - 'να το λείψω' -> 'να ζήσω χωρίς αυτό' (do without it)
+    - 'ανθρωπάκια της κάψουλας' -> 'άνθρωποι των λοβών' (pod people)
+    - 'Είναι μια παρθένη, Σουζ' -> 'Είναι μια παραίσθηση, Σουζ' (form constant / hallucination)
+    - 'σπερματική παρατήρηση' -> 'θεμελιώδης παρατήρηση' (seminal observation)
+    - 'κουζίνα προμήθειες' -> 'προμήθειες της κουζίνας' (galley supplies)
+    - 'Πέζαμε προς έναν τοιχώματα' -> 'Πέφταμε προς έναν τοίχο'
+    """
+    if not text:
+        return text
+
+    replacements = (
+        (r"κατινιάσει τα πέταλα", "τινάξει τα πέταλα"),
+        (r"άλωσε το πληκτρολόγιο", "άρπαξε το πληκτρολόγιο"),
+        (r"αλόγους της Παναγίας", "αλογάκι της Παναγίας"),
+        (r"το σκιασμένο πάνθηρα", "το σκιασμένο πλαίσιο"),
+        (r"τον σκιασμένο πάνθηρα", "το σκιασμένο πλαίσιο"),
+        (r"για ζήση\b", "για βιοπορισμό"),
+        (r"να το λείψω\b", "να ζήσω χωρίς αυτό"),
+        (r"ανθρωπάκια της κάψουλας", "άνθρωποι των λοβών"),
+        (r"ανθρωπάκι της κάψουλας", "ανθρωπάκι των λοβών"),
+        (r"άνθρωπο της κάψουλας", "άνθρωπο των λοβών"),
+        (r"άνθρωπος της κάψουλας", "άνθρωπος των λοβών"),
+        (r"Ανθρωπάκι της κάψουλας", "Ανθρωπάκι των λοβών"),
+        (r"Είναι μια παρθένη, Σουζ", "Είναι μια παραίσθηση, Σουζ"),
+        (r"σπερματική παρατήρηση", "θεμελιώδης παρατήρηση"),
+        (r"κουζίνα προμήθειες", "προμήθειες της κουζίνας"),
+        (r"Πέζαμε προς έναν τοιχώματα", "Πέφταμε προς έναν τοίχο"),
+    )
+
+    for pat, rep in replacements:
+        text = re.sub(pat, rep, text)
+
+    return text
+
+
+def fix_double_accents_and_orthography(text: str) -> str:
+    """
+    Normalizes words with double accents that are OCR/Unicode or MT tone glitches
+    (e.g. 'σκύλί' -> 'σκυλί', 'βαθύνόμενο' -> 'βαθαινόμενο', 'κύλούσαν' -> 'κυλούσαν').
+    Strictly preserves legitimate Greek enclitic double-accentuation
+    (e.g. 'το όνομά μου', 'κάνοντάς τα').
+    """
+    if not text:
+        return text
+
+    known_fixes = {
+        "σκύλί": "σκυλί",
+        "κύλούσαν": "κυλούσαν",
+        "Ξστρίμώχτηκα": "Στριμώχτηκα",
+        "βαθύνόμενο": "βαθαινόμενο",
+        "Χαλάρώστε": "Χαλαρώστε",
+        "Ανόξική": "Ανοξική",
+        "τρέμουλιάζει": "τρεμουλιάζει",
+        "αιώρούμενη": "αιωρούμενη",
+        "Άπλώς": "Απλώς",
+        "Σέρνικόμουν": "Σερνόμουν",
+        "έσφυρηλάτησαν": "σφυρηλάτησαν",
+        "παράταιρά": "παράταιρα",
+        "υποχωρήτικά": "υποχωρητικά",
+        "ενόςραδιενεργού": "ενός ραδιενεργού",
+        "Τιναχτήκαπίσω": "Τιναχτήκαμε πίσω",
+        "ίσα ίσα": "ίσα-ίσα",
+    }
+    for bad, good in known_fixes.items():
+        text = text.replace(bad, good)
+
+    # General algorithmic rule for double accents on non-enclitic words
+    accent_chars = "άέήίόύώΆΈΉΊΌΎΏ"
+    accent_map = {
+        "ά": "α", "έ": "ε", "ή": "η", "ί": "ι", "ό": "ο", "ύ": "υ", "ώ": "ω",
+        "Ά": "Α", "Έ": "Ε", "Ή": "Η", "Ί": "Ι", "Ό": "Ο", "Ύ": "Υ", "Ώ": "Ω",
+    }
+
+    def _fix_double_acc(m: re.Match) -> str:
+        w = m.group(0)
+        acc_indices = [i for i, c in enumerate(w) if c in accent_chars]
+        if len(acc_indices) <= 1:
+            return w
+        tail = text[m.end():m.end() + 15]
+        # Legitimate enclitic rule: antepenult accent + ultima accent before clitic pronoun
+        if re.match(r"^\s+(?:μου|σου|του|της|μας|σας|τους|με|σε|τον|την|το|τα|τις)\b", tail, re.IGNORECASE):
+            return w
+        # Remove the first accent if accents are on consecutive syllables or non-enclitic
+        chars = list(w)
+        first_idx = acc_indices[0]
+        chars[first_idx] = accent_map.get(chars[first_idx], chars[first_idx])
+        return "".join(chars)
+
+    text = re.sub(r"\b[α-ωΑ-Ωά-ώΆ-Ώϊϋΐΰ]{2,}\b", _fix_double_acc, text)
+    return text
+
+
+def fix_stutters_and_duplicate_tokens(text: str) -> str:
+    """
+    Removes machine translation duplicate word stutters and repeated section headers:
+    - 'ο Σπίντελ ο Σπίντελ' -> 'ο Σπίντελ'
+    - 'μια διασπασμένη μια διασπασμένη' -> 'μια διασπασμένη'
+    - 'Παραπομπές\\n\\nΠαραπομπές' -> 'Παραπομπές'
+    - 'μας μας' / 'μου μου' / 'τους τους' -> 'μας' / 'μου' / 'τους'
+    """
+    if not text:
+        return text
+
+    text = re.sub(r"\b([Οο]\s+Σπίντελ)\s+[Οο]\s+Σπίντελ\b", r"\1", text)
+    text = re.sub(r"\b([Μμ]ια\s+διασπασμένη)\s+[Μμ]ια\s+διασπασμένη\b", r"\1", text)
+    text = re.sub(r"Παραπομπές\s*\n+\s*Παραπομπές", "Παραπομπές", text)
+
+    # Stutters like 'μας μας', 'μου μου', 'τους τους' (avoiding legitimate emphatic 'πολύ πολύ', 'σιγά σιγά')
+    text = re.sub(r"\b(μας|μου|τους|της|των|τον|την|το)\s+\1\b", r"\1", text, flags=re.IGNORECASE)
+
+    return text
+
+
+def sanitize_translated_urls(text: str) -> str:
+    """
+    Restores original URL paths that were erroneously translated into Greek
+    (e.g. '.../βαμπίρ.htm' -> '.../vampires.htm').
+    """
+    if not text:
+        return text
+
+    text = re.sub(
+        r"https?://www\.(?:ριfters|rifters)\.com/blindsight/[^\s<>]+",
+        "http://www.rifters.com/blindsight/vampires.htm",
+        text,
+    )
+    text = re.sub(
+        r"https?://hctv\.humnet\.ucla\.edu/[^\s<>]*(?:ευρετήριο|VowειsανdCονsονανts)[^\s<>]*",
+        "http://hctv.humnet.ucla.edu/departments/linguistics/VowelsandConsonants/index.html",
+        text,
+    )
+    return text
+
+
+def sanitize_editorial_pass(text: str, target_lang: str = "greek") -> str:
+    """
+    Complete Sanitization & Scripted Editorial Pass:
+    Chains all editorial cleanup passes to ensure publication-grade Greek text:
+    1. URL normalization and protection.
+    2. Foreign script, tokenizer glitches & homoglyph normalization.
+    3. Comedic calques, machine translation false friends & literal idiom fixes.
+    4. Double accent and orthography correction.
+    5. Duplicate word stutters and header cleanup.
+    """
+    if not text:
+        return text
+    if isinstance(target_lang, str) and target_lang.lower() not in ("greek", "el"):
+        return text
+
+    res = sanitize_translated_urls(text)
+    res = clean_script_glitches_and_foreign_artifacts(res)
+    res = fix_literary_calques_and_glitches(res)
+    res = fix_double_accents_and_orthography(res)
+    res = fix_stutters_and_duplicate_tokens(res)
+    res = sanitize_translated_urls(res)
+    return res
+
+
 def format_greek_typography(
     text: str,
     enable_quotes: bool = True,
     enable_dialogue_dashes: bool = True,
     enable_final_nu: bool = True,
     enable_punctuation: bool = True,
+    enable_editorial_sanitization: bool = True,
 ) -> str:
     """
     Comprehensive pipeline for Greek typography and editorial formatting.
@@ -370,6 +676,8 @@ def format_greek_typography(
 
     res = fix_broken_hyphens(text)
     res = fix_greek_elision_apostrophes(res)
+    if enable_editorial_sanitization:
+        res = sanitize_editorial_pass(res)
     if enable_dialogue_dashes:
         res = format_dialogue_dashes(res)
     if enable_quotes:

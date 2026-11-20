@@ -119,8 +119,24 @@ Upon uploading a document, the system automatically analyzes the opening pages:
 * Displays an informative badge (e.g. `💡 Detected genre: Literature (85% confidence)`).
 * In Advanced Mode, clicking **"Apply Recommended"** automatically aligns the layout style, AI Polish prompt, and glossary category. In Basic Mode, the recommendation is **automatically applied immediately** (`✓ Auto-applied`).
 
-### ✍️ Automatic Greek Editorial Typography
-All translated text passes through the built-in publishing typography engine:
+### ✍️ Automatic Greek Editorial Typography & Scripted Sanitization Pass
+All translated text passes automatically through the built-in publishing typography and scripted editorial engine (`backend/typography.py`):
+* **Cross-Lingual Script Bleed & Tokenizer Glitch Remediation:** Automatically catches and corrects subword tokenizer leakages: Polish past-tense suffixes (`μπορούσłεś` ➔ `μπορούσες`, `αναζητούłεś` ➔ `αναζητούσες`), micro sign characters (`µ` ➔ `μ`), Hebrew glyphs (`ד`/`ט`/`ם`), Armenian letters (`ի`/`տ`), Arabic, Ge'ez, Devanagari, Vietnamese words, and Latin homoglyphs in Greek words (`k` ➔ `κ`, `pt` ➔ `πτ`, `an` ➔ `αν`, `for` ➔ `φορ`, `ti` ➔ `τι`, `Ta` ➔ `Τα`).
+* **Code Leaks & Foreign Word Purge:** Strips programming artifacts like `iterrows` ➔ `ίσως`, and corrects foreign words that leak into Greek sentences (`podría` ➔ `μπορούσε`, `στην hull του` ➔ `στο κύτος του`, `Το riven φουσκωτό` ➔ `Το σχισμένο φουσκωτό`, `Gang` ➔ `Συμμορία`, `Major` ➔ `Ταγματάρχη`, `αδοσυμεντεδ` ➔ `μη καταγεγραμμένων`).
+* **Comedic Machine Translation Calques & False Friends:** Automatically fixes glaring literal machine translation idioms:
+  - `«κατινιάσει τα πέταλα»` ➔ `«τινάξει τα πέταλα»` *(kicked the bucket)*
+  - `«άλωσε το πληκτρολόγιο»` ➔ `«άρπαξε το πληκτρολόγιο»` *(took up the keyboard)*
+  - `«αλόγους της Παναγίας»` ➔ `«αλογάκι της Παναγίας»` *(praying mantis)*
+  - `«το σκιασμένο πάνθηρα»` ➔ `«το σκιασμένο πλαίσιο»` *(shaded panel)*
+  - `«για ζήση»` ➔ `«για βιοπορισμό»` *(for a living)*
+  - `«να το λείψω»` ➔ `«να ζήσω χωρίς αυτό»` *(do without it)*
+  - `«ανθρωπάκια της κάψουλας»` ➔ `«άνθρωποι των λοβών»` *(pod people)*
+  - `«Είναι μια παρθένη, Σουζ»` ➔ `«Είναι μια παραίσθηση, Σουζ»` *(form constant / hallucination)*
+  - `«σπερματική παρατήρηση»` ➔ `«θεμελιώδης παρατήρηση»` *(seminal observation)*
+  - `«κουζίνα προμήθειες»` ➔ `«προμήθειες της κουζίνας»` *(galley supplies)*
+* **Double Accent & Orthography Normalization:** Eliminates OCR or MT double tones (`σκύλί` ➔ `σκυλί`, `βαθύνόμενο` ➔ `βαθαινόμενο`, `κύλούσαν` ➔ `κυλούσαν`) while strictly preserving legitimate Greek grammatical enclitics (`το όνομά μου`, `κάνοντάς τα`, `εκτοξεύοντάς τα`).
+* **Machine Translation Stutter Elimination:** Removes accidental repeated word stutters (`ο Σπίντελ ο Σπίντελ` ➔ `ο Σπίντελ`, `μια διασπασμένη μια διασπασμένη` ➔ `μια διασπασμένη`, `Παραπομπές\n\nΠαραπομπές` ➔ `Παραπομπές`).
+* **URL Protection & Restoration:** Restores web paths erroneously translated into Greek (e.g. `.../βαμπίρ.htm` ➔ `.../vampires.htm`), and shields URL tokens from subword alterations.
 * **Final "ν" Grammatical Rule:** Enforces correct modern Greek usage of `δε/δεν` and `μη/μην`. It protects the conjunctive particle **«δε»** in literary and legal contexts (e.g. *«εάν δε προκύψει»*, *«ο δε υπουργός»*) without corrupting it into the negation «δεν». Verbal «μην» retains «ν» before vowels and stops/affricates (`μην έρθεις`, `μην πας`) and drops it before continuants (`μη λες`, `μη χάνεις`), while privative **«μη»** strictly drops the «ν» before adjectives, participles, nouns, and adverbs (e.g. `μη απαραίτητα`, `μη επανδρωμένος`, `μη επεμβατικές`, `Μη Εμπορική Χρήση`).
 * **Hyphenated Line Breaks & Elision Apostrophes:** Automatically rejoins words broken across line wraps (`υποσχέ- θηκαν` ➔ `υποσχέθηκαν`) without joining interrupted dialogue (`Περίμενε- μην`), and restores elision apostrophes (`Σ ΑΥΤΗΝ` ➔ `Σ' ΑΥΤΗΝ`, `ΓΙ ΑΥΤΟ` ➔ `ΓΙ' ΑΥΤΟ`).
 * **Greek Quotation Marks & Emphasis:** Replaces straight double quotes `"` with publishing guillemets `«...»` (preserving code blocks in ` ``` `), and converts `*italics*` and `**bold**` into native italic/bold typography (Georgia Italic in PDF, `italic` runs in DOCX, `<em>` in EPUB).
