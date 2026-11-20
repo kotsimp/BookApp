@@ -244,7 +244,7 @@ BookApp/
 ├── temp/
 │   ├── uploads/{job_id}/    # Uploaded input documents
 │   └── outputs/{job_id}/    # Translated books, checkpoints, and audiobooks
-├── tests/                   # 40 Automated test suites (100% PASS rate)
+├── tests/                   # 41 Automated test suites (100% PASS rate)
 └── requirements.txt
 ```
 
@@ -288,10 +288,10 @@ The repository includes a comprehensive master test runner with **100% endpoint 
 > **User Output Protection & Zero-Junk Guarantee During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore real user directories and SQLite records. All test sessions, temporary artifacts, and scratch directories created during tests are guaranteed 100% purged upon completion, ensuring zero junk files or test history in the user interface.
 
 ```bash
-# Execute all 40 test suites (Full Master Suite):
+# Execute all 41 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (35 local static, unit, contract, UI, and queue suites in ~45s):
+# Fast execution (36 local static, unit, contract, UI, and queue suites in ~48s):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
@@ -338,7 +338,7 @@ The master runner automatically executes all test suites:
 40. `test_gemini_key_pool.py`: Multi-Key Pool verification (up to 4 keys, rotation, thread-safety, masking, and REST endpoints).
 41. `test_gemini_diagnostics.py`: Dedicated API Key Diagnostics & Stress-Test Suite (CRUD, error parsing, sliding-window rate limiting, per-model isolation, E2E 4-key rotation simulation, pool exhaustion, cooldown recovery, transient backoff/retry, concurrency, and live key diagnostics).
 
-All test suites consistently pass with **`40/40 PASS (35/35 in --fast mode · 45/45 FastAPI endpoints verified)`**.
+All test suites consistently pass with **`41/41 PASS (36/36 in --fast mode · 45/45 FastAPI endpoints verified)`**.
 
 ---
 
