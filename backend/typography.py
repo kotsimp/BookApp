@@ -355,6 +355,10 @@ def format_greek_punctuation(text: str) -> str:
     return text
 
 
+# Scientific and SI units that should never be altered by homoglyph substitutions
+_SCI_UNIT_RE = re.compile(r"^[μµΔΩαβγλσπρ][A-Za-z]{1,2}\d*$")
+
+
 def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
     """
     Cleans up subword cross-lingual script bleed, foreign words, and exotic token leaks:
@@ -404,7 +408,7 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
 
     # 5. Georgian letters leaking into Greek words
     text = re.sub(r"ζαρ[\u10D0-\u10FF]+ότιοι", "ζάργκοναυτες", text)
-    text = re.sub(r"[\u10D0-\u10FF]", "", text)
+    text = re.sub(r"(?<=[α-ωΑ-Ωά-ώΆ-Ώ])[\u10D0-\u10FF]+|[\u10D0-\u10FF]+(?=[α-ωΑ-Ωά-ώΆ-Ώ])", "", text)
 
     # 6. Arabic letters leaking into Greek words
     text = re.sub(r"Ταγματάρχه", "Ταγματάρχη", text)
@@ -420,10 +424,11 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
     text = text.replace("ά trọng", "άτρωτος")
     text = text.replace("α trọng", "άτρωτος")
     text = text.replace("τρọνgος", "άτρωτος")
-    text = text.replace("íσως", "ίσως")
-    text = text.replace("módulos", "μονάδες")
+    text = re.sub(r"\b[ÍΊ]σως\b", "Ίσως", text)
+    text = re.sub(r"\b[íί]σως\b", "ίσως", text)
+    text = re.sub(r"\bmódulos\b", "μονάδες", text, flags=re.IGNORECASE)
     text = text.replace("﹢", "+")
-    text = text.replace("‘τοι", "έτσι")
+    text = re.sub(r"(^|[.,;:!?\s«»—–\-])‘τοι([,.:;!?\s«»—–\-]|$)", r"\1έτσι\2", text)
     text = text.replace("\u2010", "-")
 
     # 9. Standalone Latin lookalikes in Greek context
@@ -450,7 +455,7 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
     # 11. Subword Latin homoglyphs in Greek words
     def _fix_subword(m: re.Match) -> str:
         w = m.group(0)
-        if "http" in w or "@" in w:
+        if "http" in w or "@" in w or _SCI_UNIT_RE.match(w):
             return w
         # Multi-letter subwords
         w = (
@@ -584,10 +589,14 @@ def fix_double_accents_and_orthography(text: str) -> str:
         # Legitimate enclitic rule: antepenult accent + ultima accent before clitic pronoun
         if re.match(r"^\s+(?:μου|σου|του|της|μας|σας|τους|με|σε|τον|την|το|τα|τις)\b", tail, re.IGNORECASE):
             return w
-        # Remove the first accent if accents are on consecutive syllables or non-enclitic
         chars = list(w)
-        first_idx = acc_indices[0]
-        chars[first_idx] = accent_map.get(chars[first_idx], chars[first_idx])
+        # If accents are separated by an intervening unaccented vowel (antepenult + ultima orphan enclitic),
+        # the secondary orphan accent is on the ultima.
+        # Otherwise (consecutive syllables), the first accent is the spurious OCR/tone glitch.
+        vowels = "αεηιουωάέήίόύώϊϋΐΰΑΕΗΙΟΥΩΆΈΉΊΌΎΏ"
+        has_intervening = any(c in vowels for c in w[acc_indices[0] + 1 : acc_indices[-1]])
+        target_idx = acc_indices[-1] if has_intervening else acc_indices[0]
+        chars[target_idx] = accent_map.get(chars[target_idx], chars[target_idx])
         return "".join(chars)
 
     text = re.sub(r"\b[α-ωΑ-Ωά-ώΆ-Ώϊϋΐΰ]{2,}\b", _fix_double_acc, text)

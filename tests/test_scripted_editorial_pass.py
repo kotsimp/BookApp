@@ -162,6 +162,11 @@ class TestScriptedEditorialPass(unittest.TestCase):
             fix_double_accents_and_orthography("Ξστρίμώχτηκα μέσα. Ανόξική ατμόσφαιρα. Τιναχτήκαπίσω απότομα."),
             "Στριμώχτηκα μέσα. Ανοξική ατμόσφαιρα. Τιναχτήκαμε πίσω απότομα.",
         )
+        # Orphan enclitic accent on proparoxytone words without enclitic pronoun
+        self.assertEqual(
+            fix_double_accents_and_orthography("Το όνομά ήταν άγνωστο και η απόφασή ήταν τελική."),
+            "Το όνομα ήταν άγνωστο και η απόφαση ήταν τελική.",
+        )
 
         # CRITICAL: Must strictly preserve legitimate Greek enclitic rules (antepenult + ultima before clitic)
         self.assertIn("το όνομά μου", fix_double_accents_and_orthography("το όνομά μου είναι Σίρι."))
