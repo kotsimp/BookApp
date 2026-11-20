@@ -76,9 +76,12 @@ def get_queue_state() -> Dict[str, Any]:
             progress = job.progress if item.status != "queued" else 0
             current_step = job.current_step if item.status != "queued" else "⏳ Waiting in queue..."
             has_output = bool(job.output_path) and item.status == "done"
-            if item.status != "queued" and job.error:
-                err = job.error
+            if item.status in ("error", "waiting_quota"):
+                err = job.error or item.error
                 item.error = err
+            else:
+                err = None
+                item.error = None
 
         if item.status == "done":
             done_count += 1

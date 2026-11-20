@@ -4077,7 +4077,7 @@ function renderBatchQueue(q) {
     const progressBar = (it.status === 'running' || it.status === 'done')
       ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`
       : '';
-    const errLine = it.error
+    const errLine = (it.error && it.status !== 'running' && it.status !== 'done')
       ? `<div style="font-size:0.75rem; color:var(--rose)">${escHtml(it.error)}</div>`
       : '';
     return `

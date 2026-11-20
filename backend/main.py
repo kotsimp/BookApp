@@ -483,6 +483,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         job = get_job(job_id)
         if not job:
             return
+        update_job(job_id, error=None)
         fmt = getattr(job, "output_format", "txt") or "txt"
         fmt = fmt.lower()
         layout = getattr(job, "layout_mode", "standard") or "standard"
