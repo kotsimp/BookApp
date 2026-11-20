@@ -6,7 +6,6 @@ parallelism to maximize speed without triggering API 429 rate-limit collisions).
 Supports both Manual Queue review + Start and Auto-Start Queue modes.
 """
 
-import os
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -39,6 +38,7 @@ class QueueItem:
 _queue_items: List[QueueItem] = []
 _queue_task: Optional[asyncio.Task] = None
 _queue_paused: bool = False
+_queue_paused_for_quota: bool = False
 _queue_auto_start: bool = False
 MAX_QUEUE_ITEMS: int = 20
 
@@ -114,16 +114,22 @@ def get_queue_state() -> Dict[str, Any]:
     quota_exhausted = q_info["exhausted"]
     quota_message = q_info["message"]
     if quota_exhausted and q_info.get("cooldown_time_str"):
+        any_fallback = any(getattr(it, "quota_behavior", "wait") == "fallback" for it in _queue_items)
+        if any_fallback:
+            behavior_text = "Η ουρά συνεχίζει με τη βασική μηχανή μετάφρασης (χωρίς AI polish) για τα έγγραφα με επιλογή fallback."
+        else:
+            behavior_text = "Η ουρά βρίσκεται σε αυτόματη αναμονή ανανέωσης ορίου (100% ποιότητα Gemini AI Polish) και θα συνεχίσει αυτόματα μόλις μηδενίσει ο χρόνος."
         quota_message = (
             f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
-            f"Η ουρά συνεχίζει αυτόματα με τη βασική μηχανή μετάφρασης (χωρίς AI polish). "
-            f"Ανανέωση ορίου σε ~{q_info['cooldown_time_str']} ή αλλάξτε API Key στις Ρυθμίσεις."
+            f"{behavior_text} "
+            f"Ανανέωση ορίου σε ~{q_info['cooldown_time_str']} ή προσθέστε API Key στις Ρυθμίσεις για άμεση συνέχιση."
         )
 
     return {
         "items": serialized,
         "is_running": is_running,
         "paused": _queue_paused,
+        "paused_for_quota": _queue_paused_for_quota,
         "auto_start": _queue_auto_start,
         "is_mixed": mixed,
         "done_count": done_count,
@@ -168,10 +174,13 @@ def add_to_queue(
         raise RuntimeError(f"Job '{job_id}' is already running.")
 
     # Auto-detect comic vs book compatibility safely for mixed batches
-    from backend.settings_manager import get_setting
-    resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-    if not resolved_key and (quota_behavior == "wait" or not quota_behavior):
+    from backend.gemini_key_pool import resolve_gemini_api_key, GeminiKeyPool
+    resolved_key = resolve_gemini_api_key(api_key)
+    has_gemini_keys = bool(resolved_key or GeminiKeyPool.get_keys())
+    if not has_gemini_keys:
         quota_behavior = "fallback"
+    elif not quota_behavior:
+        quota_behavior = "wait"
     effective_comic = bool(
         is_comic
         or getattr(job, "layout_mode", "") == "comic"
@@ -208,6 +217,7 @@ def add_to_queue(
             existing.is_comic = effective_comic
             existing.is_scanned = is_scanned
             existing.status = "queued"
+            existing.quota_behavior = quota_behavior or "wait"
             existing.error = None
             if is_mixed_queue():
                 _queue_auto_start = False
@@ -274,8 +284,9 @@ def set_queue_auto_start(enabled: bool) -> bool:
 
 
 def pause_queue() -> bool:
-    global _queue_paused
+    global _queue_paused, _queue_paused_for_quota
     _queue_paused = True
+    _queue_paused_for_quota = False
     return _queue_paused
 
 
@@ -346,15 +357,23 @@ async def _process_queue_loop(
                 if job and job.status in ("done", "error", "cancelled"):
                     next_item.status = job.status
                     next_item.error = job.error
-                    if job.status == "error":
+                    if job.status in ("error", "waiting_quota"):
                         err_str = str(job.error or "").lower()
-                        if any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                        if any(k in err_str for k in ("quota", "resource_exhausted", "429")) or job.status == "waiting_quota":
                             if getattr(next_item, "quota_behavior", "wait") == "wait":
                                 _queue_paused = True
+                                _queue_paused_for_quota = True
+                                next_item.status = "waiting_quota"
+                                update_job(
+                                    next_item.job_id,
+                                    status="waiting_quota",
+                                    current_step="⏳ Αναμονή ανανέωσης ορίου Gemini (Αυτόματη συνέχιση μόλις γίνει reset)",
+                                )
                                 logger.warning(
                                     f"[Queue] Job {next_item.job_id} encountered quota exhaustion with quota_behavior='wait'. "
-                                    f"Automatically pausing queue to prevent cascading failures."
+                                    f"Automatically pausing queue until quota reset."
                                 )
+                                break
                 elif not job:
                     next_item.status = "cancelled"
                 else:
@@ -374,17 +393,66 @@ async def _process_queue_loop(
                 next_item.error = str(ex)
                 logger.error(f"[Queue] Job {next_item.job_id} failed: {ex}")
                 err_str = str(ex).lower()
-                if any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                from backend.ai_polisher import DailyQuotaExhaustedError
+                if isinstance(ex, DailyQuotaExhaustedError) or any(k in err_str for k in ("quota", "resource_exhausted", "429")):
                     if getattr(next_item, "quota_behavior", "wait") == "wait":
                         _queue_paused = True
+                        _queue_paused_for_quota = True
+                        next_item.status = "waiting_quota"
+                        update_job(
+                            next_item.job_id,
+                            status="waiting_quota",
+                            current_step="⏳ Αναμονή ανανέωσης ορίου Gemini (Αυτόματη συνέχιση μόλις γίνει reset)",
+                        )
                         logger.warning(
                             f"[Queue] Job {next_item.job_id} raised quota exception with quota_behavior='wait'. "
-                            f"Automatically pausing queue to prevent cascading failures."
+                            f"Automatically pausing queue until quota reset."
                         )
+                        break
     finally:
         if _queue_task is asyncio.current_task():
             _queue_task = None
         logger.info("Smart Batch Queue processor finished/idle.")
+
+
+def is_queue_paused_for_quota() -> bool:
+    """Returns True if the queue is currently waiting on Gemini daily quota reset."""
+    return _queue_paused_for_quota
+
+
+def resume_queue_after_quota(
+    execute_item: Callable[[QueueItem], Awaitable[None]],
+) -> bool:
+    """
+    Automatically called when Gemini API quota resets.
+    Resets waiting_quota/paused items to 'queued' and restarts the queue processor.
+    """
+    global _queue_paused, _queue_paused_for_quota
+    _queue_paused = False
+    _queue_paused_for_quota = False
+    resumed_any = False
+
+    for item in _queue_items:
+        if item.status in ("waiting_quota", "error"):
+            err_str = str(item.error or "").lower()
+            if item.status == "waiting_quota" or any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                if getattr(item, "quota_behavior", "wait") == "wait":
+                    item.status = "queued"
+                    item.error = None
+                    clear_job_cancellation(item.job_id)
+                    update_job(
+                        item.job_id,
+                        status="queued",
+                        error=None,
+                        current_step="🔄 Συνέχιση από checkpoint μετά από ανανέωση ορίου Gemini API...",
+                    )
+                    resumed_any = True
+
+    if resumed_any:
+        logger.info("[Queue] Auto-resumed queued items after Gemini quota reset. Starting queue processor.")
+        start_queue(execute_item)
+        return True
+    return False
 
 
 def apply_settings_to_queued_items(
@@ -469,5 +537,9 @@ def start_queue(
     _queue_paused = False
     has_queued = any(it.status == "queued" for it in _queue_items)
     if has_queued and (_queue_task is None or _queue_task.done()):
-        _queue_task = asyncio.create_task(_process_queue_loop(execute_item))
+        try:
+            loop = asyncio.get_running_loop()
+            _queue_task = loop.create_task(_process_queue_loop(execute_item))
+        except RuntimeError:
+            _queue_task = None
     return get_queue_state()

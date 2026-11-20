@@ -50,58 +50,55 @@ def _start_temp_server():
 
 
 def _clear_test_sessions(initial_outputs=None, initial_uploads=None, initial_jobs=None):
-    """Clear all test jobs, batch queue items, and temp test artifacts while strictly preserving user jobs and translation_cache."""
-    # 1. Trigger HTTP endpoints to clear test jobs & queue
-    for endpoint in ("/api/queue", "/api/jobs/tests/cleanup"):
-        try:
-            req = urllib.request.Request(f"http://127.0.0.1:8000{endpoint}", method="DELETE")
-            with urllib.request.urlopen(req, timeout=5):
-                pass
-        except Exception:
+    """Clear all test jobs and temp test artifacts while strictly preserving user jobs and queue."""
+    # 1. Trigger HTTP cleanup endpoint for test-only jobs
+    try:
+        req = urllib.request.Request("http://127.0.0.1:8000/api/jobs/tests/cleanup", method="DELETE")
+        with urllib.request.urlopen(req, timeout=5):
             pass
+    except Exception:
+        pass
 
     # 2. Call backend job_manager cleanup directly
     try:
-        from backend.job_manager import cleanup_test_jobs, _jobs
+        from backend.job_manager import cleanup_test_jobs, is_test_job_identifier, _jobs
         cleanup_test_jobs()
         if initial_jobs is not None:
             for jid in list(_jobs.keys()):
-                if jid not in initial_jobs:
+                if jid not in initial_jobs and is_test_job_identifier(jid, getattr(_jobs[jid], "file_name", None)):
                     _jobs.pop(jid, None)
     except Exception:
         pass
 
-    # 3. Clean up SQLite database: delete any jobs created during tests or matching test patterns
+    # 3. Clean up SQLite database: delete only test jobs matching test patterns
     try:
         from backend.database import _get_connection, _db_lock, db_delete_test_jobs
+        from backend.job_manager import is_test_job_identifier
         db_delete_test_jobs()
-        if initial_jobs is not None:
-            with _db_lock:
-                conn = _get_connection()
-                with conn:
-                    rows = conn.execute("SELECT job_id, file_name FROM jobs").fetchall()
-                    to_del = [r[0] for r in rows if r[0] not in initial_jobs]
-                    if to_del:
-                        conn.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_del])
+        with _db_lock:
+            conn = _get_connection()
+            with conn:
+                rows = conn.execute("SELECT job_id, file_name FROM jobs").fetchall()
+                to_del = [r[0] for r in rows if is_test_job_identifier(r[0], r[1])]
+                if to_del:
+                    conn.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_del])
     except Exception:
         pass
 
-    # 4. Sweep temp/outputs: delete any directory created by tests or containing only test files
+    # 4. Sweep temp/outputs: delete only directories belonging to tests
     outputs_dir = BASE_DIR / "temp" / "outputs"
     if outputs_dir.is_dir():
+        from backend.job_manager import is_test_job_identifier
         for d in outputs_dir.iterdir():
             if not d.is_dir():
                 continue
             should_delete = False
-            if initial_outputs is not None and d.name not in initial_outputs:
-                should_delete = True
-            elif any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
+            if is_test_job_identifier(d.name) or any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
                 should_delete = True
             else:
                 try:
                     files = list(d.iterdir())
-                    test_pats = ("test_", "sample_", "reg_", "q_iso_", "direct_text", "book_")
-                    if files and all(any(f.name.startswith(p) for p in test_pats) for f in files):
+                    if files and all(is_test_job_identifier(f.stem, f.name) for f in files):
                         should_delete = True
                 except Exception:
                     pass

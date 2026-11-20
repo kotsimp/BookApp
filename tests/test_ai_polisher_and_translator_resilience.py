@@ -311,11 +311,15 @@ class TestAIPolisherAndTranslatorResilience(unittest.TestCase):
                 )
             self.assertEqual(call_count, 1)
 
-            # Comic balloon polish must skip AI polish cleanly and return drafts
+            # Comic balloon polish with quota_behavior="fallback" must skip AI polish cleanly and return drafts
             from backend.comic_translator import _ai_polish_comic_balloons
             balloons = [{"source": "Look!", "draft": "Κοιτάξτε!"}]
-            res = await _ai_polish_comic_balloons(balloons, api_key="valid-mock-key-12345", target_lang="greek")
+            res = await _ai_polish_comic_balloons(balloons, api_key="valid-mock-key-12345", target_lang="greek", quota_behavior="fallback")
             self.assertEqual(res, ["Κοιτάξτε!"])
+
+            # Comic balloon polish with quota_behavior="wait" must raise DailyQuotaExhaustedError
+            with self.assertRaises(ap.DailyQuotaExhaustedError):
+                await _ai_polish_comic_balloons(balloons, api_key="valid-mock-key-12345", target_lang="greek", quota_behavior="wait")
 
         asyncio.run(_test_breaker())
 

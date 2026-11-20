@@ -193,6 +193,34 @@ class GeminiKeyPool:
             return time.time() < _KEY_COOLDOWNS.get(k, 0.0)
 
     @staticmethod
+    def check_cooldowns() -> bool:
+        """
+        Checks if any exhausted keys in the pool have their cooldown expired.
+        If at least one key is now active, resets the circuit breaker and returns True.
+        """
+        now = time.time()
+        with _pool_lock:
+            keys = GeminiKeyPool.get_keys()
+            if not keys:
+                return False
+            expired_any = False
+            for k in list(_KEY_COOLDOWNS.keys()):
+                if now >= _KEY_COOLDOWNS[k]:
+                    _KEY_COOLDOWNS.pop(k, None)
+                    expired_any = True
+
+            available = [cand for cand in keys if now >= _KEY_COOLDOWNS.get(cand, 0.0)]
+            if available:
+                from backend.ai_polisher import is_gemini_quota_exhausted, reset_gemini_quota_exhaustion
+                if is_gemini_quota_exhausted():
+                    logger.info(
+                        f"[Gemini Key Pool] Cooldown expired for pool keys ({len(available)}/{len(keys)} active). Resetting quota circuit breaker."
+                    )
+                    reset_gemini_quota_exhaustion()
+                    return True
+            return False
+
+    @staticmethod
     def get_pool_status() -> Dict[str, Any]:
         """Returns full diagnostics of all pool slots for the UI and monitoring."""
         now = time.time()

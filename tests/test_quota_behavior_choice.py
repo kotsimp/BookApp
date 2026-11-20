@@ -171,8 +171,11 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
 
     def test_07_no_api_key_settings_and_queue_defaults_to_free(self):
         """When no Gemini key is provided, settings and queue default to free models ('fallback')."""
-        from backend.settings_manager import save_setting, delete_setting
+        from backend.settings_manager import delete_setting
+        from backend.gemini_key_pool import GeminiKeyPool
+        GeminiKeyPool.set_keys([])
         delete_setting("gemini_api_key")
+        delete_setting("gemini_api_keys")
 
         # In queue manager, adding item without API key defaults quota_behavior to 'fallback'
         job = create_job("test_no_key.txt", "test_no_key.txt", "txt")
@@ -204,6 +207,96 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
         )
         self.assertIn("«Αυτό είναι ένα τεστ", result)  # Typography converts ASCII quotes to Greek Guillemets
         cleanup_test_jobs()
+
+    def test_09_comic_translation_quota_wait_raises_and_pauses(self):
+        """Comic translation with quota_behavior='wait' raises DailyQuotaExhaustedError and does not fallback to raw text."""
+        from backend.comic_translator import _ai_polish_comic_balloons
+        from backend.ai_polisher import trip_gemini_quota_exhaustion
+
+        trip_gemini_quota_exhaustion(300.0)
+        balloons = [{"source": "Look out!", "draft": "Πρόσεχε!"}]
+
+        with self.assertRaises(DailyQuotaExhaustedError):
+            asyncio.run(
+                _ai_polish_comic_balloons(
+                    balloons,
+                    api_key="AQ.Ab8RealKeyExample",
+                    target_lang="greek",
+                    quota_behavior="wait",
+                )
+            )
+
+        # But with fallback, it cleanly returns the draft without raising
+        result = asyncio.run(
+            _ai_polish_comic_balloons(
+                balloons,
+                api_key="AQ.Ab8RealKeyExample",
+                target_lang="greek",
+                quota_behavior="fallback",
+            )
+        )
+        self.assertEqual(result, ["Πρόσεχε!"])
+
+    def test_10_queue_auto_resume_after_quota_reset(self):
+        """Queue paused for quota automatically resumes when quota resets."""
+        from backend.queue_manager import (
+            _queue_items,
+            resume_queue_after_quota,
+            is_queue_paused_for_quota,
+        )
+
+        job = create_job("test_auto_res.txt", "test_auto_res.txt", "txt")
+        q_item = add_to_queue(job.job_id, quota_behavior="wait")
+        q_item.status = "waiting_quota"
+        update_job(job.job_id, status="waiting_quota")
+
+        import backend.queue_manager as qm
+        qm._queue_paused = True
+        qm._queue_paused_for_quota = True
+
+        self.assertTrue(is_queue_paused_for_quota())
+
+        executed_jobs = []
+        async def dummy_exec(item):
+            executed_jobs.append(item.job_id)
+
+        resumed = resume_queue_after_quota(dummy_exec)
+        self.assertTrue(resumed)
+        self.assertFalse(is_queue_paused_for_quota())
+        self.assertIn(q_item.status, ("queued", "running", "done"))
+
+        clear_queue()
+        cleanup_test_jobs()
+
+    def test_11_audiobook_quota_wait_behavior(self):
+        """Audiobook with quota_behavior='wait' raises DailyQuotaExhaustedError on quota hit."""
+        from backend.tts_engine import generate_audiobook
+        from backend.job_manager import create_job
+
+        tmp_txt = Path("test_ab_quota.txt")
+        tmp_txt.write_text("Hello audiobook world", encoding="utf-8")
+        job = create_job(str(tmp_txt), tmp_txt.name, "txt")
+
+        try:
+            with patch("backend.ai_polisher._call_gemini_api", side_effect=DailyQuotaExhaustedError("Quota hit")):
+                with self.assertRaises(DailyQuotaExhaustedError):
+                    asyncio.run(
+                        generate_audiobook(
+                            job_id=job.job_id,
+                            file_path=str(tmp_txt),
+                            file_type="txt",
+                            language="greek",
+                            voice_name="Nestoras (Male)",
+                            output_path="test_ab_quota.mp3",
+                            ai_polish=True,
+                            api_key="AQ.TestKey",
+                            quota_behavior="wait",
+                        )
+                    )
+        finally:
+            tmp_txt.unlink(missing_ok=True)
+            Path("test_ab_quota.mp3").unlink(missing_ok=True)
+            cleanup_test_jobs()
 
 
 if __name__ == "__main__":

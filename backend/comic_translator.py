@@ -446,6 +446,7 @@ async def _ai_polish_comic_balloons(
     balloons: List[Dict[str, str]],
     api_key: str,
     target_lang: str = "greek",
+    quota_behavior: str = "wait",
 ) -> List[str]:
     """
     Polishes speech balloon dialogue using Gemini API specifically for Graphic Novels / Comics.
@@ -454,8 +455,12 @@ async def _ai_polish_comic_balloons(
     if not balloons or not api_key:
         return [b["draft"] for b in balloons]
 
-    from backend.ai_polisher import is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
+    from backend.ai_polisher import is_gemini_quota_exhausted, trip_gemini_quota_exhaustion, DailyQuotaExhaustedError
     if is_gemini_quota_exhausted() and not (api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest")):
+        if quota_behavior == "wait":
+            raise DailyQuotaExhaustedError(
+                "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
+            )
         logger.info("Gemini daily quota exhausted; using standard translated text for comic balloons without AI polish.")
         return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
 
@@ -574,10 +579,16 @@ async def _ai_polish_comic_balloons(
                         logger.warning(f"[Gemini Key Pool] Comic Polish rotated to next key {next_pool_key[:6]}...")
                         api_key = next_pool_key
                         continue
-                    logger.warning("Gemini daily quota exhausted during comic polish across all keys. Tripping circuit breaker and skipping AI polish.")
+                    logger.warning("Gemini daily quota exhausted during comic polish across all keys. Tripping circuit breaker.")
                     trip_gemini_quota_exhaustion(3600.0)
+                    if quota_behavior == "wait":
+                        raise DailyQuotaExhaustedError(
+                            "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
+                        )
                     break
             logger.debug(f"AI Polish attempt with {model} failed: {h_err}")
+        except DailyQuotaExhaustedError:
+            raise
         except Exception as ex:
             err_low = str(ex).lower()
             if "requests per day limit exceeded" in err_low or "quota exceeded" in err_low or "resource_exhausted" in err_low:
@@ -589,6 +600,10 @@ async def _ai_polish_comic_balloons(
                     api_key = next_pool_key
                     continue
                 trip_gemini_quota_exhaustion(3600.0)
+                if quota_behavior == "wait":
+                    raise DailyQuotaExhaustedError(
+                        "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
+                    )
                 break
             logger.debug(f"AI Polish attempt with {model} failed: {ex}")
 
@@ -602,6 +617,7 @@ async def _translate_page_vector(
     target_lang: str,
     font_path: str,
     api_key: Optional[str] = None,
+    quota_behavior: str = "wait",
 ) -> List[str]:
     """
     Translates detected speech balloons on a digital PDF page,
@@ -633,10 +649,12 @@ async def _translate_page_vector(
     if api_key and translated_balloons:
         try:
             balloons_data = [{"source": c["text"], "draft": translated_balloons[i]} for i, c in enumerate(clusters)]
-            polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key, target_lang=target_lang)
+            polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key, target_lang=target_lang, quota_behavior=quota_behavior)
             if polished_texts and len(polished_texts) == len(translated_balloons):
                 translated_balloons = polished_texts
                 page_dialogues = [t for t in translated_balloons if t.strip()]
+        except DailyQuotaExhaustedError:
+            raise
         except Exception as ex:
             logger.warning(f"AI Polish on comic page skipped: {ex}")
 
@@ -1183,6 +1201,7 @@ async def translate_comic_document(
     api_key: Optional[str] = None,
     reading_direction: str = "ltr",
     progress_callback: Optional[Callable] = None,
+    quota_behavior: str = "wait",
 ) -> str:
     """
     Main entry point for Graphic Novel / Comic translation.
@@ -1283,7 +1302,7 @@ async def translate_comic_document(
                 clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
                 logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
                 page_dialogues = await _translate_page_vector(
-                    page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key
+                    page, clusters, source_lang, target_lang, font_path, api_key=resolved_api_key, quota_behavior=quota_behavior
                 )
                 all_document_dialogues[page_idx] = (page_idx + 1, page_dialogues)
                 completed_count += 1
@@ -1392,8 +1411,14 @@ async def translate_comic_document(
             total_vision_pages = len(vision_pages_to_process)
             total_detected_balloons = sum(len(v) for v in vision_results.values())
             if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
-                from backend.ai_polisher import is_gemini_quota_exhausted
+                from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError
                 if is_gemini_quota_exhausted() or "quota" in (last_vision_error or "").lower() or "429" in (last_vision_error or ""):
+                    if quota_behavior == "wait":
+                        raise DailyQuotaExhaustedError(
+                            f"Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. "
+                            f"Η πρόοδος ({completed_count} σελίδες) αποθηκεύτηκε σε checkpoint! "
+                            f"(quota_behavior='wait')."
+                        )
                     raise RuntimeError(
                         f"Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. "
                         f"Η πρόοδος ({completed_count} σελίδες) αποθηκεύτηκε σε checkpoint! "

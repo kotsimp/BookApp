@@ -163,11 +163,11 @@ All translated text passes through the built-in publishing typography engine:
      - Official e-book cover metadata in **EPUB**.
      - Document title page in **DOCX**.
 
-6. **⚡ Gemini Quota Handling Choice & Free Mode:**
+6. **⚡ Gemini Quota Handling Choice & Automatic Resumption:**
    - Choose how the system behaves if the Google Gemini API daily limit is exceeded:
-     * **⏳ Wait for Reset (Default with API Key):** Pauses safely at disk checkpoint (`.direct_ai_checkpoint.json`). Displays a live countdown timer and resume button, preserving **100% Gemini literary quality**.
-     * **🔄 Auto-Fallback to Free Model (Default without API Key):** Seamlessly routes remaining batches to the free translation engine and Edge-TTS without stopping.
-   - **🆓 Free Mode Default:** When no Gemini API key is configured, BookApp automatically operates in **Free Mode** (indicated by the `🆓 Free Mode` pill in the navbar). Translation, typography rules, and neural audiobooks run 100% free with zero keys or subscriptions.
+     * **⏳ Wait for Reset & Auto-Resume (Default with API Key):** Pauses safely at disk checkpoint (`.direct_ai_checkpoint.json` or `.comic_vision_checkpoint.json`). Displays a live countdown timer and **automatically resumes translation, audiobook generation, and queued batch items the moment the cooldown timer reaches zero or when a new key is added**, without requiring manual user intervention. **Preserves 100% Gemini literary quality and artwork**. Never downgrades or falls back to plain Google Translate unless explicitly requested.
+     * **🔄 Auto-Fallback to Free Model (Explicit Opt-In Only):** Routes remaining batches to the free translation engine and Edge-TTS without stopping (only used if explicitly selected by the user).
+   - **🆓 Free Mode Default:** When no Gemini API key is configured anywhere in the pool, BookApp automatically operates in **Free Mode** (indicated by the `🆓 Free Mode` pill in the navbar). Translation, typography rules, and neural audiobooks run 100% free with zero keys or subscriptions.
 
 7. **Starting Translation:**
    - Click **🌐 Start Translation** (for a single file) or **▶️ Start Batch Translation** (for multiple files).
@@ -379,7 +379,12 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 #### ❓ What happens if the Gemini daily quota is reached?
 * The application distinguishes momentary burst limits (15 RPM) from daily exhaustion. If daily quota is reached:
   * With **Gemini Multi-Key Pool**, it automatically rotates to backup keys (Slots 2–4).
-  * If all keys are exhausted, jobs with `wait` mode pause cleanly at disk checkpoint with an exact countdown timer and resume button, while `fallback` mode jobs continue seamlessly with free models.
+  * If all keys in the pool are exhausted:
+    - By default (`quota_behavior="wait"`), translation and audiobook generation **pause cleanly at disk checkpoint** (`.direct_ai_checkpoint.json` / `.comic_vision_checkpoint.json`) and **wait for quota reset**.
+    - The system displays a live countdown timer in the UI.
+    - **Automatic Resumption:** The background quota monitor automatically resumes paused jobs and queued batch items the second the cooldown expires or as soon as new working keys are saved in Settings!
+    - It **NEVER automatically falls back** to plain Google Translate or unpolished text unless you deliberately choose the `fallback` option.
+    - Graphic novels and comics also strictly respect this mode, pausing page-by-page rather than outputting unpolished or plain text.
 
 #### ❓ Why does the reader voice stumble on foreign names?
 * Use **AI Polish for Spoken Audio (style="audiobook")**, which phonetically transcribes foreign names into Greek characters (`Keeton` ➔ `Κίτον`, `DNA` ➔ `Ντι-Εν-Έι`) and spells out all numbers in full Greek words.

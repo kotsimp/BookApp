@@ -457,13 +457,11 @@ async function uploadFile(prefix, file) {
         } else {
           updateFormatAvailability(layout, ext);
         }
-        // In Basic Mode, auto-match output format to input format (PDF->PDF, DOCX->DOCX, EPUB->EPUB)
-        if (currentAppMode === 'basic') {
-          const targetFormat = ['pdf', 'docx', 'epub'].includes(ext) ? ext : 'docx';
-          const fmtBtn = document.getElementById(`fmt-${targetFormat}`);
-          if (fmtBtn && !fmtBtn.disabled) {
-            selectFormat(targetFormat, fmtBtn);
-          }
+        // Auto-match output format to input format (PDF->PDF, DOCX->DOCX, EPUB->EPUB, CBZ->CBZ)
+        const targetFormat = ['pdf', 'docx', 'epub', 'cbz', 'cbr'].includes(ext) ? ext : 'pdf';
+        const fmtBtn = document.getElementById(`fmt-${targetFormat}`);
+        if (fmtBtn && !fmtBtn.disabled) {
+          selectFormat(targetFormat, fmtBtn);
         }
         checkCoverImage(data.job_id);
 
@@ -1011,11 +1009,19 @@ async function startTranslation() {
   }
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
+  let hasKey = Boolean(apiKey);
+  try {
+    const rawKeys = localStorage.getItem('gemini_api_keys');
+    if (rawKeys) {
+      const arr = JSON.parse(rawKeys);
+      if (Array.isArray(arr) && arr.some(k => typeof k === 'string' && k.trim())) hasKey = true;
+    }
+  } catch (_) {}
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
-  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
-  if (!apiKey && quotaBehavior === 'wait') {
+  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (hasKey ? 'wait' : 'fallback');
+  if (!hasKey && quotaBehavior === 'wait') {
     quotaBehavior = 'fallback';
   }
 
@@ -3634,11 +3640,19 @@ function _readCurrentTranslationSettings() {
   const chosenLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
   const apiKey = localStorage.getItem('gemini_api_key') || null;
+  let hasKey = Boolean(apiKey);
+  try {
+    const rawKeys = localStorage.getItem('gemini_api_keys');
+    if (rawKeys) {
+      const arr = JSON.parse(rawKeys);
+      if (Array.isArray(arr) && arr.some(k => typeof k === 'string' && k.trim())) hasKey = true;
+    }
+  } catch (_) {}
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
-  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
-  if (!apiKey && quotaBehavior === 'wait') {
+  let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (hasKey ? 'wait' : 'fallback');
+  if (!hasKey && quotaBehavior === 'wait') {
     quotaBehavior = 'fallback';
   }
   return { srcLang, tgtLang, chosenFmt, chosenLayout, aiPolish, apiKey, readingDirection, quotaBehavior };
@@ -3707,6 +3721,7 @@ async function enqueueMultipleFiles(files) {
           api_key: cfg.apiKey || null,
           is_comic: isComic,
           is_scanned: isScanned,
+          quota_behavior: cfg.quotaBehavior || 'wait',
         }),
       });
       if (promoteRes.ok) {
@@ -3779,6 +3794,10 @@ async function enqueueMultipleFiles(files) {
     try {
       let itemLayout = isComic ? 'comic' : cfg.chosenLayout;
       let itemFmt = cfg.chosenFmt;
+      const cleanExt = (ext || '').replace('.', '').toLowerCase();
+      if (['pdf', 'docx', 'epub', 'cbz', 'cbr'].includes(cleanExt)) {
+        itemFmt = cleanExt;
+      }
       if (isComic) {
         if (['txt', 'docx', 'doc'].includes(itemFmt)) itemFmt = 'pdf';
       } else {
@@ -3801,6 +3820,7 @@ async function enqueueMultipleFiles(files) {
           api_key: cfg.apiKey || null,
           is_comic: isComic,
           is_scanned: isScanned,
+          quota_behavior: cfg.quotaBehavior || 'wait',
         }),
       });
       if (!addRes.ok) {
@@ -3992,6 +4012,7 @@ function renderBatchQueue(q) {
   const statusLabels = {
     queued: '⏳ Queued',
     running: '🔄 Running',
+    waiting_quota: '⏳ Σε αναμονή (Auto-Resume)',
     done: '✅ Done',
     error: '❌ Error',
     cancelled: '🛑 Cancelled',
@@ -4001,14 +4022,17 @@ function renderBatchQueue(q) {
     const modeTag = it.is_comic
       ? `🎨 Comic (${(it.reading_direction || 'ltr').toUpperCase()})`
       : (it.layout_mode === 'literature' ? '📚 Literature' : '📄 Standard');
+    const isWaitMode = (it.quota_behavior || 'wait') === 'wait';
     const aiTag = it.ai_polish
-      ? (q.gemini_quota_exhausted ? ' · ⚠️ Χωρίς AI Polish (Όριο Quota)' : ' · ✨ AI Polish')
+      ? (q.gemini_quota_exhausted
+          ? (isWaitMode ? ' · ⏳ Αναμονή Gemini AI (100% ποιότητα)' : ' · ⚠️ Χωρίς AI Polish (Fallback)')
+          : ' · ✨ AI Polish')
       : '';
     const dlLink = it.has_output
       ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
       : '';
-    const retryBtn = (it.status === 'error' || it.status === 'cancelled')
-      ? `<button type="button" class="btn-sm btn-outline" data-job-id="${escHtml(it.job_id)}" onclick="retryQueueItem(this.dataset.jobId)" title="Επανάληψη μετάφρασης" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">🔄 Retry</button>`
+    const retryBtn = (it.status === 'error' || it.status === 'cancelled' || it.status === 'waiting_quota')
+      ? `<button type="button" class="btn-sm btn-outline" data-job-id="${escHtml(it.job_id)}" onclick="retryQueueItem(this.dataset.jobId)" title="${it.status === 'waiting_quota' ? 'Άμεση δοκιμή εκ νέου' : 'Επανάληψη μετάφρασης'}" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">${it.status === 'waiting_quota' ? '⚡ Retry Now' : '🔄 Retry'}</button>`
       : '';
     const progressBar = (it.status === 'running' || it.status === 'done')
       ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`

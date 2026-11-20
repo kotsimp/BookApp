@@ -37,12 +37,36 @@ from backend.ai_polisher import POLISH_STATUS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+async def _quota_auto_resume_monitor():
+    """Background task monitoring Gemini API quota reset and auto-resuming paused batch queue items."""
+    from backend.gemini_key_pool import GeminiKeyPool
+    from backend.ai_polisher import is_gemini_quota_exhausted
+    from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
+    while True:
+        try:
+            await asyncio.sleep(3.0)
+            GeminiKeyPool.check_cooldowns()
+            if not is_gemini_quota_exhausted():
+                if is_queue_paused_for_quota():
+                    logger.info("[Auto-Resume Monitor] Gemini API quota reset! Automatically resuming paused batch queue items...")
+                    resume_queue_after_quota(_execute_queue_item)
+        except asyncio.CancelledError:
+            break
+        except Exception as ex:
+            logger.debug(f"[Auto-Resume Monitor] Loop tick error: {ex}")
+            await asyncio.sleep(3.0)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("DocTranslate & AudioBook Generator started.")
     cleanup_old_jobs()
     cleanup_test_jobs()
-    yield
+    monitor_task = asyncio.create_task(_quota_auto_resume_monitor())
+    try:
+        yield
+    finally:
+        monitor_task.cancel()
 
 
 app = FastAPI(
@@ -88,7 +112,7 @@ class TranslateRequest(BaseModel):
     job_id: str
     source_lang: str   # 'english' or 'greek'
     target_lang: str   # 'english' or 'greek'
-    output_format: str = "txt"  # txt, docx, pdf, epub, cbz, cbr
+    output_format: Optional[str] = None  # None matches input document format (e.g. PDF->PDF, DOCX->DOCX)
     layout_mode: str = "standard"  # 'standard', 'literature', or 'comic'
     reading_direction: str = "ltr"  # 'ltr' or 'rtl' (Manga)
     ai_polish: bool = False
@@ -392,7 +416,15 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     stem = Path(job.file_name).stem
     output_path = str(output_dir / f"{stem}_translated_{tgt_lang}.txt")
 
-    output_format = (getattr(req, "output_format", "txt") or "txt").strip().lower().lstrip(".")
+    output_format = (getattr(req, "output_format", "") or "").strip().lower().lstrip(".")
+    if not output_format:
+        inp_ext = (job.file_type or Path(job.file_name or "").suffix or "pdf").lower().lstrip(".")
+        if inp_ext in {"pdf", "docx", "doc", "epub", "cbz", "cbr", "txt"}:
+            output_format = inp_ext
+        elif inp_ext in {"zip"}:
+            output_format = "cbz"
+        else:
+            output_format = "pdf"
     if output_format not in {"txt", "docx", "doc", "pdf", "epub", "cbz", "cbr"}:
         raise HTTPException(400, f"Unsupported output format '{output_format}'.")
     layout_mode = (getattr(req, "layout_mode", "standard") or "standard").strip().lower()
@@ -486,6 +518,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 output_path=output_path,
                 api_key=resolved_key if resolved_key else None,
                 reading_direction=reading_dir,
+                quota_behavior=quota_behavior,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
             if fmt == "cbz":
@@ -744,7 +777,18 @@ async def _run_audiobook(
         update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
     except Exception as e:
         logger.error(f"Audiobook error [{job_id}]: {e}", exc_info=True)
-        update_job(job_id, status="error", error=str(e))
+        from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError, get_gemini_quota_info
+        err_str = str(e)
+        if isinstance(e, DailyQuotaExhaustedError) or is_gemini_quota_exhausted() or any(k in err_str.lower() for k in ("quota", "resource_exhausted", "429")):
+            q_info = get_gemini_quota_info()
+            update_job(
+                job_id,
+                status="error",
+                error=err_str if "Εξαντλήθηκε" in err_str else f"⚠️ {q_info['message'] or err_str}",
+                current_step="⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API",
+            )
+        else:
+            update_job(job_id, status="error", error=err_str)
     finally:
         unregister_task(job_id)
 
@@ -1436,6 +1480,9 @@ async def update_app_settings(req: SettingsRequest):
         val = req.default_quota_behavior.strip().lower()
         if val in ("wait", "fallback"):
             save_setting("default_quota_behavior", val)
+    from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
+    if is_queue_paused_for_quota():
+        resume_queue_after_quota(_execute_queue_item)
     return {"status": "ok", "pool": GeminiKeyPool.get_pool_status()}
 
 
@@ -1459,6 +1506,9 @@ async def update_gemini_pool_keys(payload: dict):
     GeminiKeyPool.reset_quota()
     reset_model_cache()
     reset_vision_model_cache()
+    from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
+    if is_queue_paused_for_quota():
+        resume_queue_after_quota(_execute_queue_item)
     return {"status": "ok", "keys_count": len(saved), "pool": GeminiKeyPool.get_pool_status()}
 
 

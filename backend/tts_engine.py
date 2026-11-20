@@ -374,9 +374,9 @@ async def generate_audiobook(
 
     if ai_polish:
         from backend.ai_polisher import polish_text_with_gemini
-        from backend.settings_manager import get_setting
+        from backend.gemini_key_pool import resolve_gemini_api_key
 
-        resolved_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+        resolved_key = resolve_gemini_api_key(api_key)
         polish_style = "poetry" if style == "poetry" else "audiobook"
         if not resolved_key:
             if quota_behavior == "fallback":
