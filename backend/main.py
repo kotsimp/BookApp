@@ -773,6 +773,8 @@ async def progress_stream(job_id: str):
                 "done_pages": int(getattr(job, "done_pages", 0) or 0),
                 "error": job.error,
                 "output_path": job.output_path,
+                "ai_polish": bool(getattr(job, "ai_polish", False)),
+                "quota_behavior": getattr(job, "quota_behavior", "wait"),
             }
             yield f"data: {json.dumps(state)}\n\n"
 

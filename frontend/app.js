@@ -1320,11 +1320,12 @@ function updateProgress(prefix, data) {
   if (engineBadge) {
     if (prefix === 'tr') {
       const stepLower = (data.current_step || '').toLowerCase();
+      const isAiStep = Boolean(data.ai_polish) || stepLower.includes('ai translation') || stepLower.includes('polish') || stepLower.includes('gemini');
       if (data.quota_behavior === 'fallback' && (stepLower.includes('όριο') || stepLower.includes('δωρεάν') || data.gemini_quota_exhausted)) {
         engineBadge.style.display = 'inline-flex';
         engineBadge.className = 'engine-pill engine-free';
         engineBadge.textContent = '⚡ Free Engine';
-      } else if (data.ai_polish) {
+      } else if (isAiStep) {
         engineBadge.style.display = 'inline-flex';
         engineBadge.className = 'engine-pill engine-gemini';
         engineBadge.textContent = '✨ Gemini Flash';

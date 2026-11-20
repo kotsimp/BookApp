@@ -391,6 +391,8 @@ def _notify_subscribers(job: Job):
         "done_pages": int(getattr(job, "done_pages", 0) or 0),
         "error": job.error,
         "output_path": job.output_path,
+        "ai_polish": bool(getattr(job, "ai_polish", False)),
+        "quota_behavior": getattr(job, "quota_behavior", "wait"),
     }
     try:
         running_loop = asyncio.get_running_loop()
