@@ -2879,7 +2879,47 @@ async function saveGeminiKeyOnly() {
   if (clearBtn) clearBtn.style.display = 'inline';
   const mBanner = document.getElementById('ai-polish-quota-warning-banner');
   if (mBanner) mBanner.style.display = 'none';
+
+  // Clear quota banners across UI
+  const homeBanner = document.getElementById('home-gemini-quota-banner');
+  if (homeBanner) homeBanner.style.display = 'none';
+  const trQuotaBanner = document.getElementById('tr-quota-warning-banner');
+  if (trQuotaBanner) trQuotaBanner.style.display = 'none';
+  const qBanner = document.getElementById('queue-quota-warning-banner');
+  if (qBanner) qBanner.style.display = 'none';
+  const polishTag = document.getElementById('tr-ai-polish-quota-tag');
+  if (polishTag) polishTag.style.display = 'none';
+
   await checkGlobalGeminiQuotaStatus();
+
+  // If there is an active job or queue waiting on quota, automatically resume it now!
+  if (state.tr.jobId && (state.tr.status === 'error' || state.tr.status === 'idle')) {
+    closeAiPolishModal();
+    toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση μετάφρασης...`, 'success');
+    setTimeout(() => {
+      resumeTranslation('tr');
+    }, 600);
+    return;
+  }
+
+  if (_batchQueueState.total_count > 0 && (_batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
+    closeAiPolishModal();
+    toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση της ουράς...`, 'success');
+    setTimeout(() => {
+      resumeBatchQueue();
+    }, 600);
+    return;
+  }
+
+  if (state.ab.jobId && (state.ab.status === 'error' || state.ab.status === 'idle')) {
+    closeAiPolishModal();
+    toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση του Audiobook...`, 'success');
+    setTimeout(() => {
+      startAudiobook();
+    }, 600);
+    return;
+  }
+
   toast(`Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά στο Gemini Pool! Αυτόματη εναλλαγή ενεργή.`, 'success');
 }
 
