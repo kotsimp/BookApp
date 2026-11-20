@@ -156,16 +156,19 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    # High-availability, active models with generous Free Tier quota (no subword bleed)
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
+    # Full Flash models FIRST for maximum linguistic quality & zero subword bleed
     "gemini-3.5-flash",
     "gemini-3.8-flash",
     "gemini-flash-latest",
+    "gemini-2.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
-    "gemini-3.1-flash-lite",
     "gemini-3-flash-preview",
+    # Flash-Lite models as fallback
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
     "gemini-pro-latest",
 ]
 

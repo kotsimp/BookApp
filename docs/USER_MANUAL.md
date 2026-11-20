@@ -68,7 +68,7 @@ Designed for maximum ease of use and zero cognitive load:
 * **AI Enabled by Default:** Both Translation and Audiobook generation have AI Polish automatically enabled for literary fluidity and natural phrasing.
 * **1-Click Translation:**
   * Drop your file (PDF, DOCX, EPUB, Comic).
-  * Output format and layout are automatically matched to your input document.
+  * **Automatic Output Format Matching:** The output format is automatically matched to your input document (`.pdf` ➔ PDF, `.docx` ➔ DOCX, `.epub` ➔ EPUB, `.cbz/.cbr` ➔ Comic).
   * **Auto-Genre Detection & Application:** The engine analyzes the text and automatically applies the optimal style (e.g. Literary fiction with dialogue dashes `—`), immediately showing `✓ Auto-applied` without requiring any manual clicks.
   * Click **`✨ Translate Book with AI (1-Click)`**.
 * **1-Click Audiobook:**
@@ -176,10 +176,12 @@ All translated text passes through the built-in publishing typography engine:
 
 ### ⚡ Instant On-Demand Export Without Retranslating
 You never need to re-translate a document to obtain another file format:
-* If you initially translated a book to **DOCX** and now need a **PDF**:
-  1. Simply click the **PDF** button.
-  2. The download button instantly updates to **⬇️ Download PDF File**.
-  3. Click Download — the PDF is generated and downloaded **instantaneously (< 1 second)** from the cached translation text.
+* **1-Click Multi-Format Download Pills:** Direct download buttons for each supported format are embedded right into the Translation Result Card:
+  * 📄 **PDF** — Standard or Literature layout with embedded cover art and zero tofu glyph boxes.
+  * 📝 **DOCX** — Formatted Word document preserving headers, fonts, and styles.
+  * 📱 **EPUB** — E-reader publication with spine and chapter formatting.
+  * 📃 **TXT** — Clean UTF-8 plain text for quick reading or scripts.
+* Clicking any format generates and downloads the file **instantaneously (< 1 second)** on-demand from the cached translation text without re-translating or consuming quota.
 
 ### 📖 Distraction-Free "Read Now" Reader View
 Read your translated book directly inside the application:
@@ -229,6 +231,7 @@ For publications requiring professional editorial tone:
 * **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
 * **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
 * **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress.
+* **Authoritative Server Sync & Key Protection:** The application performs a safe bidirectional merge between server configuration (`config/settings.json`) and browser `localStorage`. Your configured backup keys are never accidentally wiped, duplicated, or dropped when switching tabs or refreshing the page.
 * **Auto-Resume on Save:** If a translation was waiting on quota, clicking **«💾 Save Pool»** with new keys immediately resumes the job automatically without requiring a manual resume click!
 * **Navbar Pool Status Indicator:**
   * `🟢 4/4 Keys`: All configured keys are active and available.

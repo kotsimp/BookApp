@@ -372,7 +372,8 @@ class TestE2ERegressionGuard(unittest.TestCase):
         try:
             t0 = time.time()
             with patch("backend.translator._translate_gtx", side_effect=always_429), \
-                 patch("backend.settings_manager.get_setting", return_value=""):
+                 patch("backend.settings_manager.get_setting", return_value=""), \
+                 patch("deep_translator.MyMemoryTranslator.translate", return_value="Δοκιμή"):
                 out = asyncio.run(tr_mod._translate_with_retry(
                     "Unique circuit breaker probe " + str(time.time()),
                     "english",
