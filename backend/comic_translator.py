@@ -532,7 +532,7 @@ async def _ai_polish_comic_balloons(
         "gemini-flash-lite-latest",
     ]:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
@@ -558,6 +558,14 @@ async def _ai_polish_comic_balloons(
                 results.append(pol if pol else sanitize_comic_dialogue(b["draft"], target_lang))
             return results
         except urllib.error.HTTPError as h_err:
+            if h_err.code in (401, 403):
+                from backend.gemini_key_pool import GeminiKeyPool
+                GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({h_err.code})")
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                if next_pool_key:
+                    logger.warning(f"[Gemini Key Pool] Comic Polish rotated from key {api_key[:6]}... to {next_pool_key[:6]}... on auth error")
+                    api_key = next_pool_key
+                    continue
             if h_err.code == 429:
                 err_body = ""
                 try:
@@ -712,15 +720,15 @@ VISION_MODELS_PRIORITY = [
     "gemini-3-flash-preview",
     "gemini-3.5-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3.8-flash",
     # Flash-Lite models as fallback
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
 ]
 
 
@@ -960,6 +968,12 @@ async def _detect_comic_balloons_vision_async(
         return cleaned_list
 
     try:
+        from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
+        if not api_key or GeminiKeyPool.is_key_exhausted(api_key):
+            active_pool_key = GeminiKeyPool.get_active_key()
+            if active_pool_key:
+                api_key = active_pool_key
+
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         # Up to 2 rounds so transient 429/503 spikes can recover cleanly
         for attempt_round in range(2):
@@ -969,7 +983,7 @@ async def _detect_comic_balloons_vision_async(
             for model in list(vision_models):
                 if model in _DEAD_VISION_MODELS:
                     continue
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
                 m_low = model.lower()
                 use_no_thinking = "2.5-flash" in m_low
                 req_payload = (
@@ -1031,7 +1045,19 @@ async def _detect_comic_balloons_vision_async(
                         elif resp.status in (400, 401, 403):
                             err_detail = await resp.text()
                             if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
-                                logger.error(f"Gemini API key is invalid: {err_detail}")
+                                from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
+                                logger.warning(
+                                    f"[Gemini Key Pool] Comic Vision key {mask_api_key(api_key)} auth error ({resp.status}): {err_detail[:120]}. "
+                                    f"Marking key and rotating..."
+                                )
+                                GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({resp.status}): {err_detail[:120]}")
+                                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                                if next_pool_key:
+                                    logger.info(f"[Gemini Key Pool] Comic Vision rotated to next key {mask_api_key(next_pool_key)}")
+                                    api_key = next_pool_key
+                                    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+                                    continue
+                                logger.error(f"Gemini API key is invalid across all pool keys: {err_detail}")
                                 raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
                             if resp.status == 400 and ("thinking" in err_detail.lower() or "safety" in err_detail.lower()):
                                 retry_payload = {
@@ -1085,6 +1111,7 @@ async def _detect_comic_balloons_vision_async(
                                 if next_pool_key:
                                     logger.warning(f"[Gemini Key Pool] Comic Vision rotated to next key {next_pool_key[:6]}...")
                                     api_key = next_pool_key
+                                    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
                                     continue
                                 logger.warning("Gemini daily quota exhausted in comic Vision across all pool keys. Tripping circuit breaker.")
                                 trip_gemini_quota_exhaustion(3600.0)
