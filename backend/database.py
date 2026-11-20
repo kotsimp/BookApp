@@ -218,9 +218,13 @@ def db_delete_test_jobs() -> List[str]:
     test_prefixes = (
         "test_", "reg_", "mock_", "sample_", "q_iso_",
         "cover_check", "sse_test", "sse_thread", "cancel_guard",
-        "scanned_only", "book_", "path_"
+        "scanned_only", "book_", "book", "path_", "direct_text",
+        "temp_", "stress_", "bench_"
     )
-    exact_matches = ("sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf")
+    exact_matches = (
+        "sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf",
+        "direct_text.txt", "direct_text"
+    )
     deleted_ids: List[str] = []
 
     with _db_lock:

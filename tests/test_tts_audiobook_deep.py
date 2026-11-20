@@ -24,7 +24,7 @@ from backend.tts_engine import (
     _concatenate_mp3s,
     generate_audiobook,
 )
-from backend.job_manager import create_job, get_job, cancel_job, update_job
+from backend.job_manager import create_job, get_job, cancel_job, update_job, _jobs
 
 
 class TestTTSAudiobookDeep(unittest.TestCase):
@@ -115,30 +115,32 @@ class TestTTSAudiobookDeep(unittest.TestCase):
         print("-> 5. Testing In-Flight Audiobook Cancellation Resilience...")
         job = create_job("test_cancel_book.txt", "test_cancel_book.txt", "txt")
         job_id = job.job_id
+        try:
+            # Cancel job immediately before/during generation
+            cancel_job(job_id)
 
-        # Cancel job immediately before/during generation
-        cancel_job(job_id)
+            with tempfile.TemporaryDirectory() as td:
+                txt_file = Path(td) / "sample.txt"
+                txt_file.write_text("Αυτό είναι ένα δοκιμαστικό κείμενο για ακύρωση.", encoding="utf-8")
+                out_mp3 = Path(td) / "out.mp3"
 
-        with tempfile.TemporaryDirectory() as td:
-            txt_file = Path(td) / "sample.txt"
-            txt_file.write_text("Αυτό είναι ένα δοκιμαστικό κείμενο για ακύρωση.", encoding="utf-8")
-            out_mp3 = Path(td) / "out.mp3"
+                with self.assertRaises(asyncio.CancelledError):
+                    asyncio.run(generate_audiobook(
+                        job_id=job_id,
+                        file_path=str(txt_file),
+                        file_type="txt",
+                        language="greek",
+                        voice_name="Nestoras (Male)",
+                        output_path=str(out_mp3),
+                    ))
 
-            with self.assertRaises(asyncio.CancelledError):
-                asyncio.run(generate_audiobook(
-                    job_id=job_id,
-                    file_path=str(txt_file),
-                    file_type="txt",
-                    language="greek",
-                    voice_name="Nestoras (Male)",
-                    output_path=str(out_mp3),
-                ))
-
-            # Verify that final output was NOT created and status is cancelled
-            self.assertFalse(out_mp3.exists())
-            j = get_job(job_id)
-            self.assertEqual(j.status, "cancelled")
-            print("   Audiobook cancellation & cleanup: OK")
+                # Verify that final output was NOT created and status is cancelled
+                self.assertFalse(out_mp3.exists())
+                j = get_job(job_id)
+                self.assertEqual(j.status, "cancelled")
+                print("   Audiobook cancellation & cleanup: OK")
+        finally:
+            _jobs.pop(job_id, None)
 
 
 if __name__ == "__main__":

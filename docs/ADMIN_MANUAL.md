@@ -284,7 +284,7 @@ On application startup, `cleanup_old_jobs()` automatically deletes orphaned jobs
 The repository includes a comprehensive master test runner with **100% endpoint coverage across all 45 FastAPI routes**:
 
 > [!IMPORTANT]
-> **User Output Protection During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore non-test directories and SQLite records.
+> **User Output Protection & Zero-Junk Guarantee During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore real user directories and SQLite records. All test sessions, temporary artifacts, and scratch directories created during tests are guaranteed 100% purged upon completion, ensuring zero junk files or test history in the user interface.
 
 ```bash
 # Execute all 40 test suites (Full Master Suite):

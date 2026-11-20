@@ -21,7 +21,7 @@ import docx
 import pymupdf as fitz
 from PIL import Image
 
-from backend.database import db_get_job, db_list_jobs, db_get_cache_stats
+from backend.database import db_get_job, db_list_jobs, db_get_cache_stats, db_save_job
 
 API = "http://127.0.0.1:8000/api"
 

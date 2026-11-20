@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
     cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled,
-    is_valid_job_id, cleanup_test_jobs, is_test_job_filename,
+    is_valid_job_id, cleanup_test_jobs, is_test_job_identifier,
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
@@ -1165,7 +1165,7 @@ async def all_jobs(include_tests: bool = False):
             "has_output": j.output_path is not None,
         }
         for j in jobs
-        if include_tests or not is_test_job_filename(j.file_name)
+        if include_tests or not is_test_job_identifier(j.job_id, j.file_name)
     ]
 
 

@@ -49,8 +49,9 @@ def _start_temp_server():
     return proc
 
 
-def _clear_test_sessions():
-    """Clear all test jobs, batch queue items, and temp test artifacts while preserving user jobs and translation_cache."""
+def _clear_test_sessions(initial_outputs=None, initial_uploads=None, initial_jobs=None):
+    """Clear all test jobs, batch queue items, and temp test artifacts while strictly preserving user jobs and translation_cache."""
+    # 1. Trigger HTTP endpoints to clear test jobs & queue
     for endpoint in ("/api/queue", "/api/jobs/tests/cleanup"):
         try:
             req = urllib.request.Request(f"http://127.0.0.1:8000{endpoint}", method="DELETE")
@@ -59,17 +60,72 @@ def _clear_test_sessions():
         except Exception:
             pass
 
-    # Fallback cleanup of test jobs in case server wasn't reachable
+    # 2. Call backend job_manager cleanup directly
     try:
-        from backend.job_manager import cleanup_test_jobs
+        from backend.job_manager import cleanup_test_jobs, _jobs
         cleanup_test_jobs()
+        if initial_jobs is not None:
+            for jid in list(_jobs.keys()):
+                if jid not in initial_jobs:
+                    _jobs.pop(jid, None)
     except Exception:
         pass
 
-    # Remove stray temp/test_* or sample_* files created by tests in root temp dir
+    # 3. Clean up SQLite database: delete any jobs created during tests or matching test patterns
+    try:
+        from backend.database import _get_connection, _db_lock, db_delete_test_jobs
+        db_delete_test_jobs()
+        if initial_jobs is not None:
+            with _db_lock:
+                conn = _get_connection()
+                with conn:
+                    rows = conn.execute("SELECT job_id, file_name FROM jobs").fetchall()
+                    to_del = [r[0] for r in rows if r[0] not in initial_jobs]
+                    if to_del:
+                        conn.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_del])
+    except Exception:
+        pass
+
+    # 4. Sweep temp/outputs: delete any directory created by tests or containing only test files
+    outputs_dir = BASE_DIR / "temp" / "outputs"
+    if outputs_dir.is_dir():
+        for d in outputs_dir.iterdir():
+            if not d.is_dir():
+                continue
+            should_delete = False
+            if initial_outputs is not None and d.name not in initial_outputs:
+                should_delete = True
+            elif any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
+                should_delete = True
+            else:
+                try:
+                    files = list(d.iterdir())
+                    test_pats = ("test_", "sample_", "reg_", "q_iso_", "direct_text", "book_")
+                    if files and all(any(f.name.startswith(p) for p in test_pats) for f in files):
+                        should_delete = True
+                except Exception:
+                    pass
+            if should_delete:
+                shutil.rmtree(d, ignore_errors=True)
+
+    # 5. Sweep temp/uploads: delete any directory created by tests (except tmp)
+    uploads_dir = BASE_DIR / "temp" / "uploads"
+    if uploads_dir.is_dir():
+        for d in uploads_dir.iterdir():
+            if not d.is_dir() or d.name == "tmp":
+                continue
+            should_delete = False
+            if initial_uploads is not None and d.name not in initial_uploads:
+                should_delete = True
+            elif any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
+                should_delete = True
+            if should_delete:
+                shutil.rmtree(d, ignore_errors=True)
+
+    # 6. Remove stray temp/test_* or sample_* files created by tests in root temp dir
     temp_dir = BASE_DIR / "temp"
     if temp_dir.is_dir():
-        for pattern in ("test_*", "sample_*", "reg_*", "q_iso_*"):
+        for pattern in ("test_*", "sample_*", "reg_*", "q_iso_*", "stress_*", "direct_text*", "*.tmp"):
             for f in temp_dir.glob(pattern):
                 try:
                     if f.is_dir():
@@ -78,6 +134,15 @@ def _clear_test_sessions():
                         f.unlink(missing_ok=True)
                 except Exception:
                     pass
+
+    # 7. Clean up preview audio files in temp/previews
+    prev_dir = BASE_DIR / "temp" / "previews"
+    if prev_dir.is_dir():
+        for f in prev_dir.glob("*.mp3"):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def run_suite():
@@ -89,6 +154,21 @@ def run_suite():
 
     if fast_mode:
         test_files = [tf for tf in test_files if Path(tf).name not in SLOW_EXTERNAL_NETWORK_SUITES]
+
+    # Pre-clean any leftover test junk from previous runs
+    _clear_test_sessions()
+
+    # Snapshot existing real user outputs, uploads, and DB jobs so tests NEVER touch or delete them
+    initial_outputs = set(p.name for p in (BASE_DIR / "temp" / "outputs").iterdir() if p.is_dir()) if (BASE_DIR / "temp" / "outputs").is_dir() else set()
+    initial_uploads = set(p.name for p in (BASE_DIR / "temp" / "uploads").iterdir() if p.is_dir()) if (BASE_DIR / "temp" / "uploads").is_dir() else set()
+    initial_jobs = set()
+    try:
+        from backend.database import _get_connection, _db_lock
+        with _db_lock:
+            conn = _get_connection()
+            initial_jobs = set(r[0] for r in conn.execute("SELECT job_id FROM jobs").fetchall())
+    except Exception:
+        pass
 
     # Snapshot user's config/settings.json so tests can NEVER lose or overwrite user API keys
     settings_file = BASE_DIR / "config" / "settings.json"
@@ -126,7 +206,7 @@ def run_suite():
                 print(f"❌ FAIL ({dur:.2f}s)")
     finally:
         # 1. Clear all test sessions via HTTP while server is still up
-        _clear_test_sessions()
+        _clear_test_sessions(initial_outputs, initial_uploads, initial_jobs)
 
         # 2. Stop temporary server so Windows releases all file handles
         if temp_server is not None:
@@ -137,7 +217,7 @@ def run_suite():
                 temp_server.kill()
 
         # 3. Run disk/SQLite cleanup again after server exit to guarantee zero locked test leftovers
-        _clear_test_sessions()
+        _clear_test_sessions(initial_outputs, initial_uploads, initial_jobs)
 
         # 4. Always restore user settings untouched
         if settings_backup is not None:

@@ -1957,12 +1957,15 @@ function renderHistory(jobs) {
   const grid = document.getElementById('history-grid');
   const clearBtn = document.getElementById('clear-history-btn');
 
-  const testPrefixes = ['test_', 'reg_', 'mock_', 'sample_', 'q_iso_', 'cover_check', 'sse_test', 'sse_thread', 'cancel_guard', 'scanned_only', 'book_', 'path_'];
-  const testExact = ['sample.pdf', 'sample.txt', 'book.pdf', 'book.txt', 'active.pdf'];
+  const testPrefixes = ['test_', 'reg_', 'mock_', 'sample_', 'q_iso_', 'cover_check', 'sse_test', 'sse_thread', 'cancel_guard', 'scanned_only', 'book_', 'book', 'path_', 'direct_text', 'temp_', 'stress_', 'bench_'];
+  const testExact = ['sample.pdf', 'sample.txt', 'book.pdf', 'book.txt', 'active.pdf', 'direct_text.txt', 'direct_text'];
   const displayJobs = (jobs || []).filter(j => {
     const fn = (j.file_name || '').toLowerCase().trim();
-    if (!fn) return true;
-    return !testPrefixes.some(p => fn.startsWith(p)) && !testExact.includes(fn);
+    const jid = (j.job_id || '').toLowerCase().trim();
+    if (!fn && !jid) return false;
+    if (testExact.includes(fn)) return false;
+    if (testPrefixes.some(p => fn.startsWith(p) || (jid && jid.startsWith(p)))) return false;
+    return true;
   });
 
   if (!displayJobs || displayJobs.length === 0) {

@@ -117,12 +117,20 @@ def test_api_dynamic_layout_download():
         res = json.loads(resp.read().decode("utf-8"))
         job_id = res["job_id"]
 
-    # Download as literature EPUB and literature PDF
-    for fmt in ("epub", "pdf"):
-        with urllib.request.urlopen(f"{API}/download/{job_id}?format={fmt}&layout=literature") as resp:
-            data = resp.read()
-            assert resp.status == 200 and len(data) > 1000
-    print(f"  API dynamic download with layout=literature (EPUB & PDF): OK (job={job_id})")
+    try:
+        # Download as literature EPUB and literature PDF
+        for fmt in ("epub", "pdf"):
+            with urllib.request.urlopen(f"{API}/download/{job_id}?format={fmt}&layout=literature") as resp:
+                data = resp.read()
+                assert resp.status == 200 and len(data) > 1000
+        print(f"  API dynamic download with layout=literature (EPUB & PDF): OK (job={job_id})")
+    finally:
+        try:
+            req_del = urllib.request.Request(f"{API}/jobs/{job_id}", method="DELETE")
+            with urllib.request.urlopen(req_del, timeout=5):
+                pass
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

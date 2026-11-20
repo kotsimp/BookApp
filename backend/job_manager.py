@@ -494,9 +494,13 @@ def is_test_job_identifier(job_id: Optional[str], file_name: Optional[str] = Non
     test_prefixes = (
         "test_", "reg_", "mock_", "sample_", "q_iso_",
         "cover_check", "sse_test", "sse_thread", "cancel_guard",
-        "scanned_only", "book_", "path_"
+        "scanned_only", "book_", "book", "path_", "direct_text",
+        "temp_", "stress_", "bench_"
     )
-    exact_matches = ("sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf")
+    exact_matches = (
+        "sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf",
+        "direct_text.txt", "direct_text"
+    )
 
     if job_id:
         jid = job_id.strip().lower()
@@ -548,6 +552,33 @@ def cleanup_test_jobs() -> list[str]:
                     shutil.rmtree(str(target_dir), ignore_errors=True)
                 except Exception:
                     pass
+
+    # 4. Sweep disk directories in temp/uploads and temp/outputs for orphan test folders or test-only files
+    for sub in ("uploads", "outputs"):
+        sub_dir = base_temp / sub
+        if not sub_dir.is_dir():
+            continue
+        for entry in sub_dir.iterdir():
+            if not entry.is_dir() or entry.name == "tmp":
+                continue
+            # If the directory name itself matches test prefixes
+            if is_test_job_identifier(entry.name, None):
+                try:
+                    shutil.rmtree(str(entry), ignore_errors=True)
+                    if entry.name not in deleted_ids:
+                        deleted_ids.append(entry.name)
+                except Exception:
+                    pass
+                continue
+            # If directory contains only test-generated files (e.g. direct_text, test_, sample_)
+            try:
+                child_files = [f for f in entry.iterdir() if f.is_file()]
+                if child_files and all(is_test_job_identifier(None, f.name) for f in child_files):
+                    shutil.rmtree(str(entry), ignore_errors=True)
+                    if entry.name not in deleted_ids:
+                        deleted_ids.append(entry.name)
+            except Exception:
+                pass
 
     return deleted_ids
 
