@@ -1,441 +1,374 @@
-# 📖 Εγχειρίδιο Χρήστη (User Manual)
+# 📖 User Manual
 ### DocTranslate & AudioBook Generator
 
-Καλώς ήρθατε στον οδηγό χρήσης του **DocTranslate & AudioBook Generator**. Η εφαρμογή αυτή σας επιτρέπει να μεταφράζετε έγγραφα μεταξύ Αγγλικών και Ελληνικών με διατήρηση της αρχικής μορφοποίησης, καθώς και να δημιουργείτε επαγγελματικά ηχητικά βιβλία (Audiobooks) σε μορφή MP3 με φυσικές φωνές τεχνητής νοημοσύνης.
+Welcome to the **DocTranslate & AudioBook Generator** user guide. This application allows you to translate documents between English and Greek while preserving original formatting, as well as create professional-grade AI audiobooks in MP3 and M4B formats using natural Microsoft Edge neural voices.
 
 ---
 
-## 📑 Πίνακας Περιεχομένων
-1. [Πρόσβαση στην Εφαρμογή](#1-πρόσβαση-στην-εφαρμογή)
-2. [Επιλογή Λειτουργίας: Basic Mode vs Advanced Mode](#2-επιλογή-λειτουργίας-basic-mode-vs-advanced-mode)
-3. [Μετάφραση Εγγράφων (Translate Document)](#3-μετάφραση-εγγράφων-translate-document)
-   - [Υποστηριζόμενα Αρχεία](#υποστηριζόμενα-αρχεία)
-   - [Βήμα-Βήμα Οδηγός Μετάφρασης](#βήμα-βήμα-οδηγός-μετάφρασης)
-   - [Επιλογή Μορφής Εξαγωγής (Output Format)](#επιλογή-μορφής-εξαγωγής-output-format)
-   - [Επιλογή Διάταξης Εγγράφου (Document Layout Style)](#επιλογή-διάταξης-εγγράφου-document-layout-style)
-   - [Διαχείριση Εξωφύλλου Βιβλίου (Cover Image Management)](#διαχείριση-εξωφύλλου-βιβλίου-cover-image-management)
-   - [Διατήρηση Μορφοποίησης & Στυλ](#διατήρηση-μορφοποίησης--στυλ)
-   - [Άμεση Αλλαγή Μορφής Χωρίς Επαναμετάφραση (On-Demand Export)](#-άμεση-αλλαγή-μορφής-χωρίς-επαναμετάφραση-on-demand-export)
-   - [Έλεγχος & Χειροκίνητη Διόρθωση Μετάφρασης (In-Browser Editor)](#-έλεγχος--χειροκίνητη-διόρθωση-μετάφρασης-in-browser-editor)
-   - [Αυτόματος Έλεγχος & Βελτίωση με AI (Gemini AI Polish)](#-αυτόματος-έλεγχος--βελτίωση-με-ai-gemini-ai-polish)
-   - [Προσαρμοσμένο Γλωσσάρι Όρων (Custom Glossary)](#️-προσαρμοσμένο-γλωσσάρι-όρων-custom-glossary)
-4. [Δημιουργία Ηχητικού Βιβλίου (Audiobook Generator)](#4-δημιουργία-ηχητικού-βιβλίου-audiobook-generator)
-   - [Διαθέσιμες Φωνές](#διαθέσιμες-φωνές)
-   - [Βήμα-Βήμα Οδηγός Δημιουργίας Audiobook](#βήμα-βήμα-οδηγός-δημιουργίας-audiobook)
-   - [Απευθείας Μετατροπή από Μετάφραση σε Audiobook](#απευθείας-μετατροπή-από-μετάφραση-σε-audiobook)
-   - [Επεξήγηση Προόδου: «Μέρη Ήχου» vs «Σελίδες»](#επεξήγηση-προόδου-μέρη-ήχου-vs-σελίδες)
-5. [Ιστορικό Εργασιών (Session History)](#5-ιστορικό-εργασιών-session-history)
-6. [Συχνές Ερωτήσεις & Επίλυση Προβλημάτων](#6-συχνές-ερωτήσεις--επίλυση-προβλημάτων)
+## 📑 Table of Contents
+1. [Accessing the Application](#1-accessing-the-application)
+2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
+3. [Document Translation](#3-document-translation)
+   - [Supported File Formats](#supported-file-formats)
+   - [Graphic Novels, Comics & Manga (RTL)](#-graphic-novels-comics--manga-rtl)
+   - [Auto-Genre & Document Style Detection](#-auto-genre--document-style-detection)
+   - [Automatic Greek Editorial Typography](#-automatic-greek-editorial-typography)
+   - [Step-by-Step Translation Guide](#step-by-step-translation-guide)
+   - [Output Format Selection](#output-format-selection)
+   - [Document Layout Styles](#document-layout-styles)
+   - [Book Cover Image Management](#-book-cover-image-management)
+   - [Gemini Quota Handling Choice & Free Mode](#-gemini-quota-handling-choice--free-mode)
+   - [Instant On-Demand Export Without Retranslating](#-instant-on-demand-export-without-retranslating)
+   - [Distraction-Free "Read Now" Reader View](#-distraction-free-read-now-reader-view)
+   - [Smart Resume Banner](#-smart-resume-banner)
+   - [Live ETA, Speed & Hybrid Engine Badge](#-live-eta-speed--hybrid-engine-badge)
+   - [In-Browser Review & Edit](#-in-browser-review--edit)
+   - [Gemini AI Polish & Proofreading](#-gemini-ai-polish--proofreading)
+   - [Gemini Multi-Key API Pool & Auto-Failover](#-gemini-multi-key-api-pool--auto-failover)
+   - [Categorized Custom Glossary](#-categorized-custom-glossary)
+   - [In-Place Layout & Style Preservation](#in-place-layout--style-preservation)
+4. [Audiobook Generation](#4-audiobook-generation)
+   - [Available Neural Voices & Live Auditions](#available-neural-voices--live-auditions)
+   - [Multi-Voice Dramatization](#-multi-voice-dramatization)
+   - [M4B Export & Embedded Cover Art](#-m4b-export--embedded-cover-art)
+   - [Step-by-Step Audiobook Guide](#step-by-step-audiobook-guide)
+   - [Direct Conversion: Send to Audiobook](#direct-conversion-send-to-audiobook)
+   - [Narration Styles, Speed & Pitch Tuning](#-narration-styles-speed--pitch-tuning)
+   - [AI Polish for Spoken Audio](#-ai-polish-for-spoken-audio)
+   - [Built-In Pro Audiobook Player](#-built-in-pro-audiobook-player)
+   - [Understanding Progress: "Audio Parts" vs "Pages"](#understanding-progress-audio-parts-vs-pages)
+5. [Session History & Task Management](#5-session-history--task-management)
+6. [Frequently Asked Questions & Troubleshooting](#6-frequently-asked-questions--troubleshooting)
 
 ---
 
-## 1. Πρόσβαση στην Εφαρμογή
+## 1. Accessing the Application
 
-Ανοίξτε το πρόγραμμα περιήγησής σας (Google Chrome, Microsoft Edge, Mozilla Firefox) και μεταβείτε στη διεύθυνση:
-👉 **[http://localhost:8000](http://localhost:8000)** *(η εφαρμογή προσαρμόζεται αυτόματα και σε `http://127.0.0.1:8000` ή τοπική διεύθυνση δικτύου LAN)*
+Open your modern web browser (Google Chrome, Microsoft Edge, Mozilla Firefox, Brave, or Safari) and navigate to:
+👉 **[http://localhost:8000](http://localhost:8000)** *(the web interface also adapts automatically to `http://127.0.0.1:8000` or your local network LAN IP)*
 
-Θα δείτε το κεντρικό γραφικό περιβάλλον με δύο βασικές καρτέλες στο επάνω μέρος:
-* 🌐 **Translate Document** (Μετάφραση Εγγράφου)
-* 🎧 **Generate Audiobook** (Δημιουργία Ηχητικού Βιβλίου)
+You will see the main user interface with two primary tabs at the top:
+* 🌐 **Translate Document**
+* 🎧 **Generate Audiobook**
 
 ---
 
-## 2. Επιλογή Λειτουργίας: Basic Mode vs Advanced Mode
+## 2. Operating Modes: Basic Mode vs Advanced Mode
 
-Ακριβώς επάνω από τις καρτέλες υπάρχει ο διακόπτης επιλογής λειτουργίας (Global Mode Switcher):
+Directly above the main tabs is the global mode switcher:
 
 ```text
-[ ⚡ Basic Mode (1-Click AI) ]   [ ⚙️ Advanced Mode (Πλήρης Έλεγχος) ]
+[ ⚡ Basic Mode (1-Click AI) ]   [ ⚙️ Advanced Mode (Full Control) ]
 ```
 
-Η επιλογή σας αποθηκεύεται αυτόματα στον browser (`localStorage`) και παραμένει ενεργή σε κάθε επίσκεψή σας.
+Your selection is saved automatically in browser `localStorage` and persists across sessions.
 
-### ⚡ Basic Mode (Απλή Λειτουργία — Προεπιλογή)
-Σχεδιασμένη για μέγιστη ευκολία και ταχύτητα χωρίς περιττές ρυθμίσεις:
-* **Ενεργό AI από προεπιλογή:** Τόσο η μετάφραση όσο και το audiobook έχουν το AI Polish ενεργοποιημένο αυτόματα για κορυφαία ποιότητα ροής και φυσικό λόγο.
-* **1-Click Μετάφραση:**
-  * Ανεβάζετε απλά το αρχείο σας (PDF, DOCX, EPUB, Comic).
-  * Η μορφή εξόδου και η διάταξη ταιριάζουν αυτόματα με το αρχείο εισόδου.
-  * **Αυτόματη Ανίχνευση & Εφαρμογή Ύφους:** Το σύστημα αναλύει το κείμενο και εφαρμόζει αυτόματα το βέλτιστο στυλ (π.χ. Λογοτεχνικό με διαλόγους και παύλες `—`), εμφανίζοντας άμεσα την ένδειξη `✓ Εφαρμόστηκε αυτόματα` χωρίς να χρειάζεται κανένα περιττό κλικ.
-  * Πατάτε το κουμπί **`✨ Μετάφραση Βιβλίου με AI (1-Click)`**.
+### ⚡ Basic Mode (Default — 1-Click AI)
+Designed for maximum ease of use and zero cognitive load:
+* **AI Enabled by Default:** Both Translation and Audiobook generation have AI Polish automatically enabled for literary fluidity and natural phrasing.
+* **1-Click Translation:**
+  * Drop your file (PDF, DOCX, EPUB, Comic).
+  * Output format and layout are automatically matched to your input document.
+  * **Auto-Genre Detection & Application:** The engine analyzes the text and automatically applies the optimal style (e.g. Literary fiction with dialogue dashes `—`), immediately showing `✓ Auto-applied` without requiring any manual clicks.
+  * Click **`✨ Translate Book with AI (1-Click)`**.
 * **1-Click Audiobook:**
-  * Αυτόματη προεπιλογή της φυσικής ελληνικής φωνής **Νέστορας (Nestoras Neural)** με ιδανική λογοτεχνική ταχύτητα (-12%).
-  * Πατάτε το κουμπί **`🎧 Δημιουργία Audiobook με AI (1-Click)`**.
-* **Καθαρό Interface:** Όλες οι λεπτομερείς επιλογές (format buttons, layout grids, sliders ταχύτητας/τονισμού, multi-voice ρυθμίσεις) αποκρύπτονται.
+  * Automatically preselects the natural Greek voice **Nestoras Neural** at the ideal literary pacing (-12% speed).
+  * Click **`🎧 Generate Audiobook with AI (1-Click)`**.
+* **Clean Interface:** Granular options (format pickers, layout selectors, speed/pitch fine-tune sliders, multi-voice grids) are hidden to maintain focus.
 
-### ⚙️ Advanced Mode (Προχωρημένη Λειτουργία)
-Για χρήστες που θέλουν πλήρη έλεγχο σε κάθε παράμετρο:
-* Επιλογή κατεύθυνσης γλώσσας (🇬🇧 ⇄ 🇬🇷).
-* Χειροκίνητη επιλογή format εξαγωγής (PDF, DOCX, EPUB, CBZ, CBR, TXT).
-* Στυλ διάταξης (Standard, Literature/E-Reader, Comic/Graphic Novel).
-* Φορά ανάγνωσης Manga (RTL).
-* Ανέβασμα & αφαίρεση εξωφύλλου βιβλίου.
-* Επιλογή συμπεριφοράς εξάντλησης ορίου Gemini (Αναμονή με χρονόμετρο vs Αυτόματη μετάβαση σε Free μοντέλο).
-* Πλήρες grid φωνών, επιλογέας ύφους αφήγησης, fine-tune sliders ταχύτητας (-30% έως +30%) και pitch (-4Hz έως +4Hz).
-* Πολυφωνική αφήγηση (Multi-Voice Dramatization) με ξεχωριστή φωνή διαλόγων.
-
----
-
-## 3. Μετάφραση Εγγράφων (Translate Document)
-
-### Υποστηριζόμενα Αρχεία
-* 📄 **PDF** (`.pdf`) — Ψηφιακά έγγραφα PDF & Graphic Novels
-* 📘 **Word** (`.docx`) — Σύγχρονα έγγραφα Microsoft Word
-* 📗 **EPUB** (`.epub`) — Ηλεκτρονικά βιβλία (Reflowable & Fixed-Layout)
-* 🎨 **CBZ / CBR / ZIP** (`.cbz`, `.cbr`, `.zip`) — Ψηφιακά Comic Books και Manga
-* 📝 **TXT** (`.txt`) — Αρχεία απλού κειμένου
-
-*(Σημείωση: Τα παλιά αρχεία `.doc` πρέπει πρώτα να αποθηκευτούν ως `.docx` από το Microsoft Word).*
-
-### 🎨 Μετάφραση Graphic Novels, Comics & Manga (RTL)
-Η εφαρμογή διαθέτει εξειδικευμένη μηχανή για εικονογραφημένα αναγνώσματα:
-1. **Ανέπαφη Εικονογράφηση:** Το σύστημα μεταφράζει **αποκλειστικά τα κείμενα στα μπαλόνια διαλόγων (speech balloons)**, διατηρώντας το 100% της αυθεντικής εικονογράφησης άθικτο.
-2. **Αυτόματο «Inpainting» Μπαλονιών & Two-Pass Rendering:** Η αρχική αγγλική γραφή καλύπτεται αρμονικά με το χρώμα του φόντου του μπαλονιού σε δύο περάσματα (πρώτα όλα τα φόντα και έπειτα όλα τα κείμενα από πάνω, ώστε διπλανά μπαλόνια να μην αλληλοκαλύπτονται), με οριζόντια & κάθετη στοίχιση στο κέντρο.
-3. **Έξυπνη Προσαρμογή Μεγέθους (`Fit-to-Box` χωρίς κενά μπαλόνια) & Φυσική Σειρά Σελίδων:** Καθώς τα ελληνικά καταλαμβάνουν ~20% περισσότερο χώρο, η μηχανή υπολογίζει ντετερμινιστικά τη βέλτιστη γραμματοσειρά (έως `3.0pt` με προτίμηση σε ακέραιες λέξεις χωρίς συλλαβισμό, αυτόματη μετάβαση σε στενή γραμματοσειρά `Arial Narrow` και ήπια επέκταση πλαισίου όπου χρειάζεται) — ώστε **κανένα μπαλόνι να μη βγαίνει ποτέ κενό**. Στα αρχεία `.cbz`/`.zip`, οι σελίδες ταξινομούνται με **φυσική αριθμητική σειρά** (`page_1`, `page_2`, ..., `page_10`) και ελέγχονται για ασφαλή αποσυμπίεση. Ο καθαριστής διαλόγων εξασφαλίζει ομοιόμορφα ελληνικά κεφαλαία κόμικς (συμπεριλαμβανομένων `Ϊ`/`Ϋ`), σωστές αποστρόφους (`Σ'`, `ΓΙ'`) και ελληνικό ερωτηματικό (`;`).
-4. **Υποστήριξη Japanese Manga (Right-to-Left — RTL):** 
-   - Επιλέξτε **Manga (Right-to-Left ⬅️)** στη φορά ανάγνωσης.
-   - Η ανάγνωση και ανίχνευση των μπαλονιών ταξινομείται από πάνω προς τα κάτω και **από τα δεξιά προς τα αριστερά**.
-   - Κατά την εξαγωγή σε Fixed-Layout EPUB, ενσωματώνεται η επίσημη οδηγία `page-progression-direction="rtl"`, ώστε οι e-readers να ξεφυλλίζουν αυτόματα από δεξιά προς τα αριστερά!
-5. **Επιτρεπόμενες Μορφές Εξαγωγής για Κόμικς:**
-   - **PDF**, **CBZ** (Comic Book Zip), **CBR** (Comic Book Archive), και **EPUB** (Fixed-Layout).
-   - Τα formats TXT και DOCX απενεργοποιούνται αυτόματα για να προστατεύσουν τον χρήστη από απώλεια της εικονογράφησης.
-
-### 💡 Αυτόματη Αναγνώριση Ύφους & Είδους (Auto-Genre Detection)
-Μόλις ανεβάσετε ένα έγγραφο, το σύστημα αναλύει αυτόματα τις πρώτες σελίδες:
-* Εντοπίζει αν πρόκειται για **Λογοτεχνία**, **Ποίηση**, **Τεχνικό κείμενο**, **Επίσημο/Διοικητικό έγγραφο** ή **Graphic Novel**.
-* Εμφανίζει άμεσα διακριτική ειδοποίηση (π.χ. `💡 Ανιχνεύθηκε ύφος: Λογοτεχνικό (85% βεβαιότητα)`).
-* Πατώντας το κουμπί **«Εφαρμογή Προτεινόμενου»**, ρυθμίζονται αυτόματα το στυλ διάταξης, η παράμετρος AI Polish και η κατηγορία γλωσσαρίου χωρίς να ψάχνετε στις ρυθμίσεις!
-
-### ✍️ Αυτόματη Ελληνική Τυπογραφική Επιμέλεια (Typography Engine)
-Όλα τα μεταφρασμένα και επιμελημένα κείμενα περνούν από τον ενσωματωμένο κανόνα ελληνικής τυπογραφίας:
-* **Κανόνας τελικού «ν» (με προστασία αντιθετικού «δε» & στερητικού «μη»):** Αυτόματη εφαρμογή του γραμματικού κανόνα (`δε/δεν`, `μη/μην`). Ο αντιθετικός σύνδεσμος **«δε»** σε νομικά/λογοτεχνικά κείμενα (π.χ. *«εάν δε προκύψει»*, *«ο δε υπουργός»*) διατηρείται ανέπαφος χωρίς να μετατρέπεται σε άρνηση «δεν». Το ρηματικό «μην» διατηρεί το «ν» πριν από φωνήεντα και στιγμιαία/διπλά σύμφωνα (`μην έρθεις`, `μην πας`) και το αποβάλλει πριν από εξακολουθητικά (`μη λες`, `μη χάνεις`), ενώ το στερητικό/επιθετικό **«μη»** παραμένει αυστηρά **χωρίς «ν»** πριν από επίθετα, μετοχές, επιρρήματα και ουσιαστικά (π.χ. `μη απαραίτητα`, `μη επανδρωμένος`, `μη επεμβατικές`, `Μη Εμπορική Χρήση`).
-* **Συνένωση σπασμένων λέξεων & Αποστρόφων:** Ενώνει αυτόματα σπασμένα ενωτικά αλλαγής γραμμής (`υποσχέ- θηκαν` ➔ `υποσχέθηκαν`) χωρίς να αλλοιώνει διακοπτόμενους διαλόγους (`Περίμενε- μην φεύγεις!`), και αποκαθιστά χαμένες αποστρόφους εκθλίψεων (`Σ ΑΥΤΗΝ` ➔ `Σ' ΑΥΤΗΝ`, `ΓΙ ΑΥΤΟ` ➔ `ΓΙ' ΑΥΤΟ`).
-* **Ελληνικά Εισαγωγικά, Κώδικας & Πλάγια Γράμματα:** Τα απλά διπλά εισαγωγικά `"` μετατρέπονται σε εκδοτικά εισαγωγικά `«...»` (αφήνοντας ανέπαφα τμήματα κώδικα σε ` ``` `), ενώ τα `*πλάγια*` και `**έντονα**` αποδίδονται με πραγματική πλάγια/έντονη γραμματοσειρά (Georgia Italic στο PDF, `italic` στο DOCX, `<em>` στο EPUB) χωρίς ορατούς αστερίσκους.
-* **Παύλες Διαλόγων, URLs & Ερωτηματικά:** Τα ενωτικά στην αρχή διαλόγων μετατρέπονται σε επίσημη παύλα διαλόγου (`—`) χωρίς να αλλοιώνονται λίστες/bullets, ενώ τα αγγλικά `?`, `?!`, `??!!` μετατρέπονται σε ελληνικά `;`, `;!`, `;;!!` προστατεύοντας πλήρως URLs (`?id=1`) και σχετικές διαδρομές (`../`).
-
-### Βήμα-Βήμα Οδηγός Μετάφρασης
-1. **Ανέβασμα Εγγράφου (1 αρχείο ή έως 20 αρχεία στο Smart Batch Queue):**
-   - Σύρετε και αφήστε **1 ή πολλά αρχεία (έως 20 ανά παρτίδα, μέγιστο 250 MB ανά αρχείο)** στην ενιαία περιοχή **"Drop your document(s) here"** ή κάντε κλικ για να τα επιλέξετε από τον υπολογιστή σας.
-   - Για **1 αρχείο**: θα εμφανιστεί το όνομα του αρχείου, το μέγεθος, ο εκτιμώμενος αριθμός σελίδων (π.χ. `~340 pages · PDF · Ready`) και το κουμπί **➕ Add More** δίπλα στο `✕` αν θελήσετε να προσθέσετε κι άλλα αρχεία στην ουρά.
-   - Για **2+ αρχεία**: η λίστα της **Smart Batch Queue** ανοίγει αμέσως μέσα στο ίδιο πλαίσιο Upload (από εκεί μπορείτε να προσθέσετε επιπλέον αρχεία, να ενεργοποιήσετε **⚡ Auto-Start** ή να αφαιρέσετε μεμονωμένα αρχεία).
-   - *(Αυτόματος έλεγχος εγκυρότητας: κενά αρχεία 0 bytes ή κατεστραμμένα DOCX/EPUB/PDF απορρίπτονται αμέσως με κατανοητό μήνυμα).*
-2. **Κατεύθυνση Μετάφρασης:**
-   - Από προεπιλογή είναι επιλεγμένο: **🇬🇧 English ➔ 🇬🇷 Greek**.
-   - Πατήστε το κουμπί **⇄** αν επιθυμείτε μετάφραση από Ελληνικά σε Αγγλικά (**🇬🇷 Greek ➔ 🇬🇧 English**).
-3. **Επιλογή Μορφής Εξαγωγής:**
-   Επιλέξτε σε τι τύπο αρχείου θέλετε το μεταφρασμένο αποτέλεσμα:
-   - 📄 **TXT:** Απλό κείμενο χωρίς μορφοποίηση.
-   - 📘 **DOCX:** Έγγραφο Word με πλήρη διατήρηση γραμματοσειρών, μεγεθών, πινάκων και στυλ.
-   - 📕 **PDF:** Αρχείο PDF με διαμόρφωση κεφαλίδων και υποστήριξη ελληνικών χαρακτήρων.
-   - 📗 **EPUB:** Ηλεκτρονικό βιβλίο με κεφάλαια και διατήρηση HTML/CSS.
-5. **Επιλογή Διάταξης Εγγράφου (Document Layout Style):**
-   - 📄 **Standard / Έγγραφο (Office / A4):** Διατηρεί την κλασική μορφοποίηση εγγράφων γραφείου, πλήρη σελιδοποίηση A4 και πιστή απόδοση παραγράφων. Ιδανικό για υπηρεσιακά έγγραφα, αναφορές, μελέτες και εκθέσεις.
-   - 📚 **Λογοτεχνικό / E-Reader (Literature / E-Reader):** Ειδικά σχεδιασμένη διάταξη για βιβλία, μυθιστορήματα και λογοτεχνία:
-     - **Αφαίρεση περιττών κεφαλίδων & υποσέλιδων:** Εξαλείφει αυτόματα τίτλους βιβλίου, ονόματα συγγραφέων και αριθμούς σελίδων που βρίσκονται στην κορυφή ή στη βάση των σελίδων και θα μπλέκονταν μέσα στο κείμενο.
-     - **Αυτόνομοι τίτλοι κεφαλαίων:** Αναγνωρίζει επικεφαλίδες (όπως *Πρόλογος*, *Κεφάλαιο 1*, *Chapter 1*, *IV*, *XII*) και τις εμφανίζει απομονωμένες σε δική τους γραμμή με ξεχωριστή μεγαλύτερη γραμματοσειρά και σωστό διάστιχο.
-     - **Διαχωρισμός παραθεμάτων (Epigraphs):** Απομονώνει αποφθέγματα στην αρχή κεφαλαίων και διαχωρίζει τις αποδόσεις (π.χ. «—Ted Bundy») από το κυρίως κείμενο.
-     - **Συνένωση προτάσεων (Cross-page Sentence Continuation):** Ενώνει ομαλά προτάσεις που κόπηκαν στη μέση λόγω αλλαγής σελίδας στο πρωτότυπο PDF/Word.
-     - **Διαχωριστικά σκηνών:** Διατηρεί και κεντράρει κομψά τα σύμβολα αλλαγής σκηνής (όπως `* * *`).
-
-6. **🎨 Διαχείριση Εξωφύλλου Βιβλίου (Cover Image Management):**
-   Ακριβώς κάτω από τις επιλογές διάταξης, υπάρχει το ειδικό πλαίσιο διαχείρισης εξωφύλλου:
-   - **Αυτόματη Ανίχνευση & Εξαγωγή:** Μόλις ανεβάσετε ένα PDF, EPUB ή DOCX, η εφαρμογή αναλύει αυτόματα την πρώτη σελίδα. Αν εντοπίσει αυθεντικό γραφιστικό εξώφυλλο (εικόνα πλήρους σελίδας), το εξάγει άμεσα, εμφανίζει **μικρογραφία (thumbnail)** στην οθόνη και ενεργοποιεί την ένδειξη:  
-     `✔ Εξώφυλλο ενεργό (Περιλαμβάνεται αυτόματα στην 1η σελίδα σε PDF, EPUB & DOCX)`.
-   - **Χειροκίνητο Ανέβασμα (Upload Cover):** Αν το έγγραφο δεν περιέχει εξώφυλλο ή θέλετε να βάλετε μια δική σας εικόνα, πατήστε το κουμπί **📷 Ανέβασμα Εξωφύλλου (Upload Cover)** και επιλέξτε οποιοδήποτε αρχείο εικόνας (`.jpg`, `.png`, `.webp`).
-   - **Αφαίρεση Εξωφύλλου (Remove):** Αν δεν θέλετε να συμπεριληφθεί εξώφυλλο στην τελική έκδοση, κάντε κλικ στο κόκκινο κουμπί **✕ Αφαίρεση (Remove)** (τα αρχεία εξόδου PDF, EPUB & DOCX ανανεώνονται αυτόματα χωρίς το εξώφυλλο).
-   - **Τελική Ενσωμάτωση:** Το ενεργό εξώφυλλο τοποθετείται αυτόματα:
-     - Στο **PDF:** Ως πλήρες έγχρωμο εξώφυλλο στην 1η σελίδα (χωρίς αρίθμηση σελίδας ή περιθώρια).
-     - Στο **EPUB:** Ως επίσημο εξώφυλλο e-book (συμβατό με Apple Books, Kindle, Kobo).
-     - Στο **DOCX:** Στην αρχή του αρχείου Word.
-
-7. **⚡ Επιλογή Συμπεριφοράς σε Εξάντληση Ορίου Gemini (Prior Choice):**
-   - Πριν ξεκινήσετε τη μετάφραση, μπορείτε να ορίσετε πώς θα συμπεριφερθεί το σύστημα εάν εξαντληθεί το ημερήσιο όριο του Gemini API (Free Tier 15 RPM / 1.500 RPD):
-     * **⏳ Αναμονή για επαναφορά (Wait for Reset — Προεπιλογή όταν υπάρχει API Key):**  
-       Η εργασία σταματά με πλήρη ασφάλεια στο αρχείο checkpoint (`.direct_ai_checkpoint.json`). Εμφανίζεται ζωντανός χρονοδιακόπτης αντίστροφης μέτρησης και κουμπί συνέχισης (Resume), ώστε να διατηρηθεί **100% η λογοτεχνική ποιότητα Gemini** χωρίς καμία υποβάθμιση.
-     * **🔄 Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback — Αυτόματη προεπιλογή χωρίς API Key):**  
-       Εάν το όριο εξαντληθεί, η εφαρμογή **δεν σταματά**: μεταβαίνει αυτόματα στη δωρεάν μηχανή μετάφρασης και συνεχίζει απρόσκοπτα για τις υπόλοιπες σελίδες/παρτίδες, ολοκληρώνοντας το βιβλίο χωρίς διακοπή.
-   - **🆓 Λειτουργία Χωρίς Κλειδί (Free Mode Default):** Εάν δεν έχετε εισαγάγει Gemini API Key, η εφαρμογή ενεργοποιεί αυτόματα τη λειτουργία `Free Mode` ως προεπιλογή (με μπλε badge `🆓 Free Mode` στην κορυφή). Η μετάφραση, η τυπογραφική επιμέλεια και τα νευρωνικά audiobooks εκτελούνται εντελώς δωρεάν χωρίς να απαιτείται κανένα κλειδί ή συνδρομή!
-
-8. **Έναρξη Μετάφρασης:**
-   - Κάντε κλικ στο κουμπί **🌐 Start Translation** (για 1 αρχείο) ή **▶️ Start Batch Translation (N files)** (για πολλαπλά αρχεία — οι επιλεγμένες ρυθμίσεις εφαρμόζονται αυτόματα σε όλα τα αρχεία σε αναμονή με προστασία για Comics).
-   - Η μπάρα προόδου δείχνει ζωντανά την εξέλιξη με **ακριβή αριθμό batches και σελίδων** (π.χ. `Completed 12 of 103 AI batches (45 / 340 pages)` για Single-Pass AI ή `Translated 10 of 20 pages` για κανονική μετάφραση).
-
-9. **Λήψη Αποτελέσματος & Αντιγραφή Κειμένου:**
-   - Μόλις ολοκληρωθεί, πατήστε το πράσινο κουμπί **⬇️ Download [FORMAT] File** για να κατεβάσετε το μεταφρασμένο βιβλίο στον υπολογιστή σας. Κατά τη λήψη κατεβαίνει πάντα το πραγματικό έγγραφο του βιβλίου (`.pdf`, `.epub`, `.docx`, `.txt`) και ποτέ μεμονωμένα αρχεία εικόνων.
-   - **📋 1-Click Αντιγραφή Κειμένου (Copy to Clipboard):** Πατώντας το κουμπί **📋 Αντιγραφή Κειμένου**, όλο το μεταφρασμένο κείμενο αντιγράφεται άμεσα στο πρόχειρο του υπολογιστή σας με οπτική επιβεβαίωση (`✅ Αντιγράφηκε!`), έτοιμο για επικόλληση οπουδήποτε.
-   - **🔔 Ήχος Ολοκλήρωσης (Chime) & Ειδοποιήσεις:** Η εφαρμογή αναπαράγει διακριτικό αρμονικό ήχο (Web Audio synthesizer chime) και στέλνει ειδοποίηση επιφάνειας εργασίας (Desktop Notification), ειδοποιώντας σας ακόμα κι αν κάνετε κάτι άλλο σε άλλη εφαρμογή.
-
-### ⚡ Άμεση Αλλαγή Μορφής Χωρίς Επαναμετάφραση (On-Demand Export)
-Δεν χρειάζεται να επαναλάβετε τη μετάφραση ή να ανεβάσετε ξανά το αρχείο αν θέλετε το αποτέλεσμα και σε άλλη μορφή!
-* **Παράδειγμα:** Αν επιλέξατε αρχικά **DOCX** και το κατεβάσατε, αλλά τώρα χρειάζεστε και **PDF**:
-  1. Κάντε απλώς κλικ στο κουμπί **PDF** επάνω.
-  2. Το κουμπί λήψης προσαρμόζεται αυτόματα σε **⬇️ Download PDF File**.
-  3. Πατήστε το! Η εφαρμογή παράγει και κατεβάζει το νέο PDF **ακαριαία (σε λιγότερο από 1 δευτερόλεπτο)** απευθείας από το ήδη μεταφρασμένο κείμενο.
-* Μπορείτε να κάνετε το ίδιο για **EPUB**, **TXT** ή **DOCX** όσες φορές επιθυμείτε!
-
-### 📖 Διαβάστε Τώρα (Distraction-Free Reader)
-Δεν χρειάζεται να ανοίξετε εξωτερικό πρόγραμμα για να διαβάσετε το μεταφρασμένο σας βιβλίο:
-1. Στην κάρτα αποτελέσματος πατήστε **📖 Διαβάστε Τώρα (Reader)**.
-2. Ανοίγει ένα καθαρό περιβάλλον ανάγνωσης (στυλ Kindle / Apple Books) με:
-   * **3 Θέματα Ανάγνωσης:** **📄 Χαρτί (Paper)**, **📜 Σέπια (Sepia)**, **🌙 Σκούρο (Dark Night)**.
-   * **Ρύθμιση Μεγέθους Γραμματοσειράς (A- / A+):** Άμεση αυξομείωση μεγέθους για ξεκούραστη ανάγνωση.
-   * **Επιλογή Προβολής:** **📄 Μονή Στήλη** (για απόλαυση βιβλίου) ή **↔️ Side-by-Side** (για παράλληλη σύγκριση Αγγλικού πρωτοτύπου και Ελληνικής μετάφρασης).
-
-### 📌 Έξυπνη Συνέχιση από την Αρχική Σελίδα (Smart Resume Banner)
-Εάν μια μετάφραση ή παραγωγή audiobook διακοπεί (π.χ. λόγω εξάντλησης του ορίου Quota, κλεισίματος browser ή επανεκκίνησης):
-* Με το άνοιγμα της αρχικής σελίδας `localhost:8000`, εμφανίζεται αυτόματα στην κορυφή ένα πράσινο banner:
-  > 📌 **Ημιτελής Εργασία σε Checkpoint:** «*Όνομα Βιβλίου*» *(X/Y τμήματα · Z% ολοκληρωμένο)*.
-* Πατώντας **▶️ Συνέχιση ΤΩΡΑ**, η εργασία φορτώνεται και συνεχίζει άμεσα από το αποθηκευμένο checkpoint χωρίς να χρειάζεται να ψάξετε στο Session History.
-
-### ⏱️ Ζωντανή Εκτίμηση Χρόνου (Live ETA) & Ένδειξη Μηχανής (Hybrid Engine Badge)
-Κατά την εκτέλεση της μετάφρασης και του ηχητικού βιβλίου, η κάρτα προόδου εμφανίζει:
-* **⏳ Απομένουν:** Ζωντανό υπολογισμό του χρόνου που απομένει (π.χ. `~4λ 20δ`) βάσει της πραγματικής ταχύτητας εκτέλεσης (`24 σελ/λ` ή `1.8 batches/δ`).
-* **🏷️ Engine Badge:** Ένδειξη του ποιος μηχανισμός επεξεργάζεται ενεργά το κείμενο:
-  * `✨ Gemini Flash` όταν εκτελείται με το Gemini API Key σας.
-  * `⚡ Free Engine` όταν ενεργοποιείται το αυτόματο fallback στα δωρεάν μοντέλα.
-  * `⚡ Edge-TTS Neural` κατά την παραγωγή του audiobook.
-
-### ✏️ Έλεγχος & Χειροκίνητη Διόρθωση Μετάφρασης (In-Browser Editor)
-Αν θέλετε να ελέγξετε ή να διορθώσετε το κείμενο πριν το κατεβάσετε:
-1. Στην κάρτα αποτελέσματος πατήστε **✏️ Review & Edit (Έλεγχος)**.
-2. Ανοίγει ο ενσωματωμένος επεξεργαστής που σας προσφέρει:
-   * **Παράθεση (Split View):** Το πρωτότυπο κείμενο αριστερά και το μεταφρασμένο δεξιά για εύκολη σύγκριση.
-   * **Πλήρης Οθόνη (Full Editor):** Εστίαση μόνο στο μεταφρασμένο κείμενο.
-   * **Εύρεση & Αντικατάσταση (🔍 Find & Replace):** Εύρεση λέξης και αντικατάστασή της μεμονωμένα ή μαζικά σε όλο το έγγραφο (Replace All).
-   * **Ζωντανά στατιστικά:** Αριθμός λέξεων και χαρακτήρων σε πραγματικό χρόνο.
-3. Πατήστε **💾 Save & Update Files**. Όλα τα αρχεία (Word DOCX, PDF, EPUB, TXT) και το Audiobook ενημερώνονται άμεσα με τις δικές σας διορθώσεις!
-
-### ✨ Αυτόματος Έλεγχος & Βελτίωση με AI (Gemini AI Polish)
-Για κείμενα που απαιτούν απόλυτα φυσική ροή, απαλοιφή μηχανικών εκφράσεων ή εξειδικευμένο λογοτεχνικό / υπηρεσιακό ύφος:
-1. Πατήστε το κουμπί **✨ AI Polish (Gemini)** (στην κάρτα αποτελέσματος, στον επεξεργαστή ή στην αρχική οθόνη για αυτόνομη χρήση).
-2. Επιλέξτε το κατάλληλο στυλ επιμέλειας ανάμεσα σε 5 επιλογές:
-   * 📚 **Λογοτεχνικό / Μυθιστόρημα (Literature, Fiction & Sci-Fi):** *Ειδικά σχεδιασμένο για μυθιστορήματα, επιστημονική φαντασία και λογοτεχνία.* Διατηρεί τη λογοτεχνική ατμόσφαιρα, τη φυσική ροή των διαλόγων με **ενιαία ελληνικά εισαγωγικά (`«...»`)** σε όλο το βιβλίο, τη σωστή απόδοση ορολογίας sci-fi (π.χ. scramblers, Fireflies, vampires), σταθερό γραμματικό γένος χαρακτήρων και την αφηγηματική ένταση χωρίς ξύλινη γλώσσα.
-   * 🎧 **Audiobook Narration Script (Εκφώνηση & Φωνητική Προσαρμογή):** Προετοιμάζει το κείμενο για ηχογράφηση από νευρωνικές φωνές TTS (Nestoras/Athina). Μεταγράφει φωνητικά όλα τα ξένα ονόματα και λατινικά ακρωνύμια σε ελληνικούς χαρακτήρες (π.χ. `Keeton` ➔ `Κίτον`, `Theseus` ➔ `Θησέας`, `DNA` ➔ `Ντι-Εν-Έι`), αναπτύσσει πλήρως ολογράφως όλους τους αριθμούς, έτη, ποσοστά και συντομογραφίες (`2006` ➔ `δύο χιλιάδες έξι`, `50%` ➔ `πενήντα τοις εκατό`), αφαιρεί μη εκφωνήσιμα στοιχεία (δείκτες υποσημειώσεων, δείκτες σελίδων, URLs) και εισάγει φυσικά κόμματα/τελείες για σωστές ανάσες εκφώνησης.
-   * 🏛️ **Επίσημο & Υπηρεσιακό (Formal / Administrative):** Ιδανικό για δημόσια διοίκηση, αποφάσεις, εισηγήσεις, συμβάσεις και υπηρεσιακά σημειώματα.
-   * 💻 **Τεχνικό & Ακριβές (Technical & Precise):** Ιδανικό για τεχνικά εγχειρίδια, οδηγούς πληροφορικής, προδιαγραφές συστημάτων και επιστημονικά papers.
-   * 📖 **Φυσική Ροή & Άνετος Λόγος (Fluent / Natural):** Ιδανικό για άρθρα, δοκίμια, ενημερωτικά κείμενα και ιστοσελίδες.
-3. **🎯 Source-Anchored Verification (Δίγλωσση Σύγκριση με το Πρωτότυπο):** Ενεργοποιημένη προεπιλογή που συγκρίνει ανά σελίδα το ελληνικό προσχέδιο με το αρχικό αγγλικό κείμενο. Διορθώνει τυχόν παρερμηνείες, αγγλισμούς ή παραλείψεις του μεταφραστή, διατηρώντας απόλυτη πιστότητα.
-4. **🧠 Ολόκληρου-Βιβλίου Μητρώο Ονομάτων & Ορολογίας (Whole-Book Entity Dossier):** Για πολυσέλιδα βιβλία, το σύστημα σαρώνει **ολόκληρο το κείμενο** (συχνότητα κύριων ονομάτων + 9 στρωματοποιημένα δείγματα από την αρχή ως το τέλος) και εξάγει 35–60 βασικούς χαρακτήρες, πλοία, είδη και όρους με **ρητό γραμματικό γένος (`ο/η/το`)** και διάκριση παρόμοιων εννοιών, εξασφαλίζοντας απόλυτη συνέπεια από το 1ο μέχρι το τελευταίο κεφάλαιο.
-5. **🔄 Καθαρό Rolling Context, Μηδέν Διπλοτυπίες Ορίων & Έξυπνα Checkpoints:** Παρέχει 1–2 ολοκληρωμένες προηγούμενες προτάσεις σε απομονωμένη read-only ετικέτα (`<PREVIOUS_CONTEXT_DO_NOT_REPEAT>`) και εφαρμόζει αυτόματο αποδιπλασιασμό ορίων ώστε να μην επαναλαμβάνονται ποτέ παράγραφοι ή αποσπάσματα `[...]` μεταξύ παρτίδων. Η πρόοδος αποθηκεύεται σε πραγματικό χρόνο (`.polish_checkpoint.json`), ώστε σε περίπτωση διακοπής δικτύου η διαδικασία να συνεχίζει ακαριαία από το σημείο που σταμάτησε.
-6. **🔑 Gemini Multi-Key Pool (Έως 4 Δωρεάν Κλειδιά & Αυτόματη Εναλλαγή / Rotation):**  
-   - Μπορείτε να εισαγάγετε **έως και 4 διαφορετικά δωρεάν Gemini API Keys** (Slot 1 Βασικό + Slots 2–4 Εφεδρικά) από διαφορετικούς λογαριασμούς Google.  
-   - **4 x 1.500 = έως 6.000 δωρεάν αιτήματα/ημέρα ($0 Κόστος):** Κάθε δωρεάν λογαριασμός Google παρέχει 1.500 αιτήματα/ημέρα. Συνδέοντας 4 λογαριασμούς, τετραπλασιάζετε την ημερήσια χωρητικότητα μετάφρασης εντελώς δωρεάν!  
-   - **Αυτόματη Εναλλαγή (Seamless Failover):** Μόλις το βασικό κλειδί (Slot 1) εξαντλήσει το όριο του (429 / Quota Exceeded), η μηχανή **μεταβαίνει αυτόματα και ακαριαία στο Slot 2, έπειτα στο Slot 3 και στο Slot 4** χωρίς να σταματήσει η μετάφραση και χωρίς να χαθεί ούτε μία παράγραφος!  
-   - **Αυτόματη Συνέχιση κατά την Αποθήκευση (Auto-Resume on Save):** Αν μια εργασία (μεμονωμένη μετάφραση, ουρά Smart Batch Queue ή Audiobook) βρισκόταν σε παύση λόγω εξάντλησης του ημερήσιου ορίου, μόλις συμπληρώσετε νέα κλειδιά και πατήσετε **«💾 Αποθήκευση Pool»**, η εφαρμογή **συνεχίζει αυτόματα ακαριαία**, κλείνοντας το παράθυρο ρυθμίσεων χωρίς να απαιτεί από εσάς να πατήσετε το κουμπί Resume!
-   - **Ζωντανές Ενδείξεις Κατάστασης ανά Slot:**  
-     * 🟢 **Ενεργό (Active):** Το κλειδί που χρησιμοποιείται αυτή τη στιγμή.  
-     * 🟡 **Εφεδρικό (Standby):** Έτοιμο για χρήση μόλις εξαντληθεί το προηγούμενο.  
-     * ⏳ **Όριο σε Αναμονή:** Εξαντλήθηκε το ημερήσιο όριο, εμφανίζει την ακριβή ώρα επαναφοράς (π.χ. `έως 10:00:00`).  
-     * ⚪ **Κενό:** Δεν έχει οριστεί κλειδί στη συγκεκριμένη θέση.  
-   - **🟢 Live Multi-Key Pool Health Badge στο Navbar:**  
-     Στην πάνω μπάρα πλοήγησης (Navbar) εμφανίζεται ζωντανά η κατάσταση του Pool:  
-     * `🟢 4/4 Keys`: Όλα τα ρυθμισμένα κλειδιά είναι ενεργά και διαθέσιμα.  
-     * `🟡 2/4 Keys`: Κάποια κλειδιά είναι σε αναμονή/cooldown, αλλά υπάρχουν ενεργά εφεδρικά.  
-     * `⏳ Cooldown`: Όλα τα κλειδιά εξάντλησαν προσωρινά το ημερήσιο όριο.  
-     * `✓ Active`: Ένα κλειδί είναι ενεργό και έτοιμο.  
-     * `🆓 Free Mode`: Δεν έχουν εισαχθεί κλειδιά και η εφαρμογή λειτουργεί αυτόματα με δωρεάν μοντέλα.  
-   - Πατήστε **«💾 Αποθήκευση Pool»** για μόνιμη αποθήκευση στη συσκευή και στον server, ή **«🗑️ Clear All»** για πλήρη διαγραφή όλων των κλειδιών.
-7. Πατήστε **✨ Polish Translation**.
-   * **🚀 Έξυπνη Ομαδοποίηση, `BLOCK_NONE` & Φύλακας Ποιότητας (Smart Batching + Recursive Bisection + Quality Gate):** Η μηχανή AI Polish προτιμά τα πλήρη μοντέλα **Gemini Flash** (έναντι Flash-Lite) με ρυθμίσεις ασφαλείας `BLOCK_NONE` για ενήλικη λογοτεχνία/sci-fi, ομαδοποιεί ασφαλώς έως 3 σελίδες (~5.500 χαρακτήρες) ανά αίτημα με `maxOutputTokens: 16384`, φιλτράρει HTML tags (`</i>`), special tokens (`<bos>`), `[...]` echoes, σημειώσεις επιμελητή και CoT, ανιχνεύει αλλοιωμένες λέξεις μεικτού αλφαβήτου για στοχευμένο retry (χωρίς υποβάθμιση σε Flash-Lite) και διασπά αναδρομικά το batch (σελίδες ➔ παράγραφοι) σε περίπτωση `MAX_TOKENS`, safety block ή timeout — εξαλείφοντας σιωπηλές πτώσεις πολλών σελίδων σε ωμή μηχανική μετάφραση.
-   * Μπορείτε να πατήσετε **Minimize (Run in Background)** (ή `Esc` / κλικ έξω από το παράθυρο) για να συνεχίσετε να εργάζεστε όσο προχωράει — η πρόοδος εμφανίζεται ζωντανά στην καρτέλα **Translate Document**.
-
-#### ✨ Αυτόνομο AI Polish (Χωρίς Μετάφραση)
-Μπορείτε να χρησιμοποιήσετε το **✨ AI Polish** και αυτόνομα, χωρίς να μεταφράσετε κάποιο έγγραφο:
-* Ανεβάστε ένα έγγραφο και επιλέξτε **AI Polish** απευθείας, ή επικολλήστε κείμενο στην καρτέλα **AI Polish**.
-* Κατεβάστε το επιμελημένο αποτέλεσμα σε **TXT**, **DOCX**, **PDF** ή **EPUB** (η ολοκληρωμένη κατάσταση αποθηκεύεται μόνιμα στο Session History).
-
-### ⚙️ Προσαρμοσμένο Γλωσσάρι Όρων (Custom Glossary)
-Στην κορυφή της σελίδας, πατώντας **⚙️ Glossary (Γλωσσάρι)**:
-* Μπορείτε να προσθέσετε ζεύγη όρων σε 3 κατηγορίες (**Τεχνικοί**, **Λογοτεχνικοί**, **Γενικοί**).
-* **Έξυπνη Απομόνωση ανά Είδος:** Κατά τη μετάφραση λογοτεχνικών βιβλίων, ποίησης ή comics, οι τεχνικοί όροι πληροφορικής/DevOps (π.χ. `pod`, `sandbox`, `backup`) **αποκλείονται αυτόματα**, οι σύνθετες λέξεις με παύλα (π.χ. `pod-man`, `royalty-free`) δεν αλλοιώνονται και οι αγγλικές βιβλιογραφικές παραπομπές προστατεύονται.
-
-### Διατήρηση Μορφοποίησης & Λειτουργία Λογοτεχνίας / E-Reader
-* **Στα έγγραφα Word (`.docx`):** Η εφαρμογή διατηρεί απαράλλαχτα τα μεγέθη γραμματοσειρών (π.χ. 24pt τίτλοι, 12pt κείμενο), τις οικογένειες γραμματοσειρών (Times New Roman, Arial, Calibri κ.λπ.), τα έντονα γράμματα (**Bold**), τα πλάγια (*Italics*), τις υπογραμμίσεις, καθώς και τη δομή των πινάκων!
-* **Κουκίδες & Λίστες (Bullets / Wingdings):** Ιδιόκτητοι χαρακτήρες λίστας και σύμβολα από γραμματοσειρές όπως Wingdings/Symbol μετατρέπονται αυτόματα σε πρότυπες Unicode κουκίδες (`•`) και γνήσιο στυλ λίστας Word (`List Bullet`), εξαλείφοντας πλήρως τα κουτάκια με ερωτηματικό (`[?]`).
-* **Πραγματικές Αλλαγές Σελίδας:** Στο εξαγόμενο Word, οι σελίδες διαχωρίζονται με πραγματικές αλλαγές σελίδας (`Page Breaks`) αντί για απλά διαχωριστικά κειμένου.
-* **Ακέραιη Διατήρηση Αρχικών Σελίδων (Front Matter / TOC / Πρόλογος):** Ο καθαρισμός των επαναλαμβανόμενων κεφαλίδων γίνεται πλέον αυστηρά σε επίπεδο γραμμής (`_clean_page_blocks`), εξασφαλίζοντας ότι οι πρώτες 3+ σελίδες των βιβλίων (πίνακες περιεχομένων, προμετωπίδες/epigraphs, αφιερώσεις συγγραφέα και πρόλογοι) διατηρούνται 100% αυτούσιες χωρίς καμία απώλεια κειμένου.
-* **Στα βιβλία EPUB (`.epub`):** Διατηρούνται όλα τα στυλ CSS, οι τίτλοι κεφαλαίων (`<h1>`-`<h6>`) και οι εικόνες.
-* **Στα PDF (`.pdf`):** Το παραγόμενο PDF αναγνωρίζει αυτόματα τίτλους και ενότητες, αποδίδοντάς τους μεγαλύτερο μέγεθος γραμματοσειράς (13.5pt bold) και σωστά περιθώρια, ελέγχει κάθε χαρακτήρα απέναντι στη γραμματοσειρά ώστε να **μην εμφανίζονται ποτέ κενά κουτάκια (`□□`)**, και αναδιπλώνει αυτόματα μεγάλα αδιάσπαστα URLs μέσα στα περιθώρια της σελίδας.
-* **📖 Λειτουργία Λογοτεχνίας / E-Reader (Kindle, iPad, Kobo):** Για βιβλία και λογοτεχνικά κείμενα, επιλέγοντας **Literature / E-Reader Layout**:
-  * **Διατήρηση Αυθεντικού Εξωφύλλου (Original Cover Preservation):** Αν το πρωτότυπο βιβλίο (PDF, EPUB, Word) διαθέτει ζωγραφισμένο ή σχεδιασμένο εξώφυλλο, αυτό εξάγεται αυτόματα και τοποθετείται αυτούσιο ως πλήρες έγχρωμο εξώφυλλο στο παραγόμενο **PDF** (σελίδα 1 χωρίς αρίθμηση), στο **EPUB** (`book.set_cover`) και στο **DOCX**!
-  * Συγχωνεύονται αυτόματα σπασμένες προτάσεις μεταξύ σελίδων και αναγνωρίζονται τα κεφάλαια.
-  * Τα αρχεία **EPUB** εξάγονται με καθαρό serif CSS, πίνακα περιεχομένων (TOC) ανά κεφάλαιο και βέλτιστη αναγνωσιμότητα σε e-readers και iPad.
-  * Τα **PDF** και **DOCX** μορφοποιούνται σε διαστάσεις βιβλίου **6×9 ιντσών** με γραμματοσειρά **Georgia** serif, στοιχισμένο κείμενο και σελιδοποίηση.
+### ⚙️ Advanced Mode (Full Control)
+For users who require granular configuration over every parameter:
+* Language direction selection (🇬🇧 ⇄ 🇬🇷).
+* Manual export format selection (PDF, DOCX, EPUB, CBZ, CBR, TXT).
+* Document layout styles (Standard, Literature/E-Reader, Comic/Graphic Novel).
+* Manga reading direction (Right-to-Left / RTL).
+* Book cover image upload, preview, and removal.
+* Gemini quota exhaustion routing choice (Wait for Reset with live timer vs Auto-Fallback to Free model).
+* Full neural voice grid, narration style dropdown, speed sliders (-30% to +30%), and pitch sliders (-4Hz to +4Hz).
+* Multi-Voice Dramatization with separate narrator and dialogue voices.
 
 ---
 
-## 3. Δημιουργία Ηχητικού Βιβλίου (Audiobook Generator)
+## 3. Document Translation
 
-Μπορείτε να μετατρέψετε οποιοδήποτε έγγραφο σε ηχητικό αρχείο MP3 ή M4B με εμπλουτισμένα μεταδεδομένα και εξώφυλλο.
+### Supported File Formats
+* 📄 **PDF** (`.pdf`) — Digital PDF documents and Graphic Novels / Scanned PDFs
+* 📘 **Word** (`.docx`) — Modern Microsoft Word documents
+* 📗 **EPUB** (`.epub`) — Reflowable and Fixed-Layout E-books
+* 🎨 **CBZ / CBR / ZIP** (`.cbz`, `.cbr`, `.zip`) — Digital Comic Books and Manga
+* 📝 **TXT** (`.txt`) — Plain text files
 
-### Διαθέσιμες Φωνές & Ακρόαση Δειγμάτων (Voice Previews)
-* **Ελληνικές Φωνές (Greek 🇬🇷):**
-  * 👨 **Nestoras (Male)** (`el-GR-NestorasNeural`) — *Προτεινόμενη φωνή με άριστη εκφορά και κάλυψη ορολογίας/ακρωνυμίων.*
-  * 👩 **Athina (Female)** (`el-GR-AthinaNeural`) — *Φυσική γυναικεία φωνή.*
-* **Αγγλικές Φωνές (English 🇬🇧/🇺🇸):**
+*(Note: Legacy `.doc` files should first be opened in Microsoft Word and saved as `.docx`).*
+
+### 🎨 Graphic Novels, Comics & Manga (RTL)
+The application includes a specialized pipeline for illustrated publications:
+1. **100% Preserved Artwork:** The engine translates **strictly the text inside speech balloons**, keeping all original artwork completely intact.
+2. **Two-Pass Inpainting & Rendering:** Original English dialogue is cleanly erased and infilled with the balloon's authentic background color across two passes (all backgrounds filled first, then all centered text drawn on top, preventing overlapping balloons from obscuring neighboring text).
+3. **Smart Fit-to-Box (Zero Blank Balloons) & Natural Page Sorting:** Because Greek text takes ~20% more space, the engine deterministically computes the ideal font size (down to `3.0pt` with whole-word wrapping, fallback to `Arial Narrow`, and subtle bounding box expansion where necessary) — ensuring **no balloon is ever left blank**. For `.cbz`/`.zip` archives, pages are sorted using **natural numeric order** (`page_1`, `page_2`, ..., `page_10`) with Zip Slip security checks. The dialogue sanitizer standardizes comic uppercase Greek (`Ϊ`/`Ϋ`), elision apostrophes (`Σ'`, `ΓΙ'`), and Greek question marks (`;`).
+4. **Japanese Manga Support (Right-to-Left — RTL):**
+   - Select **Manga (Right-to-Left ⬅️)** under Reading Direction.
+   - Speech balloon detection and translation ordering are sorted top-to-bottom and **right-to-left**.
+   - Fixed-Layout EPUB exports embed the standard `page-progression-direction="rtl"` directive so e-readers flip pages from right to left naturally.
+5. **Permitted Comic Export Formats:**
+   - **PDF**, **CBZ** (Comic Book Zip), **CBR** (Comic Book Archive), and **EPUB** (Fixed-Layout).
+   - Plain text formats (TXT and DOCX) are automatically disabled for comics to protect users from artwork loss.
+
+### 💡 Auto-Genre & Document Style Detection
+Upon uploading a document, the system automatically analyzes the opening pages:
+* Detects whether the file is **Literature**, **Poetry**, **Technical Documentation**, **Formal / Administrative**, or a **Graphic Novel**.
+* Displays an informative badge (e.g. `💡 Detected genre: Literature (85% confidence)`).
+* In Advanced Mode, clicking **"Apply Recommended"** automatically aligns the layout style, AI Polish prompt, and glossary category. In Basic Mode, the recommendation is **automatically applied immediately** (`✓ Auto-applied`).
+
+### ✍️ Automatic Greek Editorial Typography
+All translated text passes through the built-in publishing typography engine:
+* **Final "ν" Grammatical Rule:** Enforces correct modern Greek usage of `δε/δεν` and `μη/μην`. It protects the conjunctive particle **«δε»** in literary and legal contexts (e.g. *«εάν δε προκύψει»*, *«ο δε υπουργός»*) without corrupting it into the negation «δεν». Verbal «μην» retains «ν» before vowels and stops/affricates (`μην έρθεις`, `μην πας`) and drops it before continuants (`μη λες`, `μη χάνεις`), while privative **«μη»** strictly drops the «ν» before adjectives, participles, nouns, and adverbs (e.g. `μη απαραίτητα`, `μη επανδρωμένος`, `μη επεμβατικές`, `Μη Εμπορική Χρήση`).
+* **Hyphenated Line Breaks & Elision Apostrophes:** Automatically rejoins words broken across line wraps (`υποσχέ- θηκαν` ➔ `υποσχέθηκαν`) without joining interrupted dialogue (`Περίμενε- μην`), and restores elision apostrophes (`Σ ΑΥΤΗΝ` ➔ `Σ' ΑΥΤΗΝ`, `ΓΙ ΑΥΤΟ` ➔ `ΓΙ' ΑΥΤΟ`).
+* **Greek Quotation Marks & Emphasis:** Replaces straight double quotes `"` with publishing guillemets `«...»` (preserving code blocks in ` ``` `), and converts `*italics*` and `**bold**` into native italic/bold typography (Georgia Italic in PDF, `italic` runs in DOCX, `<em>` in EPUB).
+* **Dialogue Dashes, URLs & Punctuation:** Hyphens at line starts turn into standard dialogue em-dashes (`—`) without altering numbered lists, and English question marks (`?`, `?!`, `??!!`) turn into Greek question marks (`;`, `;!`, `;;!!`) while strictly protecting URLs and relative paths (`../`).
+
+### Step-by-Step Translation Guide
+1. **Upload Document(s) (1 file or up to 20 files in Smart Batch Queue):**
+   - Drag and drop **1 or multiple files (up to 20 files, max 250 MB per file)** onto the **"Drop your document(s) here"** upload card, or click to browse files.
+   - For **1 file**: Displays the filename, size, estimated pages (e.g. `~340 pages · PDF · Ready`) and an **➕ Add More** button next to `✕` to seamlessly add more files.
+   - For **2+ files**: The **Smart Batch Queue** view opens immediately inside the upload card (allowing you to add more files, enable **⚡ Auto-Start**, or remove individual items).
+   - *(Validation check: empty 0-byte files or corrupted archives are rejected immediately with clear error alerts).*
+2. **Translation Direction:**
+   - Default: **🇬🇧 English ➔ 🇬🇷 Greek**.
+   - Click **⇄** to invert to **🇬🇷 Greek ➔ 🇬🇧 English**.
+3. **Output Format Selection:**
+   - 📄 **TXT:** Clean plain text.
+   - 📘 **DOCX:** Microsoft Word document with full preservation of fonts, tables, headings, and styles.
+   - 📕 **PDF:** Formatted PDF with custom headers and complete Greek Unicode glyph support.
+   - 📗 **EPUB:** E-book formatted with chapters, navigation, and HTML/CSS styling.
+4. **Document Layout Styles:**
+   - 📄 **Standard / Office (A4):** Preserves classic document styling, A4 pagination, and exact paragraph spacing. Ideal for legal papers, technical reports, and corporate documents.
+   - 📚 **Literature / E-Reader:** Tailored for novels, fiction, and e-readers:
+     - **Strips Running Headers & Footers:** Automatically removes page numbers, author names, and book titles repeating at page margins.
+     - **Isolated Chapter Titles:** Detects chapter markers (*Chapter 1*, *Prologue*, *IV*) and isolates them on their own line with larger styling.
+     - **Epigraph Isolation:** Separates quotes and source attributions (e.g. «—Ted Bundy») from main narrative blocks.
+     - **Cross-Page Sentence Continuation:** Smoothly merges sentences broken by page breaks in the source file.
+     - **Scene Breaks:** Centers and standardizes divider marks (e.g. `* * *`).
+
+5. **🎨 Book Cover Image Management:**
+   - **Auto-Detection & Extraction:** When uploading a PDF, EPUB, or DOCX, the first page is analyzed. If full-page artwork is detected, it is extracted immediately, a thumbnail is displayed, and the badge turns green:  
+     `✔ Cover active (Automatically embedded on page 1 of PDF, EPUB & DOCX)`.
+   - **Manual Cover Upload:** Click **📷 Upload Cover** to select any custom image file (`.jpg`, `.png`, `.webp`).
+   - **Cover Removal:** Click **✕ Remove** to export the document cleanly without cover artwork.
+   - **Final Placement:** Active covers are embedded as:
+     - Full-bleed unpaginated page 1 in **PDF**.
+     - Official e-book cover metadata in **EPUB**.
+     - Document title page in **DOCX**.
+
+6. **⚡ Gemini Quota Handling Choice & Free Mode:**
+   - Choose how the system behaves if the Google Gemini API daily limit is exceeded:
+     * **⏳ Wait for Reset (Default with API Key):** Pauses safely at disk checkpoint (`.direct_ai_checkpoint.json`). Displays a live countdown timer and resume button, preserving **100% Gemini literary quality**.
+     * **🔄 Auto-Fallback to Free Model (Default without API Key):** Seamlessly routes remaining batches to the free translation engine and Edge-TTS without stopping.
+   - **🆓 Free Mode Default:** When no Gemini API key is configured, BookApp automatically operates in **Free Mode** (indicated by the `🆓 Free Mode` pill in the navbar). Translation, typography rules, and neural audiobooks run 100% free with zero keys or subscriptions.
+
+7. **Starting Translation:**
+   - Click **🌐 Start Translation** (for a single file) or **▶️ Start Batch Translation** (for multiple files).
+   - The live progress bar reflects exact completion metrics (e.g. `Completed 12 of 103 AI batches (45 / 340 pages)`).
+
+8. **Downloading Result & Copying Text:**
+   - Click **⬇️ Download [FORMAT] File** to save your translated book.
+   - **📋 1-Click Copy Text:** Copies all translated text directly to your clipboard with visual confirmation (`✅ Copied!`).
+   - **🔔 Completion Chime & Notification:** Plays a gentle synthesizer chime and delivers an OS desktop notification when long tasks finish in the background.
+
+### ⚡ Instant On-Demand Export Without Retranslating
+You never need to re-translate a document to obtain another file format:
+* If you initially translated a book to **DOCX** and now need a **PDF**:
+  1. Simply click the **PDF** button.
+  2. The download button instantly updates to **⬇️ Download PDF File**.
+  3. Click Download — the PDF is generated and downloaded **instantaneously (< 1 second)** from the cached translation text.
+
+### 📖 Distraction-Free "Read Now" Reader View
+Read your translated book directly inside the application:
+1. Click **📖 Read Now (Reader)** on the result card.
+2. A clean reading modal opens with:
+   * **3 Themes:** **📄 Paper**, **📜 Sepia**, **🌙 Dark Night**.
+   * **Font Size Zoom (A- / A+):** Easily adjustable text scaling.
+   * **View Modes:** **📄 Single Column** (for distraction-free reading) or **↔️ Side-by-Side** (for bilingual English ↔ Greek sentence comparison).
+
+### 📌 Smart Resume Banner
+If a translation or audiobook generation is interrupted (due to quota pause, computer restart, or accidental browser closure):
+* Reopening `http://localhost:8000` displays a banner at the top:
+  > 📌 **Interrupted Job Checkpoint:** "*Book Title*" *(X/Y chunks · Z% complete)*.
+* Click **▶️ Resume NOW** to immediately continue execution from the saved disk checkpoint without searching through history.
+
+### ⏱️ Live ETA, Speed & Hybrid Engine Badge
+The active progress card displays real-time telemetry:
+* **⏳ Time Remaining:** Live estimated time to completion (`~4m 20s`) based on true processing throughput (`24 pages/min` or `1.8 batches/s`).
+* **🏷️ Engine Badge:** Live indicator of the active processing provider:
+  * `✨ Gemini Flash` when translating with your configured Gemini API key.
+  * `⚡ Free Engine` when using the free fallback translation engine.
+  * `⚡ Edge-TTS Neural` during audiobook narration synthesis.
+
+### ✏️ In-Browser Review & Edit
+1. Click **✏️ Review & Edit** on the result card.
+2. The split-screen editor provides:
+   * **Split View:** Original source text on the left, editable translation on the right with synchronized scrolling.
+   * **Full Screen:** Expands the editor to focus purely on text polishing.
+   * **🔍 Find & Replace:** Single and document-wide replacements (Replace All).
+   * **Live Word & Character Counters.**
+3. Click **💾 Save & Update Files** to instantly update all output files (Word, PDF, EPUB, TXT) and audiobook source text with your edits.
+
+### ✨ Gemini AI Polish & Proofreading
+For publications requiring professional editorial tone:
+1. Click **✨ AI Polish (Gemini)**.
+2. Select from 5 tailored editorial styles:
+   * 📚 **Literature, Fiction & Sci-Fi:** Preserves dramatic pacing, standardizes Greek guillemets (`«...»`), accurately translates genre terms (scramblers, fireflies), and maintains character gender consistency.
+   * 🎧 **Audiobook Narration Script:** Prepares text for TTS voice synthesis. Phonetically transcribes foreign names and acronyms into Greek characters (`Keeton` ➔ `Κίτον`, `DNA` ➔ `Ντι-Εν-Έι`), spells out all numbers and years in full Greek words (`2006` ➔ `δύο χιλιάδες έξι`), and eliminates non-spoken markers.
+   * 🏛️ **Formal & Administrative:** Tailored for public administration, legal briefings, and contracts.
+   * 💻 **Technical & Precise:** Tailored for software guides, engineering manuals, and academic papers.
+   * 📖 **Fluent & Natural:** Tailored for essays, journalism, and non-fiction articles.
+3. **🎯 Source-Anchored Verification:** Compares the translated draft against original English paragraphs page-by-page to resolve false friends and translation omissions.
+4. **🧠 Whole-Book Stratified Entity Consistency Dossier:** Scans the entire manuscript across 9 stratified excerpts to extract 35–60 recurring entities with explicit grammatical gender (`ο/η/το`).
+5. **🔄 Rolling Context & Boundary Deduplication:** Feeds preceding sentences into `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` and cleans overlapping boundaries so paragraphs are never duplicated.
+
+### 🔑 Gemini Multi-Key API Pool & Auto-Failover
+* **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
+* **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
+* **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress.
+* **Auto-Resume on Save:** If a translation was waiting on quota, clicking **«💾 Save Pool»** with new keys immediately resumes the job automatically without requiring a manual resume click!
+* **Navbar Pool Status Indicator:**
+  * `🟢 4/4 Keys`: All configured keys are active and available.
+  * `🟡 2/4 Keys`: Some keys are cooling down, but backup keys remain available.
+  * `⏳ Cooldown`: All configured keys have temporarily exhausted their daily quota.
+  * `🆓 Free Mode`: Operating with free models without API keys.
+
+### ⚙️ Categorized Custom Glossary
+Click **⚙️ Glossary** in the top navigation to configure persistent domain terms:
+* Add custom translation pairs across 3 categories (**Technical**, **Literary**, **General**).
+* **Domain Isolation:** When translating literature, poetry, or comics, technical IT/DevOps terms (e.g. `pod`, `sandbox`) are automatically ignored to prevent awkward translations in fiction.
+
+### In-Place Layout & Style Preservation
+* **Word Documents (`.docx`):** Preserves font sizes, font families (Times New Roman, Arial, Calibri), **Bold**, *Italics*, underline, tables, and nested drawings. Bullet points from Wingdings/Symbol are converted to clean standard Unicode bullets (`•`).
+* **Front Matter Preservation:** Line-level header/footer cleaning preserves prologues, epigraphs, and tables of contents on the opening pages.
+* **EPUB (`.epub`):** Retains CSS stylesheets, chapter hierarchies (`<h1>`–`<h6>`), and embedded images.
+* **PDF (`.pdf`):** Formats headings, validates all characters against font glyph sets to eliminate missing tofu boxes (`□□`), and wraps long URLs cleanly within page margins.
+
+---
+
+## 4. Audiobook Generation
+
+Convert any document into high-fidelity MP3 and M4B audiobooks with embedded chapter metadata and cover art.
+
+### Available Neural Voices & Live Auditions
+* **Greek Neural Voices (🇬🇷):**
+  * 👨 **Nestoras (Male)** (`el-GR-NestorasNeural`) — Recommended voice with exceptional pronunciation and acronym handling.
+  * 👩 **Athina (Female)** (`el-GR-AthinaNeural`) — Natural feminine voice.
+* **English Neural Voices (🇬🇧 / 🇺🇸):**
   * 👩 Aria, Jenny, Emma
   * 👨 Guy, Davis, Ryan
-* 🔊 **Άμεση Ακρόαση Δείγματος (Audition Button):** Δίπλα σε κάθε κάρτα φωνής υπάρχει το κουμπί **«🔊 Ακρόαση»**. Πατώντας το, ακούτε άμεσα μια σύντομη φράση 2-3 δευτερολέπτων για να επιλέξετε τη φωνή που ταιριάζει καλύτερα στο βιβλίο σας, χωρίς να περιμένετε τη μετατροπή ολόκληρου του αρχείου.
+* 🔊 **Live Voice Audition:** Click **«🔊 Preview»** next to any voice card to hear a 2–3 second sample before generating your audiobook.
 
-### 🎭 Πολυφωνική Αφήγηση (Multi-Voice Dramatization)
-Μπορείτε να δημιουργήσετε ραδιοφωνική/θεατρική εμπειρία ακρόασης:
-1. Ενεργοποιήστε την επιλογή **🎭 Multi-Voice Dramatization (Πολυφωνική Αφήγηση)**.
-2. Επιλέξτε τη βασική φωνή για τον Αφηγητή (π.χ. **Nestoras**) και τη δευτερεύουσα φωνή για τους Διαλόγους (π.χ. **Athina**).
-3. Το σύστημα αναγνωρίζει αυτόματα τις ατάκες σε εισαγωγικά (`«...»`) ή παύλες (`—`) και τις αποδίδει στη φωνή διαλόγων, ενώ η περιγραφή διαβάζεται από τον αφηγητή!
-4. Υποστηρίζονται επίσης ρητές ετικέτες ρόλων, π.χ. `[Nestoras]: ...`, `[Athina]: ...`.
+### 🎭 Multi-Voice Dramatization
+Create a theatrical audio experience:
+1. Enable **🎭 Multi-Voice Dramatization**.
+2. Select your primary voice for **Narrator** (e.g. Nestoras) and secondary voice for **Dialogue** (e.g. Athina).
+3. The system automatically detects quotes (`«...»`) and dialogue dashes (`—`), routing character speech to the dialogue voice and descriptive prose to the narrator voice.
 
-### 📦 Εξαγωγή σε Πρότυπο M4B & Ενσωμάτωση Εξωφύλλου (ID3 Tagging)
-* Κάθε παραγόμενο audiobook εξάγεται με πλήρη μεταδεδομένα (Τίτλος Βιβλίου, Καλλιτέχνης, Είδος Audiobook).
-* Αν υπάρχει ενεργό εξώφυλλο, ενσωματώνεται απευθείας **μέσα στο ηχητικό αρχείο (Embedded APIC Cover Art)**! Έτσι, κατά την αναπαραγωγή σε iPhone, Android, Apple Books ή στο αυτοκίνητο, εμφανίζεται κανονικά το εξώφυλλο του βιβλίου.
-* Υποστηρίζεται τόσο η κλασική μορφή `.mp3` όσο και η πρότυπη μορφή e-audiobook `.m4b`.
-* **Χαμηλή Κατανάλωση Μνήμης (Streamed Assembly):** Η συνένωση των ηχητικών τμημάτων γίνεται μέσω ροής μικρών τμημάτων (64KB chunks), εξασφαλίζοντας ότι ακόμα και πολύωρα audiobooks (10+ ωρών) δημιουργούνται με μηδενική επιβάρυνση RAM, ιδανικό για λειτουργία σε Synology NAS ή υπολογιστές με περιορισμένη μνήμη.
+### 📦 M4B Export & Embedded Cover Art
+* Every audiobook exports with complete metadata tags (Title, Artist, Album, Genre="Audiobook").
+* Active cover art is embedded directly into the audio file container (**Embedded APIC Cover Art**), rendering natively in Apple Books, Android players, and car dashboards.
+* **Streamed Audio Assembly:** Audio chunks are assembled in 64KB streams, ensuring 10+ hour audiobooks render without high RAM usage.
 
-### Βήμα-Βήμα Οδηγός Δημιουργίας Audiobook
-1. Μεταβείτε στην καρτέλα **🎧 Generate Audiobook**.
-2. Ανεβάστε το έγγραφο που θέλετε να ακούσετε (ή χρησιμοποιήστε το μεταφρασμένο κείμενο). Κατά το ανέβασμα, εμφανίζεται αυτόματα η **εκτιμώμενη διάρκεια ακρόασης** (π.χ. `⏱️ ~1 ώρα 45 λ ακρόαση` με βάση ~2 λεπτά ανά σελίδα).
-3. Επιλέξτε γλώσσα ήχου (**Audio Language: 🇬🇷 Greek**).
-4. Επιλέξτε την επιθυμητή φωνή (π.χ. **Nestoras ♂**).
-5. Πατήστε **🎧 Generate Audiobook**.
-6. Μόλις ολοκληρωθεί, ακούγεται ο ήχος ολοκλήρωσης (🔔 chime) και μπορείτε να πατήσετε **⬇️ Download Audiobook (MP3)** ή **📦 Download M4B (Audiobook)** για άμεση λήψη σε μορφή M4B με ενσωματωμένο εξώφυλλο και κεφάλαια.
+### Step-by-Step Audiobook Guide
+1. Navigate to the **🎧 Generate Audiobook** tab.
+2. Upload your file (or use previously translated text). The upload card displays the **estimated listening time** (e.g. `⏱️ ~1h 45m listening` based on ~2 minutes per page).
+3. Select the **Audio Language** (Greek or English).
+4. Choose your preferred voice (e.g. **Nestoras ♂**).
+5. Click **🎧 Generate Audiobook**.
+6. When complete, click **⬇️ Download Audiobook (MP3)** or **📦 Download M4B (Audiobook)**.
 
-### Απευθείας Μετατροπή από Μετάφραση σε Audiobook
-Αν μόλις μεταφράσατε ένα αγγλικό έγγραφο στα ελληνικά:
-1. Στην καρτέλα της μετάφρασης θα εμφανιστεί αυτόματα το κουμπί:  
-   **🎧 Convert to Greek Audiobook**
-2. Κάνοντας κλικ, μεταφέρεστε αυτόματα στην καρτέλα Audiobook με προεπιλεγμένη την ελληνική γλώσσα, τη φωνή του Νέστορα και ενεργοποιημένη την επιλογή *"Use previously translated text"*.
-3. Πατάτε απλώς **Generate Audiobook**!
+### Direct Conversion: Send to Audiobook
+Immediately after translating an English document to Greek, click:  
+**`🎧 Convert to Greek Audiobook`**  
+The application smoothly navigates to the Audiobook tab with Greek language and Nestoras voice preselected and *"Use previously translated text"* enabled.
 
-### 🎚️ Ύφος & Ταχύτητα Εκφώνησης (Narration Style & Fine-Tune Slider)
-Μπορείτε να ρυθμίσετε τη ροή, τις παύσεις και την ταχύτητα της αφήγησης:
-* 📖 **Literature / Book Flow (-12% speed):** *Προτεινόμενο για μυθιστορήματα και πεζογραφία.* Φυσική αναπνοή και ρυθμός Audible χωρίς να σέρνεται η φωνή.
-* 🪶 **Poetry & Recitation (-20% speed):** *Ειδικά σχεδιασμένο για ποίηση, θεατρικούς διαλόγους και απαγγελία.* Διατηρεί τη γραμμή κάθε στίχου και το ποιητικό μέτρο με ήρεμο, επιβλητικό ρυθμό και φυσική αναπνοή ανάμεσα στις στροφές.
-* 🐢 **Calm & Expressive (-18% speed):** *Χαλαρωτικός ρυθμός με διακριτικές, ήρεμες παύσεις ανά παράγραφο.* Ιδανικό για παραμύθια και εκμάθηση γλώσσας.
-* 🎙️ **Natural Conversational (+0% speed / 1.0x):** *Καθημερινός ρυθμός ανθρώπινης ομιλίας.* Ιδανικό για δοκίμια, βιογραφίες και άρθρα.
-* ⚡ **Brisk / Non-Fiction (+15% speed / 1.15x):** *Ταχεία ακρόαση για εξοικονόμηση χρόνου.* Ιδανικό για podcasts, τεχνικά εγχειρίδια και μελέτη.
-* **Speed Fine-Tune Slider (-30% έως +30%):** Μετακινήστε τον διαδραστικό διακόπτη ταχύτητας για να ορίσετε οποιοδήποτε ακριβές ποσοστό επιθυμείτε (π.χ. `-8%`, `+5%`, `+10%`).
-* **Voice Pitch & Prosody Slider (-4Hz έως +4Hz):** Ρυθμίστε το τονικό ύψος και τη χροιά της φωνής. Επιλέξτε `-2Hz` ή `-3Hz` για βαθιά, επιβλητική θεατρική απαγγελία (ιδανικό για ποίηση), `-1Hz` για ζεστή αφήγηση βιβλίου, ή `0Hz` για απόλυτα φυσική ομιλία.
+### 🎚️ Narration Styles, Speed & Pitch Tuning
+* 📖 **Literature Flow (-12% speed):** Recommended for fiction and novels. Natural breathing cadence.
+* 🪶 **Poetry & Recitation (-20% speed):** Tailored for poetry and dramatic recitation, honoring meter and verse pauses.
+* 🐢 **Calm & Expressive (-18% speed):** Relaxed cadence for bedtime stories and language learning.
+* 🎙️ **Conversational (+0% speed / 1.0x):** Natural human speaking rate for essays and biographies.
+* ⚡ **Brisk Non-Fiction (+15% speed):** Faster playback for podcasts and technical manuals.
+* **Speed Slider (-30% to +30%):** Fine-tune playback rate to exact percentages.
+* **Pitch Slider (-4Hz to +4Hz):** Adjust vocal tone (`-2Hz` or `-3Hz` for a deep dramatic baritone; `-1Hz` for warm book narration).
 
-### ✨ AI Polish Σεναρίου για Spoken Audio (Προαιρετικό αλλά Συνιστώμενο)
-Εάν το κείμενό σας περιέχει ξένα ονόματα (π.χ. Keeton, Rorschach), λατινικά ακρωνύμια (π.χ. DNA, AI), έτη ή αριθμούς, ενεργοποιήστε το κουτάκι:
-👉 **✨ AI Polish for Spoken Audio (Gemini — expands abbreviations & improves narration flow)**
-* **Φωνητική Μεταγραφή σε Ελληνικά:** Μετατρέπει αυτόματα τα ξένα κύρια ονόματα και ακρωνύμια σε ελληνική γραφή (π.χ. `Keeton` ➔ `Κίτον`, `Rorschach` ➔ `Ρόρσαχ`, `Theseus` ➔ `Θησέας`, `DNA` ➔ `Ντι-Εν-Έι`) ώστε οι νευρωνικές φωνές να τα προφέρουν αβίαστα.
-* **Ολογράφως Ανάπτυξη Αριθμών & Ετών:** Όλοι οι αριθμοί, τα έτη, τα ποσοστά και οι συντομογραφίες αναπτύσσονται σε πλήρεις προφορικές λέξεις (π.χ. `2006` ➔ `δύο χιλιάδες έξι`, `50%` ➔ `πενήντα τοις εκατό`, `π.χ.` ➔ `για παράδειγμα`).
-* **Αφαίρεση Μη Εκφωνήσιμων Στοιχείων:** Αφαιρούνται υποσημειώσεις `[1]`, δείκτες σελίδων (`=== PAGE X ===`), υπερσύνδεσμοι URLs και σπασμένα ενωτικά στο τέλος γραμμών.
-* **Φυσικός Ρυθμός & Ανάσες:** Εξομαλύνεται η στίξη με κόμματα και τελείες ώστε ο αφηγητής να παίρνει φυσικές ανάσες.
+### ✨ AI Polish for Spoken Audio
+Enable **✨ AI Polish for Spoken Audio (Gemini)** to optimize scripts for speech synthesis:
+* Phonetically spells foreign names and acronyms in Greek characters (`Keeton` ➔ `Κίτον`, `DNA` ➔ `Ντι-Εν-Έι`).
+* Fully writes out numbers and years (`2006` ➔ `δύο χιλιάδες έξι`, `50%` ➔ `πενήντα τοις εκατό`).
+* Cleans footnote markers (`[1]`), page headers, and URLs.
 
-### 🎧 Ενσωματωμένος Pro Audiobook Player
-Μόλις ολοκληρωθεί η παραγωγή του ηχητικού βιβλίου, εμφανίζεται άμεσα ο ενσωματωμένος player:
-* **Ακρόαση στο Browser:** Πατήστε Play για να ακούσετε το audiobook απευθείας, χωρίς απαίτηση εξωτερικών προγραμμάτων.
-* **Πλοήγηση & Skip (⏪ 15s / ⏩ 15s):** Άμεσο πισωγύρισμα ή προσπέραση 15 δευτερολέπτων.
-* **Ρύθμιση Ταχύτητας Αναπαραγωγής (Speed Presets):** Επιλέξτε με 1 κλικ ανάμεσα σε `0.8x`, `1.0x` (κανονικό), `1.2x` και `1.5x` (γρήγορη μελέτη).
-* **Πλοήγηση Κεφαλαίων (Chapter Navigator):** Επιλέξτε άμεσα το κεφάλαιο ή μέρος που επιθυμείτε από το αναπτυσσόμενο μενού.
+### 🎧 Built-In Pro Audiobook Player
+* **In-Browser Playback:** Listen immediately without third-party media players.
+* **Skip Buttons (⏪ 15s / ⏩ 15s):** Quick 15-second jumps.
+* **Playback Speed Presets:** Select between `0.8x`, `1.0x`, `1.2x`, and `1.5x`.
+* **Chapter Navigator:** Jump directly between book chapters.
 
-### Επεξήγηση Προόδου: «Μέρη Ήχου» vs «Σελίδες»
-Όταν ξεκινά η παραγωγή ηχητικού βιβλίου, η μπάρα προόδου αναφέρει:
-`Generating audio part 2 of 5...` / `Generated audio part 1 of 5`
-* **Γιατί δείχνει 5 μέρη ενώ το έγγραφο είναι 2 σελίδες;**
-  Για να διασφαλιστεί η υψηλή ποιότητα ήχου και να μην υπάρχουν αποσυνδέσεις με τον διακομιστή φωνής της Microsoft, το κείμενο του εγγράφου χωρίζεται αυτόματα σε μικρά τμήματα (~1.200 χαρακτήρων ή 1-2 παραγράφους).
-* Τα μέρη αυτά παράγονται διαδοχικά και στο 100% ενώνονται αυτόματα σε **ένα ενιαίο, ολοκληρωμένο αρχείο MP3** που περιλαμβάνει ολόκληρο το έγγραφό σας.
+### Understanding Progress: "Audio Parts" vs "Pages"
+The progress indicator displays:  
+`Generating audio part 2 of 5...`
+* To prevent connection timeouts with speech synthesis servers, text is synthesized in ~1,200 character paragraphs.
+* When all parts reach 100%, they are concatenated into a **single seamless MP3/M4B file**.
 
 ---
 
-## 4. Ιστορικό Εργασιών (Session History)
+## 5. Session History & Task Management
 
-Στο κάτω μέρος της σελίδας υπάρχει ο πίνακας **Session History**.
-* **Προβολή, Επαναφόρτωση & Αυτόματη Επαναφορά Ρυθμίσεων (Resume):** Εμφανίζει όλες τις εργασίες (μεταφράσεις και audiobooks) που έχετε εκτελέσει. Ακόμη κι αν κλείσετε κατά λάθος το tab ή γίνει επανεκκίνηση του server, κάνοντας κλικ σε οποιαδήποτε γραμμή ιστορικού επαναφέρεται η εργασία **μαζί με όλες τις αρχικές της ρυθμίσεις** (Μορφή Εξαγωγής π.χ. `PDF`, Διάταξη π.χ. `📚 Λογοτεχνικό / E-Reader`, `☑ AI Polish`, Κατεύθυνση Γλώσσας και αριθμό σελίδων). Αν μια μετάφραση AI είχε διακοπεί στη μέση, πατώντας **🌐 Start Translation** συνεχίζει ακαριαία από το τελευταίο αποθηκευμένο checkpoint (`.direct_ai_checkpoint.json`). Αν βρίσκεστε στην καρτέλα **Generate Audiobook** και επιλέξετε ένα έγγραφο από το ιστορικό, παραμένετε στην καρτέλα Audiobook· για αμετάφραστα έγγραφα η γλώσσα ήχου κλειδώνει αυτόματα στη γλώσσα του κειμένου, ενώ για ήδη μεταφρασμένα ενεργοποιείται η επιλογή *Use translated text*.
-* **Πού αποθηκεύονται:** Τα αρχεία αποθηκεύονται τοπικά στον υπολογιστή/διακομιστή σας, στον φάκελο `temp/outputs/[job_id]/` (και οι εγγραφές στη SQLite βάση `data/bookapp.db`).
-* **Διαγραφή Μεμονωμένης Εργασίας:** Σε κάθε κάρτα ιστορικού υπάρχει το κουμπί **✕** στα δεξιά. Πατώντας το, διαγράφεται άμεσα η συγκεκριμένη εργασία από τη βάση, την ουρά και τον δίσκο.
-* **Καθαρισμός Ολόκληρου του Ιστορικού:** Δίπλα στον τίτλο *Session History* υπάρχει το κουμπί **🗑️ Clear All**. Πατώντας το (μετά από επιβεβαίωση), διαγράφονται όλες οι προηγούμενες εργασίες και τα προσωρινά αρχεία (διατηρώντας ανέπαφη τη σημασιολογική cache μεταφράσεων).
-* **Αυτόματη Απομόνωση & Καθαρισμός Τεστ:** Τα αυτοματοποιημένα διαγνωστικά τεστ του συστήματος (αρχεία με πρόθεμα `test_`, `reg_`, κ.λπ.) εκκαθαρίζονται αυτόματα κατά την ολοκλήρωση των ελέγχων και φιλτράρονται πλήρως από τη διεπαφή, ώστε το Session History να περιλαμβάνει αποκλειστικά και μόνο τα δικά σας πραγματικά βιβλία και έγγραφα.
+The **Session History** panel at the bottom of the page tracks all jobs:
+* **Reload & Full Settings Restoration:** Clicking any history entry restores the document, output format, layout style, language direction, and page metrics.
+* **Interrupted Job Resumption:** If an AI translation was paused, clicking **Start Translation** continues from the saved checkpoint (`.direct_ai_checkpoint.json`).
+* **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
+* **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete old jobs and temporary files while preserving the translation cache.
+* **Automatic Test Job Isolation:** Automated system tests (files prefixed with `test_`, `reg_`, etc.) are purged and filtered out automatically, keeping your history clean.
 
 ---
 
-## 5. Συχνές Ερωτήσεις & Επίλυση Προβλημάτων
+## 6. Frequently Asked Questions & Troubleshooting
 
-#### ❓ Αν μετέφρασα ένα έγγραφο σε Word (DOCX) ή PDF, μπορώ να το κατεβάσω και σε άλλη μορφή χωρίς να περιμένω να ξαναγίνει μετάφραση;
-* **Ναι, απολύτως!** Απλώς κάντε κλικ στο κουμπί **PDF**, **DOCX**, **EPUB** ή **TXT** και πατήστε **⬇️ Download**. Η εφαρμογή παράγει και κατεβάζει τη νέα μορφή σε λιγότερο από 1 δευτερόλεπτο χωρίς καμία νέα κλήση μετάφρασης (ακόμα και για βιβλία που μεταφράστηκαν αρχικά σε PDF — οι περιορισμοί TXT/DOCX ισχύουν αποκλειστικά για Graphic Novels/Comics).
+#### ❓ Can I download a translated book in another format without re-translating?
+* **Yes!** Simply click **PDF**, **DOCX**, **EPUB**, or **TXT** and click **⬇️ Download**. The conversion happens in less than one second without making new translation calls.
 
-#### ❓ Μπορώ να χρησιμοποιήσω το AI Polish απευθείας σε κείμενο που επικολλώ στον Editor χωρίς να ανεβάσω αρχείο;
-* **Ναι!** Ανοίξτε τον **Direct Editor**, επικολλήστε το κείμενό σας και πατήστε **✨ AI Polish**. Το σύστημα δημιουργεί αυτόματα μια νέα εργασία για το επεξεργασμένο κείμενο και σας επιτρέπει να το κατεβάσετε αμέσως σε TXT, DOCX, PDF ή EPUB.
+#### ❓ Can I polish text directly in the Editor without uploading a file?
+* **Yes!** Open the **Direct Editor**, paste your text, and click **✨ AI Polish**. The system processes your text and lets you download it as TXT, DOCX, PDF, or EPUB.
 
-#### ❓ Ανέβασα ένα σκαναρισμένο PDF ή Graphic Novel (μόνο εικόνες χωρίς ψηφιακό κείμενο). Πώς μεταφράζεται;
-* **Αυτόματη Αναγνώριση & Vision AI:** Το BookApp ανιχνεύει **αυτόματα** κατά το ανέβασμα εάν ένα PDF είναι σκαναρισμένο έγγραφο / Graphic Novel (`🎨 Graphic Novel / Comic Auto-Detected`) και **κλειδώνει αυτόματα το περιβάλλον αποκλειστικά στις συμβατές επιλογές Graphic Novel** (`PDF`, `CBZ`, `CBR`, `EPUB` · φορά ανάγνωσης `LTR / Manga RTL`, απενεργοποιώντας τα μη συμβατά `TXT`, `DOCX` και εργαλεία σκέτου κειμένου).
-* **Δεν απαιτείται εξωτερικό OCR:** Εφόσον έχετε αποθηκεύσει ένα δωρεάν **Gemini API Key** (από το κουμπί **🔑 Gemini API Key ➔ 💾 Save Key** στην επάνω μπάρα), το **Gemini Vision AI** σαρώνει 4 σελίδες παράλληλα, καλύπτει αδιαφανώς το πρωτότυπο κείμενο μέσα σε κάθε μπαλονάκι με το αντίστοιχο χρώμα φόντου και τυπώνει τα Ελληνικά σε γραμματοσειρά κόμικς, αφήνοντας την εικονογράφηση **100% άθικτη**.
+#### ❓ How are scanned PDF comics translated?
+* The upload analyzer automatically detects scanned comics (`🎨 Graphic Novel / Comic Auto-Detected`) and locks the interface to comic-safe options. The **Gemini Vision AI** reads speech balloons across 4 parallel workers, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact.
 
-#### ❓ Πώς επιταχύνω τη μετάφραση βιβλίων με AI Polish (π.χ. EPUB, PDF, DOCX);
-* **Single-Pass Direct AI Translation & Polish:** Ενεργοποιώντας το checkbox **✨ AI Polish (Gemini)** πριν πατήσετε **Start Translation** (με αποθηκευμένο Gemini API Key), το σύστημα εκτελεί **απευθείας μετάφραση + λογοτεχνική επιμέλεια σε ένα ενιαίο βήμα** (5 παράλληλοι workers με απενεργοποιημένο hidden thinking overhead). Είναι **4x–8x ταχύτερο**, αποφεύγει πλήρως τα όρια `429` του Google Translate, υποστηρίζει **όλα τα formats (EPUB, DOCX, PDF, TXT)** και διατηρεί Entity Dossier, Γλωσσάρι, Ελληνική Τυπογραφία και Εξώφυλλο.
+#### ❓ How does Single-Pass Direct AI Translation speed up processing?
+* Enabling **✨ AI Polish** with a Gemini API key translates and polishes in **one single parallel pass** (5 concurrent workers). It is **4x–8x faster**, avoids Google Translate 429 limits, and preserves glossary terms, entity consistency dossiers, and cover art.
 
-#### ❓ Πώς χρησιμοποιώ τη Smart Batch Queue (Ουρά Πολλαπλών Εγγράφων);
-* **Ενιαίο Upload (1 έως 20 αρχεία):** Απευθείας από την επάνω κάρτα **Upload Document(s)** μπορείτε να επιλέξετε ή να σύρετε **έως 20 αρχεία ταυτόχρονα** (έως 250 MB το καθένα — ακόμα και ανάμεικτα μυθιστορήματα + Graphic Novels!). Αν έχετε ήδη ανεβάσει 1 αρχείο, πατώντας **➕ Add More** (ή ρίχνοντας κι άλλα αρχεία στην κάρτα) μετατρέπεται αυτόματα σε παρτίδα χωρίς να ξανα-ανέβει το 1ο αρχείο.
-* **Ρυθμίσεις αφού διαλέξετε αρχεία:** Αφού βάλετε τα αρχεία, ρυθμίστε από κάτω Output Format, Layout και AI Polish και πατήστε **▶️ Start Batch Translation**. Οι τελευταίες σας ρυθμίσεις εφαρμόζονται αυτόματα σε όλα τα αρχεία σε αναμονή, ενώ τα Graphic Novels/Scanned PDFs προστατεύονται αυτόματα (`comic` + `PDF/CBZ/CBR/EPUB`).
-* **Σειριακή Εκτέλεση, Pause/Resume & Retry:** Κάθε έγγραφο εκτελείται 1-προς-1 στην ουρά με πλήρη εσωτερική ταχύτητα (4–5 παράλληλοι workers, μηδενικές συγκρούσεις `429`). Μπορείτε να πατήσετε **⏸️ Pause Queue / ▶️ Resume Queue**, να ενεργοποιήσετε **⚡ Auto-Start**, να ακυρώσετε μόνο το τρέχον αρχείο με `✕` (η ουρά συνεχίζει αυτόματα στο επόμενο) ή να επαναλάβετε αποτυχημένο αρχείο με **🔄 Retry**.
-* **Άμεση Μεμονωμένη Λήψη & Μαζική Λήψη (ZIP):** Μόλις ολοκληρωθεί οποιοδήποτε μεμονωμένο αρχείο στην ουρά, μπορείτε να το κατεβάσετε **αμέσως** από το δικό του κουμπί λήψης (ενώ τα υπόλοιπα συνεχίζουν να μεταφράζονται). Το κουμπί μαζικής λήψης **📦 Download All (ZIP)** παραμένει απενεργοποιημένο όσο υπάρχουν μεταφράσεις σε εξέλιξη ή αναμονή και ενεργοποιείται μόλις ολοκληρωθούν όλες οι μεταφράσεις της παρτίδας!
+#### ❓ How do I use the Smart Batch Queue?
+* Drop **up to 20 files** into the Upload Card. Configure your Translation Settings below and click **▶️ Start Batch Translation**. The queue runs serially with parallel internal workers, per-item retry, pause/resume, individual download buttons, and a master **📦 Download All (ZIP)** button once all jobs finish.
 
-#### ❓ Τι κάνει το κουμπί «🔄 Refresh» και το «🔑 Gemini API Key» στην κορυφή της σελίδας;
-* **🔄 Refresh:** Ανανεώνει άμεσα τη σελίδα, το ιστορικό εργασιών και τις ρυθμίσεις με ένα κλικ (αντίστοιχο του `F5`).
-* **🔑 Gemini API Key:** Ανοίγει γρήγορα το παράθυρο ρυθμίσεων κλειδιού με ξεχωριστό κουμπί **💾 Save Key** και αυτόματο συγχρονισμό μεταξύ browser και τοπικού server σε κάθε φόρτωση.
+#### ❓ What do the "🔄 Refresh" and "🔑 Gemini API Key" buttons do?
+* **🔄 Refresh:** Instantly refreshes page state, session history, and server settings.
+* **🔑 Gemini API Key:** Opens the Multi-Key Pool modal with individual slot status and auto-save capabilities.
 
-#### ❓ Μπορώ να μεταφράσω παλιά αρχεία Word (.doc);
-* Η εφαρμογή υποστηρίζει τη σύγχρονη μορφή `.docx`. Ανοίξτε το αρχείο `.doc` στο Word και επιλέξτε *Αρχείο ➔ Αποθήκευση ως ➔ Έγγραφο Word (*.docx)* πριν το ανεβάσετε.
+#### ❓ Can I translate older Word (.doc) files?
+* Please open the file in Microsoft Word and save it as `.docx` before uploading.
 
-#### ❓ Χρειάζεται να πληρώσω για κλειδί API (API Key);
-* **Όχι.** Η κανονική μετάφραση κειμένων και οι νευρωνικές φωνές Microsoft Edge Neural είναι εντελώς δωρεάν χωρίς κλειδί. Για AI Polish και σκαναρισμένα Graphic Novels (Vision AI), η Google παρέχει δωρεάν Gemini API Key μέσω του [Google AI Studio](https://aistudio.google.com/app/apikey).
+#### ❓ Do I need to pay for an API key?
+* **No.** Standard document translation and Microsoft Edge neural voices are 100% free with zero keys. A free Google Gemini API key is only needed for Gemini AI Polish and scanned comic Vision AI.
 
-#### ❓ Πόση ώρα διαρκεί η μετάφραση ή η παραγωγή ήχου;
-* Μικρά έγγραφα (1–5 σελίδες): **2 έως 10 δευτερόλεπτα**.
-* Μεσαία έγγραφα (20–50 σελίδες): **20 δευτερόλεπτα έως 1.5 λεπτό** (με Single-Pass AI ή παράλληλο engine).
-* Μεγάλα βιβλία (200–500 σελίδες): **3 έως 12 λεπτά** (και ακαριαία `0 ms` για cached τμήματα).
-* Σκαναρισμένα Graphic Novels (~60 σελίδες): **~1.5 έως 3 λεπτά** (4 σελίδες παράλληλα με Vision Cache).
+#### ❓ How long does translation or audio generation take?
+* Small documents (1–5 pages): **2 to 10 seconds**.
+* Medium documents (20–50 pages): **20 seconds to 1.5 minutes**.
+* Full books (200–500 pages): **3 to 12 minutes** (and `0 ms` for cached chunks).
+* Scanned Graphic Novels (~60 pages): **~1.5 to 3 minutes**.
 
-#### ❓ Γιατί στο λογοτεχνικό format δεν εμφανίζονται οι αριθμοί σελίδων και οι τίτλοι κεφαλίδας μέσα στο κείμενο;
-* Στα τυπωμένα βιβλία PDF, η κορυφή και η βάση κάθε σελίδας περιέχουν συχνά τον τίτλο του βιβλίου, το όνομα του συγγραφέα ή τον αριθμό σελίδας (running headers/footers). Με τη λειτουργία **📚 Λογοτεχνικό / E-Reader**, το σύστημα φιλτράρει και αφαιρεί αυτόματα αυτά τα στοιχεία, αποτρέποντας το να εμφανίζονται σαν εμβόλιμες προτάσεις μέσα στην αφήγηση. Ταυτόχρονα, ενώνει προτάσεις που χωρίστηκαν από αλλαγή σελίδας και απομονώνει τους τίτλους κεφαλαίων.
+#### ❓ What happens if Google Translate hits a temporary rate limit (HTTP 429)?
+* The application triggers a **429 Circuit Breaker** with fallback to MyMemory API and automatic failover to Gemini Flash, ensuring translations complete without interruption.
 
-#### ❓ Πώς λειτουργεί το εξώφυλλο και τι μορφές αρχείων εικόνας υποστηρίζονται;
-* Το σύστημα ανιχνεύει αυτόματα αν η 1η σελίδα του πρωτοτύπου είναι αυθεντικό εξώφυλλο πλήρους εικόνας και το εμφανίζει σε μικρογραφία. Μπορείτε επίσης να ανεβάσετε οποιαδήποτε δική σας εικόνα (`.jpg`, `.jpeg`, `.png`, `.webp`) με το κουμπί **📷 Ανέβασμα Εξωφύλλου** ή να το αφαιρέσετε με το **✕ Αφαίρεση**. Το εξώφυλλο ενσωματώνεται αυτόματα στο PDF (ως 1η σελίδα πλήρους μεγέθους χωρίς αρίθμηση), στο EPUB και στο DOCX.
+#### ❓ What happens if I don't enter a Gemini API Key?
+* The application automatically enables **Free Mode** (indicated by the `🆓 Free Mode` badge). Translations use Google Translate, editorial typography rules are applied, and audiobooks use Edge-TTS neural voices completely free.
 
-#### ❓ Τι συμβαίνει αν το Google Translate εμφανίσει προσωρινό όριο αιτημάτων (HTTP 429);
-* Η εφαρμογή διαθέτει **429 Circuit Breaker** με άμεσο fallback στο MyMemory API και **αυτόματο failover στο Gemini Flash** (εφόσον υπάρχει αποθηκευμένο API Key), εξασφαλίζοντας ότι κανένα έγγραφο ή κεφάλαιο δεν θα επιστρέψει ποτέ αμετάφραστο στα Αγγλικά.
+#### ❓ What happens if the Gemini daily quota is reached?
+* The application distinguishes momentary burst limits (15 RPM) from daily exhaustion. If daily quota is reached:
+  * With **Gemini Multi-Key Pool**, it automatically rotates to backup keys (Slots 2–4).
+  * If all keys are exhausted, jobs with `wait` mode pause cleanly at disk checkpoint with an exact countdown timer and resume button, while `fallback` mode jobs continue seamlessly with free models.
 
-#### ❓ Τι συμβαίνει αν δεν εισάγω καθόλου Gemini API Key;
-* **Αυτόματη Ενεργοποίηση Δωρεάν Λειτουργίας (Free Mode Default):**  
-  Το BookApp δεν απαιτεί υποχρεωτικά Gemini API Key. Εάν δεν εισαγάγετε κλειδί (ή εάν το διαγράψετε από τις Ρυθμίσεις):
-  1. Η εφαρμογή ενεργοποιεί αυτόματα τη λειτουργία **Free Mode** (με διακριτικό μπλε badge στην κορυφή: `🆓 Free Mode`).
-  2. Στις επιλογές συμπεριφοράς επιλέγεται αυτόματα η **🔄 Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback)**.
-  3. Όλα τα κείμενα μεταφράζονται κανονικά με τη δωρεάν μηχανή Google Translate.
-  4. Εφαρμόζονται αυτόματα οι **δωρεάν ενσωματωμένοι κανόνες ελληνικής τυπογραφίας** (εισαγωγικά `«...»`, παύλες διαλόγων, αποσιωπητικά) και το **γλωσσάρι όρων**.
-  5. Τα ηχοβιβλία παράγονται απρόσκοπτα με τις δωρεάν νευρωνικές φωνές του **Edge-TTS** (Nestoras / Athina) χωρίς κανένα σφάλμα ή διακοπή.
-* **Μόλις αποθηκεύσετε ένα δωρεάν Gemini API Key:** Η εφαρμογή μεταβαίνει άμεσα σε κατάσταση `✓ Active`, ενεργοποιώντας το Single-Pass AI Translation & Literary Polish με μέγιστη λογοτεχνική ποιότητα.
-
-#### ❓ Τι συμβαίνει αν εξαντληθεί το ημερήσιο όριο του Gemini API (Free Tier Daily Limit);
-* Το Google AI Studio Free Tier έχει αυστηρό ημερήσιο όριο αιτημάτων (RPD cap, συνήθως 500–1.500 κλήσεις ανά ημέρα) και ρυθμό 15 αιτημάτων ανά λεπτό (RPM). Εάν μεταφράσετε πολύ μεγάλα βιβλία ή παρτίδες στην ίδια ημέρα, η Google επιστρέφει προσωρινά `429 RESOURCE_EXHAUSTED`.
-* **Έξυπνη Διάκριση Στιγμιαίων Ορίων (RPM) vs Ημερήσιας Εξάντλησης (RPD):** Η μηχανή διαχωρίζει αυτόματα ένα στιγμιαίο όριο λίγων δευτερολέπτων (`retryDelay <= 60s`) από την πραγματική ημερήσια εξάντληση. Σε περίπτωση στιγμιαίου ορίου ανά λεπτό, το σύστημα πραγματοποιεί σύντομη παύση και επαναλαμβάνει αυτόματα το αίτημα με το ίδιο κλειδί, χωρίς άσκοπη κατανάλωση εφεδρικών κλειδιών.
-* **💡 Αποφυγή Ορίου με το Gemini Multi-Key Pool (Έως 6.000 αιτήματα/ημέρα):**  
-  Συνδέστε **έως 4 δωρεάν API Keys** από διαφορετικούς λογαριασμούς Google στις Ρυθμίσεις. Με το Multi-Key Pool έχετε συνολικά **έως 6.000 δωρεάν αιτήματα ανά ημέρα ($0 κόστος)**! Μόλις το 1ο κλειδί εξαντληθεί, η εφαρμογή εναλλάσσει αυτόματα στο 2ο, 3ο και 4ο κλειδί χωρίς καμία παύση. Ακόμη και σε περίπτωση άκυρου ή ληγμένου κλειδιού (401/403/invalid), η εφαρμογή μεταβαίνει άμεσα στο επόμενο διαθέσιμο κλειδί του pool. Ο χρονοδιακόπτης αναμονής ενεργοποιείται **μόνο εάν εξαντληθούν και τα 4 κλειδιά** του pool.
-* **Προηγούμενη Επιλογή Συμπεριφοράς (Prior Choice: Wait vs Fallback):**  
-  Πριν ξεκινήσετε τη μετάφραση ή το ηχοβιβλίο, επιλέγετε πώς επιθυμείτε να συμπεριφερθεί η εφαρμογή:
-  * **⏳ Αναμονή για επαναφορά (Wait for Reset — Προεπιλογή όταν υπάρχει API Key):**  
-    Η εργασία σταματά με πλήρη ασφάλεια στο αρχείο checkpoint (`.direct_ai_checkpoint.json`). Εμφανίζεται ζωντανός αντίστροφος μετρητής, η ακριβής ώρα επαναφοράς και κουμπί συνέχισης (**Resume**), διατηρώντας **100% την ποιότητα Gemini**.
-  * **🔄 Αυτόματη μετάβαση σε Δωρεάν Μοντέλο (Auto-Fallback — Αυτόματη προεπιλογή χωρίς API Key):**  
-    Η εφαρμογή **δεν σταματά**: μεταβαίνει αυτόματα στη δωρεάν μηχανή (Google Translate & Edge-TTS) και ολοκληρώνει ολόκληρο το βιβλίο ή την ουρά (Batch Queue) χωρίς καμία διακοπή!
-* **Αυτόματος Circuit Breaker & Fail-Fast:** Η εφαρμογή αναγνωρίζει αμέσως την ημερήσια εξάντληση και ενεργοποιεί αυτόματο διακόπτη προστασίας (`DailyQuotaExhaustedError`). Αντί να "κολλήσει" η ουρά δοκιμάζοντας μάταια δεκάδες μοντέλα σε αλλεπάλληλες καθυστερήσεις ύπνου, το σύστημα παρακάμπτει ακαριαία (<1ms) το AI Polish και προστατεύει τον χρήστη:
-  1. Στα **Graphic Novels / Comics:** Συνεχίζει απρόσκοπτα τη μετάφραση των μπαλονιών με την ταχύτατη μηχανή Google Translate + MyMemory, ώστε το κόμικ να ολοκληρωθεί κανονικά μέχρι το τέλος χωρίς καθυστέρηση. Στα σκαναρισμένα Graphic Novels (Vision AI), η πρόοδος των σελίδων που μεταφράστηκαν σώζεται άμεσα σε checkpoint στο δίσκο.
-  2. Στα **Κείμενα / Βιβλία:** Προστατεύει 100% την πρόοδο με checkpoints στο δίσκο (`.direct_ai_checkpoint.json`), επιτρέποντάς σας να συνεχίσετε μόλις ανανεωθεί το όριο της Google ή μόλις αλλάξετε API Key στις Ρυθμίσεις.
-* **Ολοκληρωμένη Ενημέρωση Χρήστη & Ζωντανός Χρονοδιακόπτης (Live Countdown UI):**
-  * **Ακριβής Ώρα Επαναφοράς (Exact Clock Time):** Το σύστημα υπολογίζει και εμφανίζει την ακριβή ώρα της ημέρας (π.χ. `Έτοιμο ξανά στις 12:05:30`) που το όριο θα αποκατασταθεί πλήρως από τη Google.
-  * **Ζωντανή Αντίστροφη Μέτρηση (Live Countdown MM:SS):** Σε όλα τα σημεία της εφαρμογής (Navbar badge, Αρχική Σελίδα, Κάρτα Προόδου, Ουρά Αναμονής και Ρυθμίσεις) λειτουργεί ζωντανό χρονόμετρο δευτερόλεπτο προς δευτερόλεπτο (π.χ. `04:15... 04:14... 00:00`), εξαλείφοντας κάθε αβεβαιότητα.
-  * **Αυτόματη Μετάβαση σε Πράσινο (Auto-Ready State):** Μόλις ο μετρητής μηδενίσει (`00:00`), η ένδειξη γίνεται αυτόματα πράσινη (`✅ Έτοιμο ξανά!`), εμφανίζεται ενημερωτικό Toast και τα κουμπιά ενεργοποιούνται αυτόματα.
-  * **Κουμπί Άμεσης Συνέχισης (Resume from Checkpoint):** Στην Κάρτα Προόδου Μετάφρασης και στην Κάρτα Σφάλματος εμφανίζεται ειδικό κουμπί **«▶️ Συνέχιση Μετάφρασης (Resume)»** δίπλα στο κουμπί **«🔑 Αλλαγή API Key»**. Πατώντας το, η μετάφραση συνεχίζει απευθείας από την τελευταία μεταφρασμένη παρτίδα (π.χ. από το batch 2/153) χωρίς να επαναλαμβάνει όσα έχουν ήδη μεταφραστεί!
-  * **Κάρτα Ουράς (Smart Batch Queue):** Εμφανίζεται ευκρινές πορτοκαλί Banner προειδοποίησης με live countdown και κουμπί άμεσης πρόσβασης **«🔑 Αλλαγή API Key»**. Τα αρχεία στην ουρά λαμβάνουν τη σήμανση `· ⚠️ Χωρίς AI Polish (Όριο Quota)`.
-  * **Κάρτα Αποτελέσματος (Result Card):** Αν ένα έγγραφο ολοκληρώθηκε με βασική μετάφραση λόγω εξάντλησης του ορίου Gemini, εμφανίζεται σαφής ειδοποίηση ώστε ο χρήστης να γνωρίζει ότι δεν εφαρμόστηκε AI Polish.
-  * **Παράθυρο AI Polish (Modal):** Εμφανίζεται προειδοποιητικό μήνυμα με ζωντανό countdown. Μόλις ο χρήστης αποθηκεύσει νέο API Key, ο διακόπτης μηδενίζεται ακαριαία και το σύστημα επιστρέφει σε κατάσταση `✓ Active`.
-* **Απόλυτη Καθαριότητα Ιστορικού (Session History Hygiene):** Όλα τα δοκιμαστικά tests καθαρίζονται αυτόματα κατά την εκτέλεσή τους (`cleanup_test_jobs()`), εξασφαλίζοντας ότι στο Ιστορικό Εργασιών (Session History) δεν παραμένει κανένα δοκιμαστικό αρχείο (όπως `test_*.cbz`, `test_*.pdf`), αλλά εμφανίζονται αποκλειστικά και μόνο τα δικά σας προσωπικά αρχεία.
-
-#### ❓ Πώς λειτουργεί η Δίγλωσση Επιμέλεια (Source-Anchored Polish) και πότε χρειάζεται;
-* Σε αντίθεση με απλά εργαλεία AI που διαβάζουν μόνο τη μετάφραση και συχνά παραποιούν το αρχικό νόημα, η λειτουργία **Source-Anchored Verification** συνεξετάζει σε κάθε παρτίδα σελίδων το πρωτότυπο αγγλικό κείμενο και το ελληνικό προσχέδιο (π.χ. μετά από μετάφραση Google Translate). Με αυτόν τον τρόπο, το Gemini εντοπίζει άμεσα ψευδόφιλες λέξεις (false friends), αγγλισμούς ή παραλείψεις και τις διορθώνει με απόλυτη πιστότητα.
-* **Έξυπνη Αυτόματη Απενεργοποίηση:** Όταν κάνετε **Αυτόνομο AI Polish** σε ένα ήδη ελληνικό κείμενο (χωρίς προηγούμενη μετάφραση), το σύστημα ανιχνεύει αυτόματα ότι δεν υπάρχει ξεχωριστό ξένο πρωτότυπο και απενεργοποιεί το `Source-Anchored Verification` ώστε να μη σπαταλά διπλά tokens. Αντίστοιχα, αν μεταφράζετε απευθείας ένα αγγλικό βιβλίο με `☑ AI Polish + Start Translation` (Single-Pass Direct AI), η μετάφραση γίνεται ήδη απευθείας από το πρωτότυπο σε ένα βήμα.
-
-#### ❓ Τι συμβαίνει αν διακοπεί η σύνδεση ή κλείσει ο browser κατά τη διάρκεια του AI Polish σε μεγάλο βιβλίο;
-* Η εφαρμογή υποστηρίζει **Έξυπνα Checkpoints στο Δίσκο (`.polish_checkpoint.json` / `.direct_ai_checkpoint.json`)**. Κάθε παρτίδα έως 3 σελίδων (~5.500 χαρακτήρων) που επιμελείται επιτυχώς σώζεται αμέσως τοπικά. Εάν διακοπεί το δίκτυο, πατώντας ξανά **Polish Translation** (ή **Start Translation**) η διαδικασία συνεχίζει ακαριαία από την παρτίδα που σταμάτησε, χωρίς καμία επανάληψη και χωρίς να ξοδευτούν άσκοπα tokens!
-
-#### ❓ Γιατί είναι απαραίτητο το AI Polish για το Audiobook;
-* Οι νευρωνικές φωνές ελληνικής ανάγνωσης (Nestoras/Athina) δυσκολεύονται ή συλλαβίζουν γράμμα-γράμμα ξένες λέξεις που παραμένουν με λατινικούς χαρακτήρες (π.χ. `Keeton`, `Rorschach`, `DNA`). Με το **Audiobook Script Polish**, όλα τα ξένα ονόματα και ακρωνύμια μεταγράφονται φωνητικά στα Ελληνικά (`Κίτον`, `Ρόρσαχ`, `Ντι-Εν-Έι`), οι αριθμοί αναπτύσσονται ολογράφως (`δύο χιλιάδες έξι`) και διαγράφονται υποσημειώσεις και δείκτες σελίδων, αποδίδοντας έναν άψογο ηχητικό ρυθμό.
+#### ❓ Why does the reader voice stumble on foreign names?
+* Use **AI Polish for Spoken Audio (style="audiobook")**, which phonetically transcribes foreign names into Greek characters (`Keeton` ➔ `Κίτον`, `DNA` ➔ `Ντι-Εν-Έι`) and spells out all numbers in full Greek words.
