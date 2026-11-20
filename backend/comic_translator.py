@@ -15,6 +15,7 @@ Features:
 import os
 import re
 import json
+import uuid
 import logging
 import asyncio
 import urllib.request
@@ -1297,16 +1298,31 @@ async def translate_comic_document(
                 except Exception:
                     pass
 
-            def _save_comic_cp():
-                tmp_cp = cp_file.with_suffix(".json.tmp")
-                try:
-                    tmp_cp.write_text(json.dumps(cp_pages, ensure_ascii=False), encoding="utf-8")
-                    os.replace(tmp_cp, cp_file)
-                except Exception:
+            cp_lock = asyncio.Lock()
+
+            async def _save_comic_cp():
+                async with cp_lock:
+                    tmp_cp = cp_file.with_name(f"{cp_file.stem}_{uuid.uuid4().hex[:8]}.tmp")
                     try:
-                        tmp_cp.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                        tmp_cp.write_text(json.dumps(cp_pages, ensure_ascii=False), encoding="utf-8")
+                        last_err = None
+                        for attempt in range(4):
+                            try:
+                                os.replace(tmp_cp, cp_file)
+                                last_err = None
+                                break
+                            except (PermissionError, OSError) as pe:
+                                last_err = pe
+                                await asyncio.sleep(0.04 * (attempt + 1))
+                        if last_err is not None:
+                            raise last_err
+                    except Exception as cp_err:
+                        logger.debug(f"Comic checkpoint write error (safe fallback): {cp_err}")
+                    finally:
+                        try:
+                            tmp_cp.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
             vision_sem = asyncio.Semaphore(3)
             connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
@@ -1336,7 +1352,7 @@ async def translate_comic_document(
                         vision_results[p_idx] = items
                         if st_info.get("succeeded"):
                             cp_pages[p_key] = items
-                            _save_comic_cp()
+                            await _save_comic_cp()
                         else:
                             failed_vision_pages += 1
                             if st_info.get("error"):
@@ -1424,12 +1440,12 @@ async def translate_comic_document(
 
     update_job(
         job_id,
-        status="done",
-        progress=100,
+        status="running",
+        progress=95,
         done_chunks=total_pages,
         total_chunks=total_pages,
         output_path=str(final_comic_pdf),
-        current_step="Graphic novel translation complete!",
+        current_step="Graphic novel translation complete! Preparing export...",
     )
 
     logger.info(f"[{job_id}] Graphic novel successfully translated: {final_comic_pdf}")

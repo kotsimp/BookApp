@@ -56,6 +56,8 @@ function switchTab(tab) {
 
 // ── Global Mode Switching: Basic vs Advanced ──────────────
 let currentAppMode = (typeof localStorage !== 'undefined' && localStorage.getItem('bookapp_ui_mode')) || 'basic';
+let _lastDetectedGenreInfo = null;
+let _isEnqueuing = false;
 
 function setAppMode(mode) {
   currentAppMode = (mode === 'advanced') ? 'advanced' : 'basic';
@@ -152,6 +154,14 @@ function applyAppMode(mode) {
       abStart.textContent = '🎧 Generate Audiobook';
     }
   }
+
+  // Sync genre detection banner with mode if a document is currently loaded
+  if (state.tr.jobId && _lastDetectedGenreInfo) {
+    showGenreHint(_lastDetectedGenreInfo, isBasic);
+    if (isBasic) {
+      applyDetectedGenre(_lastDetectedGenreInfo.genre, true);
+    }
+  }
 }
 
 // ── File Upload Handling ───────────────────────────────────
@@ -188,10 +198,10 @@ function handleFileSelect(e, prefix) {
   const shouldBatch = prefix === 'tr' && (files.length > 1 || _batchQueueState.total_count > 0 || Boolean(state.tr.jobId));
   if (shouldBatch) {
     enqueueMultipleFiles(files);
-    e.target.value = '';
   } else {
     processFile(files[0], prefix);
   }
+  try { e.target.value = ''; } catch (_) {}
 }
 
 async function processFile(file, prefix) {
@@ -236,6 +246,9 @@ function removeFile(prefix) {
   stopJobTracking(prefix);
   state[prefix].file = null;
   state[prefix].jobId = null;
+  if (prefix === 'tr') {
+    _lastDetectedGenreInfo = null;
+  }
   const selEl = document.getElementById(`${prefix}-selected-file`);
   if (selEl) {
     selEl.classList.remove('visible');
@@ -255,7 +268,10 @@ function removeFile(prefix) {
   }
   if (prefix === 'tr') {
     const genreHint = document.getElementById('tr-genre-hint');
-    if (genreHint) genreHint.style.display = 'none';
+    if (genreHint) {
+      genreHint.style.display = 'none';
+      genreHint.innerHTML = '';
+    }
     const covGroup = document.getElementById('tr-cover-group');
     if (covGroup) covGroup.style.display = 'none';
     const prevLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
@@ -369,6 +385,10 @@ async function uploadFile(prefix, file) {
       throw new Error(await parseApiError(res, 'Upload failed'));
     }
     const data = await res.json();
+    if (state[prefix].file && file && state[prefix].file.name !== file.name) {
+      console.log(`[Upload] File was swapped while upload was in flight; ignoring job ${data.job_id}`);
+      return;
+    }
     state[prefix].jobId = data.job_id;
 
     const pages = data.estimated_pages > 0 ? `~${data.estimated_pages} pages · ` : '';
@@ -465,13 +485,20 @@ async function detectDocumentGenre(jobId, fileType) {
     const sample = prevData.preview_text || '';
     if (!sample.trim()) return;
 
+    // Guard against race condition: check if file was removed/swapped during preview fetch
+    if (state.tr.jobId !== jobId) return;
+
     const res = await fetch(`${API}/detect-genre`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sample_text: sample.substring(0, 3500), file_type: fileType }),
     });
     if (res.ok) {
+      // Guard against race condition: check if file was removed/swapped during genre detection
+      if (state.tr.jobId !== jobId) return;
+
       const gInfo = await res.json();
+      _lastDetectedGenreInfo = gInfo;
       const shouldAutoApply = (currentAppMode === 'basic' && Boolean(gInfo.genre));
       showGenreHint(gInfo, shouldAutoApply);
       if (shouldAutoApply) {
@@ -493,14 +520,15 @@ function showGenreHint(gInfo, isAutoApplied = false) {
     formal: '🏛️ Επίσημο / Διοικητικό (Formal)',
     comic: '🎨 Graphic Novel / Comic',
   };
-  const title = genreTitles[gInfo.genre] || gInfo.genre;
-  const confPct = Math.round((gInfo.confidence || 0.8) * 100);
+  const genreKey = gInfo?.genre || 'literature';
+  const rawTitle = genreTitles[genreKey] || genreKey;
+  const confPct = Math.round((gInfo?.confidence || 0.8) * 100);
   const actionHtml = isAutoApplied
     ? `<span id="tr-genre-applied-badge" style="margin-left:auto; font-size:0.76rem; font-weight:600; color:var(--emerald); background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.35); white-space:nowrap">✓ Εφαρμόστηκε αυτόματα</span>`
-    : `<button id="tr-genre-apply-btn" class="btn-sm btn-outline" style="margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap" onclick="applyDetectedGenre('${gInfo.genre}')">Εφαρμογή Προτεινόμενου</button>`;
+    : `<button id="tr-genre-apply-btn" class="btn-sm btn-outline" style="margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap" data-genre="${escHtml(genreKey)}" onclick="applyDetectedGenre(this.dataset.genre)">Εφαρμογή Προτεινόμενου</button>`;
 
   hintEl.innerHTML = `
-    <span>💡 <strong>Ανιχνεύθηκε ύφος:</strong> ${title} (${confPct}% βεβαιότητα). ${gInfo.reason || ''}</span>
+    <span>💡 <strong>Ανιχνεύθηκε ύφος:</strong> ${escHtml(rawTitle)} (${confPct}% βεβαιότητα). ${escHtml(gInfo?.reason || '')}</span>
     ${actionHtml}
   `;
   hintEl.style.display = 'flex';
@@ -510,6 +538,7 @@ function applyDetectedGenre(genre, silent = false) {
   if (genre === 'comic') {
     const b = document.getElementById('layout-comic');
     if (b) selectLayout('comic', b);
+    setGraphicNovelLock(true, _lastDetectedGenreInfo?.reason || 'Graphic Novel / Comic');
   } else if (genre === 'literature' || genre === 'poetry') {
     const b = document.getElementById('layout-literature');
     if (b) selectLayout('literature', b);
@@ -696,6 +725,37 @@ function selectLayout(layout, btn) {
   const dlBtn = document.getElementById('tr-download-btn');
   if (dlBtn && state.tr.jobId) {
     dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
+  }
+
+  // Sync genre detection hint badge/button with manual layout selection
+  const hintEl = document.getElementById('tr-genre-hint');
+  if (hintEl && hintEl.style.display !== 'none' && _lastDetectedGenreInfo) {
+    const recLayout = (_lastDetectedGenreInfo.genre === 'literature' || _lastDetectedGenreInfo.genre === 'poetry') ? 'literature' : (_lastDetectedGenreInfo.genre === 'comic' ? 'comic' : 'standard');
+    const isMatching = (layout === recLayout);
+    const existingBadge = document.getElementById('tr-genre-applied-badge');
+    const existingBtn = document.getElementById('tr-genre-apply-btn');
+    if (isMatching) {
+      if (existingBtn && !existingBadge) {
+        const badge = document.createElement('span');
+        badge.id = 'tr-genre-applied-badge';
+        badge.style.cssText = 'margin-left:auto; font-size:0.76rem; font-weight:600; color:var(--emerald); background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.35); white-space:nowrap';
+        badge.textContent = (currentAppMode === 'basic') ? '✓ Εφαρμόστηκε αυτόματα' : '✓ Εφαρμόστηκε';
+        if (existingBtn.parentNode) {
+          existingBtn.parentNode.replaceChild(badge, existingBtn);
+        }
+      }
+    } else {
+      if (existingBadge && existingBadge.parentNode) {
+        const btnEl = document.createElement('button');
+        btnEl.id = 'tr-genre-apply-btn';
+        btnEl.className = 'btn-sm btn-outline';
+        btnEl.style.cssText = 'margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap';
+        btnEl.dataset.genre = _lastDetectedGenreInfo.genre || 'literature';
+        btnEl.onclick = function() { applyDetectedGenre(this.dataset.genre); };
+        btnEl.textContent = 'Εφαρμογή Προτεινόμενου';
+        existingBadge.parentNode.replaceChild(btnEl, existingBadge);
+      }
+    }
   }
 }
 
@@ -1198,6 +1258,9 @@ function connectSSE(prefix, jobId) {
     console.warn('SSE connection lost, falling back to polling.');
     sse.close();
     state[prefix].sse = null;
+    if (['done', 'error', 'cancelled'].includes(state[prefix].status)) {
+      return;
+    }
     pollProgress(prefix, jobId);
   };
 }
@@ -1676,14 +1739,12 @@ function showError(prefix, msg) {
   if (card) card.classList.add('visible');
 
   const isQuota = msg && (msg.includes('όριο') || msg.includes('Quota') || msg.includes('quota') || msg.includes('429'));
-  if (prefix === 'tr') {
-    const quotaActions = document.getElementById('tr-error-quota-actions');
-    if (quotaActions) quotaActions.style.display = isQuota ? 'inline-flex' : 'none';
-    const trResumeBtn = document.getElementById('tr-resume-btn');
-    if (trResumeBtn) trResumeBtn.style.display = isQuota ? 'inline-flex' : 'none';
-    const trKeyBtn = document.getElementById('tr-quota-key-btn');
-    if (trKeyBtn) trKeyBtn.style.display = isQuota ? 'inline-flex' : 'none';
-  }
+  const quotaActions = document.getElementById(`${prefix}-error-quota-actions`);
+  if (quotaActions) quotaActions.style.display = isQuota ? 'inline-flex' : 'none';
+  const resumeBtn = document.getElementById(`${prefix}-resume-btn`);
+  if (resumeBtn) resumeBtn.style.display = isQuota ? 'inline-flex' : 'none';
+  const keyBtn = document.getElementById(`${prefix}-quota-key-btn`);
+  if (keyBtn) keyBtn.style.display = isQuota ? 'inline-flex' : 'none';
 }
 
 async function resumeTranslation(prefix = 'tr') {
@@ -1698,8 +1759,13 @@ async function resumeTranslation(prefix = 'tr') {
   const errQuotaActions = document.getElementById(`${prefix}-error-quota-actions`);
   if (errQuotaActions) errQuotaActions.style.display = 'none';
 
-  toast('Συνέχιση μετάφρασης από το αποθηκευμένο σημείο (checkpoint)...', 'info');
-  await startTranslation();
+  if (prefix === 'ab') {
+    toast('Συνέχιση Audiobook από το αποθηκευμένο σημείο (checkpoint)...', 'info');
+    await startAudiobook();
+  } else {
+    toast('Συνέχιση μετάφρασης από το αποθηκευμένο σημείο (checkpoint)...', 'info');
+    await startTranslation();
+  }
 }
 
 function setStatusBadge(prefix, status) {
@@ -1892,7 +1958,7 @@ function renderHistory(jobs) {
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
 
   grid.innerHTML = displayJobs.map(j => `
-    <div class="history-item" onclick="loadHistoryJob('${j.job_id}', '${j.mode || ''}')">
+    <div class="history-item" data-job-id="${escHtml(j.job_id)}" data-mode="${escHtml(j.mode || '')}" onclick="loadHistoryJob(this.dataset.jobId, this.dataset.mode)">
       <span class="history-icon">${modeIcon[j.mode] || '📄'}</span>
       <div class="history-info">
         <div class="history-name">${escHtml(j.file_name)}</div>
@@ -1903,7 +1969,7 @@ function renderHistory(jobs) {
         </div>
       </div>
       ${j.has_output ? `<span style="color:var(--emerald);font-size:0.8rem;font-weight:600">⬇️ Ready</span>` : ''}
-      <button class="history-delete-btn" onclick="deleteHistoryJob(event, '${j.job_id}')" title="Delete this job">✕</button>
+      <button class="history-delete-btn" data-job-id="${escHtml(j.job_id)}" onclick="deleteHistoryJob(event, this.dataset.jobId)" title="Delete this job">✕</button>
     </div>
   `).join('');
 }
@@ -1953,7 +2019,7 @@ async function clearAllHistory() {
 
 async function loadHistoryJob(jobId, mode) {
   const onAudiobookTab = document.getElementById('tab-audiobook')?.classList.contains('active');
-  const targetTab = (mode === 'audiobook' || onAudiobookTab) ? 'audiobook' : 'translate';
+  const targetTab = (mode === 'audiobook' || mode === 'translate') ? mode : (onAudiobookTab ? 'audiobook' : 'translate');
   const prefix = targetTab === 'audiobook' ? 'ab' : 'tr';
 
   try {
@@ -2300,7 +2366,7 @@ async function openReaderModal(targetJobId = null) {
     if (transText) transText.innerHTML = formatReaderText(greekText);
     if (origText) origText.innerHTML = formatReaderText(englishText);
   } catch (err) {
-    if (singleContent) singleContent.innerHTML = `<div style="color:var(--rose); padding:20px">Σφάλμα φόρτωσης: ${err.message}</div>`;
+    if (singleContent) singleContent.innerHTML = `<div style="color:var(--rose); padding:20px">Σφάλμα φόρτωσης: ${escHtml(err.message)}</div>`;
   }
 }
 
@@ -2842,6 +2908,16 @@ function onGeminiQuotaRestored() {
     console.log(`Auto-resuming translation job ${state.tr.jobId} after quota restoration...`);
     setTimeout(() => {
       resumeTranslation('tr');
+    }, 2000);
+  } else if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
+    console.log('Auto-resuming batch queue after quota restoration...');
+    setTimeout(() => {
+      startBatchQueue();
+    }, 2000);
+  } else if (state.ab.jobId && (state.ab.status === 'error' || state.ab.status === 'idle')) {
+    console.log(`Auto-resuming audiobook job ${state.ab.jobId} after quota restoration...`);
+    setTimeout(() => {
+      resumeTranslation('ab');
     }, 2000);
   }
 }
@@ -3515,7 +3591,13 @@ function syncPrimaryStartButtonWithQueue(q) {
 }
 
 async function enqueueMultipleFiles(files) {
-  const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+  if (_isEnqueuing) {
+    toast('Παρακαλώ περιμένετε να ολοκληρωθεί η προηγούμενη προσθήκη αρχείων...', 'info');
+    return;
+  }
+  _isEnqueuing = true;
+  try {
+    const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
   const cfg = _readCurrentTranslationSettings();
   const maxItems = _batchQueueState.max_items || MAX_BATCH_FILES;
 
@@ -3660,6 +3742,9 @@ async function enqueueMultipleFiles(files) {
     await refreshBatchQueue();
     refreshHistory();
   }
+} finally {
+  _isEnqueuing = false;
+}
 }
 
 let _queuePollInFlight = false;
@@ -3842,7 +3927,7 @@ function renderBatchQueue(q) {
       ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
       : '';
     const retryBtn = (it.status === 'error' || it.status === 'cancelled')
-      ? `<button type="button" class="btn-sm btn-outline" onclick="retryQueueItem('${it.job_id}')" title="Επανάληψη μετάφρασης" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">🔄 Retry</button>`
+      ? `<button type="button" class="btn-sm btn-outline" data-job-id="${escHtml(it.job_id)}" onclick="retryQueueItem(this.dataset.jobId)" title="Επανάληψη μετάφρασης" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">🔄 Retry</button>`
       : '';
     const progressBar = (it.status === 'running' || it.status === 'done')
       ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`
@@ -3868,7 +3953,7 @@ function renderBatchQueue(q) {
             <span class="queue-badge ${it.status}">${statusLabels[it.status] || it.status}${it.status === 'running' ? ` ${it.progress}%` : ''}</span>
             ${dlLink}
             ${retryBtn}
-            <button type="button" class="btn-icon" onclick="removeQueueItem('${it.job_id}')" title="Αφαίρεση από την ουρά">✕</button>
+            <button type="button" class="btn-icon" data-job-id="${escHtml(it.job_id)}" onclick="removeQueueItem(this.dataset.jobId)" title="Αφαίρεση από την ουρά">✕</button>
           </div>
         </div>
         ${progressBar}

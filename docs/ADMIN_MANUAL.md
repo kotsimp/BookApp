@@ -84,6 +84,8 @@
   * Έξυπνη διαχείριση στιγμιαίων ορίων (transient burst 429 RPM, `retryDelay <= 60s`) με αναμονή και επανάληψη με το ίδιο ενεργό κλειδί.
   * Thread-safe χρονοδιακόπτες cooldown ανά κλειδί (`_KEY_COOLDOWNS`), ασφαλής απόκρυψη κλειδιών (`mask_api_key`), και αναλυτικά διαγνωστικά REST endpoints (`GET /api/gemini/pool`, `POST /api/gemini/pool`).
   * Ενεργοποίηση του καθολικού Circuit Breaker και του χρονοδιακόπτη αναμονής μόνο εάν εξαντληθούν όλα τα ρυθμισμένα κλειδιά του pool.
+  * **Αυτόματη Συνέχιση κατά την Αποθήκευση (Auto-Resume on Save):** Αυτόματη εκκίνηση/συνέχιση παγωμένων εργασιών μετάφρασης, ουράς Batch Queue ή Audiobooks μόλις ο χρήστης αποθηκεύσει νέα κλειδιά στο modal.
+  * **Ασφαλής Αποθήκευση Checkpoint σε Παράλληλους Vision Workers (`comic_translator.py`):** Χρήση `asyncio.Lock` και μοναδικών προσωρινών αρχείων UUID για αποφυγή race conditions και `PermissionError` σε Windows.
 * **Dual-Mode UI Architecture: Basic vs Advanced Mode (`frontend/app.js`, `frontend/style.css`):**
   * **⚡ Basic Mode (Απλή Λειτουργία — Προεπιλογή):** Εστίαση στην ταχύτητα και μέγιστη απλότητα. Το AI Polish είναι ενεργό από προεπιλογή (`tr-ai-polish.checked = true`, `ab-ai-polish.checked = true`), το format εξόδου ταυτίζεται αυτόματα με το αρχείο εισόδου, και το audiobook προεπιλέγει αυτόματα τη φωνή Νέστορας (`el-GR-NestorasNeural`) σε λογοτεχνικό ρυθμό (`literature:-12%`). Όλες οι περιττές επιλογές αποκρύπτονται μέσω CSS `.mode-advanced-only.is-hidden`.
   * **⚙️ Advanced Mode (Προχωρημένη Λειτουργία):** Πλήρης έλεγχος σε όλες τις παραμέτρους (επιλογείς format, στυλ διάταξης, Manga RTL, εξώφυλλα, Voice Grid, sliders ταχύτητας/pitch, πολυφωνία και διακόπτης συμπεριφοράς εξάντλησης ορίου Gemini `wait` vs `fallback`).

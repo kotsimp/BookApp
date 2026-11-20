@@ -1538,7 +1538,13 @@ async def polish_text_with_gemini(
                 await asyncio.gather(*(_polish_chunk(i, c) for i, c in pending_chunks))
 
             if succeeded == 0 and first_error is not None:
-                raise first_error
+                if isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                    logger.warning(
+                        "All chunks failed due to DailyQuotaExhaustedError but quota_behavior='fallback'. "
+                        "Proceeding with unpolished original text."
+                    )
+                else:
+                    raise first_error
 
             if checkpoint_file and checkpoint_file.exists():
                 try:

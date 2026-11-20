@@ -1420,13 +1420,13 @@ async def update_app_settings(req: SettingsRequest):
 
     if req.gemini_api_keys is not None:
         GeminiKeyPool.set_keys(req.gemini_api_keys)
-        reset_gemini_quota_exhaustion()
+        GeminiKeyPool.reset_quota()
         reset_model_cache()
         reset_vision_model_cache()
     elif req.gemini_api_key is not None:
         k = req.gemini_api_key.strip()
         GeminiKeyPool.set_keys([k] if k else [])
-        reset_gemini_quota_exhaustion()
+        GeminiKeyPool.reset_quota()
         reset_model_cache()
         reset_vision_model_cache()
 
@@ -1454,7 +1454,7 @@ async def update_gemini_pool_keys(payload: dict):
     from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
     from backend.comic_translator import reset_vision_model_cache
     saved = GeminiKeyPool.set_keys(keys)
-    reset_gemini_quota_exhaustion()
+    GeminiKeyPool.reset_quota()
     reset_model_cache()
     reset_vision_model_cache()
     return {"status": "ok", "keys_count": len(saved), "pool": GeminiKeyPool.get_pool_status()}

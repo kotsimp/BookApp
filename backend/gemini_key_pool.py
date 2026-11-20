@@ -80,6 +80,15 @@ class GeminiKeyPool:
                 if stale_key not in cleaned_keys:
                     _KEY_COOLDOWNS.pop(stale_key, None)
 
+            # If the updated pool contains at least one active (non-exhausted) key, reset the global circuit breaker
+            now = time.time()
+            if any(now >= _KEY_COOLDOWNS.get(k, 0.0) for k in cleaned_keys):
+                try:
+                    from backend.ai_polisher import reset_gemini_quota_exhaustion
+                    reset_gemini_quota_exhaustion()
+                except Exception:
+                    pass
+
             return cleaned_keys
 
     @staticmethod

@@ -346,6 +346,15 @@ async def _process_queue_loop(
                 if job and job.status in ("done", "error", "cancelled"):
                     next_item.status = job.status
                     next_item.error = job.error
+                    if job.status == "error":
+                        err_str = str(job.error or "").lower()
+                        if any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                            if getattr(next_item, "quota_behavior", "wait") == "wait":
+                                _queue_paused = True
+                                logger.warning(
+                                    f"[Queue] Job {next_item.job_id} encountered quota exhaustion with quota_behavior='wait'. "
+                                    f"Automatically pausing queue to prevent cascading failures."
+                                )
                 elif not job:
                     next_item.status = "cancelled"
                 else:
@@ -364,6 +373,14 @@ async def _process_queue_loop(
                 next_item.status = "error"
                 next_item.error = str(ex)
                 logger.error(f"[Queue] Job {next_item.job_id} failed: {ex}")
+                err_str = str(ex).lower()
+                if any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                    if getattr(next_item, "quota_behavior", "wait") == "wait":
+                        _queue_paused = True
+                        logger.warning(
+                            f"[Queue] Job {next_item.job_id} raised quota exception with quota_behavior='wait'. "
+                            f"Automatically pausing queue to prevent cascading failures."
+                        )
     finally:
         if _queue_task is asyncio.current_task():
             _queue_task = None
