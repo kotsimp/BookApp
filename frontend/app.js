@@ -4064,13 +4064,21 @@ async function init() {
   initQuotaBehaviorSelectors();
   applyAppMode(currentAppMode);
 
-  // Auto-sync Gemini API key between localStorage and backend server
+  // Auto-sync Gemini API key pool between localStorage and backend server
   const localKey = localStorage.getItem('gemini_api_key');
-  if (localKey) {
+  let localKeys = [];
+  try {
+    const rawKeys = localStorage.getItem('gemini_api_keys');
+    if (rawKeys) localKeys = JSON.parse(rawKeys);
+  } catch (_) {}
+  if (localKey || (Array.isArray(localKeys) && localKeys.length > 0)) {
+    const payload = {};
+    if (localKey) payload.gemini_api_key = localKey;
+    if (Array.isArray(localKeys) && localKeys.length > 0) payload.gemini_api_keys = localKeys;
     fetch(`${API}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gemini_api_key: localKey }),
+      body: JSON.stringify(payload),
     }).catch(() => {});
   }
 
