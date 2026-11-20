@@ -228,11 +228,6 @@ def trip_gemini_quota_exhaustion(cooldown_seconds: float = 3600.0) -> None:
         save_setting("gemini_quota_exhausted_until", _GEMINI_DAILY_QUOTA_EXHAUSTED_UNTIL)
     except Exception:
         pass
-    try:
-        from backend.gemini_key_pool import GeminiKeyPool
-        GeminiKeyPool.mark_all_exhausted(cooldown_seconds)
-    except Exception:
-        pass
 
 
 def reset_gemini_quota_exhaustion() -> None:

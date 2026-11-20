@@ -567,13 +567,27 @@ async def _ai_polish_comic_balloons(
                     or "per day" in err_low
                     or "retrydelay" in err_low
                 ):
-                    logger.warning("Gemini daily quota exhausted during comic polish. Tripping circuit breaker and skipping AI polish.")
+                    from backend.gemini_key_pool import GeminiKeyPool
+                    GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
+                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                    if next_pool_key:
+                        logger.warning(f"[Gemini Key Pool] Comic Polish rotated to next key {next_pool_key[:6]}...")
+                        api_key = next_pool_key
+                        continue
+                    logger.warning("Gemini daily quota exhausted during comic polish across all keys. Tripping circuit breaker and skipping AI polish.")
                     trip_gemini_quota_exhaustion(3600.0)
                     break
             logger.debug(f"AI Polish attempt with {model} failed: {h_err}")
         except Exception as ex:
             err_low = str(ex).lower()
             if "requests per day limit exceeded" in err_low or "quota exceeded" in err_low or "resource_exhausted" in err_low:
+                from backend.gemini_key_pool import GeminiKeyPool
+                GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                if next_pool_key:
+                    logger.warning(f"[Gemini Key Pool] Comic Polish rotated to next key {next_pool_key[:6]}...")
+                    api_key = next_pool_key
+                    continue
                 trip_gemini_quota_exhaustion(3600.0)
                 break
             logger.debug(f"AI Polish attempt with {model} failed: {ex}")
@@ -1047,7 +1061,14 @@ async def _detect_comic_balloons_vision_async(
                                 or "per day" in err_low
                                 or "retrydelay" in err_low
                             ):
-                                logger.warning("Gemini daily quota exhausted in comic Vision. Tripping circuit breaker.")
+                                from backend.gemini_key_pool import GeminiKeyPool
+                                GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
+                                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                                if next_pool_key:
+                                    logger.warning(f"[Gemini Key Pool] Comic Vision rotated to next key {next_pool_key[:6]}...")
+                                    api_key = next_pool_key
+                                    continue
+                                logger.warning("Gemini daily quota exhausted in comic Vision across all pool keys. Tripping circuit breaker.")
                                 trip_gemini_quota_exhaustion(3600.0)
                                 break
                             if _CACHED_VISION_MODEL == model:
@@ -1174,8 +1195,8 @@ async def translate_comic_document(
     logger.info(f"[{job_id}] Translating graphic novel with comic font: {font_path}")
 
     # Resolve Gemini API Key for vision fallback if available
-    from backend.settings_manager import get_setting
-    resolved_api_key = (api_key or "").strip() or (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "")
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    resolved_api_key = resolve_gemini_api_key(api_key)
 
     # Handle CBZ files (convert image archive to temporary PDF)
     temp_pdf_to_clean: Optional[Path] = None
