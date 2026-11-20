@@ -135,11 +135,15 @@ All translated text passes through the built-in publishing typography engine:
 2. **Translation Direction:**
    - Default: **🇬🇧 English ➔ 🇬🇷 Greek**.
    - Click **⇄** to invert to **🇬🇷 Greek ➔ 🇬🇧 English**.
-3. **Output Format Selection:**
-   - 📄 **TXT:** Clean plain text.
-   - 📘 **DOCX:** Microsoft Word document with full preservation of fonts, tables, headings, and styles.
-   - 📕 **PDF:** Formatted PDF with custom headers and complete Greek Unicode glyph support.
-   - 📗 **EPUB:** E-book formatted with chapters, navigation, and HTML/CSS styling.
+3. **Output Format Selection & Automatic Matching:**
+   - **Automatic Output Format Matching:** When uploading any document, the application automatically matches the default output format to your input document (`.pdf` ➔ PDF, `.docx` ➔ DOCX, `.epub` ➔ EPUB, `.cbz/.cbr` ➔ Comic).
+   - In Advanced Mode, you can manually override the export format:
+     - 📕 **PDF:** Formatted PDF with custom headers and complete Greek Unicode glyph support (zero missing-glyph tofu boxes `□`).
+     - 📘 **DOCX:** Microsoft Word document with full preservation of fonts, tables, headings, and styles.
+     - 📗 **EPUB:** E-book formatted with chapters, navigation, and HTML/CSS styling.
+     - 🎨 **CBZ / CBR:** Digital comic archive with speech balloons translated.
+     - 📄 **TXT:** Clean plain text.
+   - **Instant On-Demand Conversion:** Even after translation completes in one format, you can download any of the other formats (PDF, DOCX, EPUB, TXT) instantly via the 1-click download pills on the result card.
 4. **Document Layout Styles:**
    - 📄 **Standard / Office (A4):** Preserves classic document styling, A4 pagination, and exact paragraph spacing. Ideal for legal papers, technical reports, and corporate documents.
    - 📚 **Literature / E-Reader:** Tailored for novels, fiction, and e-readers:

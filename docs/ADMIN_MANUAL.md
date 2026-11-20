@@ -62,6 +62,7 @@ The application implements an asynchronous, event-driven API architecture:
 * **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`, `backend/exporter.py`):** Prioritizes full Gemini Flash Vision models, supports Japanese Manga RTL reading progression, clamps `box_2d` to `[0..1000]`, sanitizes Greek uppercase dialytika (`ΐ`/`ΰ` ➔ `Ϊ`/`Ϋ`), renders balloons via a two-pass non-blank layout engine down to `3.0pt` with `Arial Narrow` fallback, sorts CBZ pages naturally (`page_1`, `page_2`, ..., `page_10`), and serializes concurrent vision checkpoints via `asyncio.Lock` and UUID temporary files.
 * **Greek Editorial Typography Engine (`backend/typography.py`):** 1.25M words/sec publishing engine that converts quotes to `«...»`, standardizes dialogue dashes (`—`), enforces modern Greek final "ν" rules (protecting conjunctive `δε` and privative `μη`), rejoins hyphenated wraps without altering interrupted dialogue, and normalizes Greek punctuation (`;`, `;!`, `;;!!`).
 * **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously (providing up to 6,000 free requests/day). Features instantaneous failover upon HTTP 429 exhaustion, transient burst retry handling (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
+* **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
 
 ---
 
@@ -253,7 +254,7 @@ The backend provides **45 REST endpoints** for complete administrative control:
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
 * `DELETE /api/jobs/{job_id}`: Deletes a specific job from memory, database, queue, and purges its upload and output directories.
 * `DELETE /api/jobs`: Clears all job history and temporary files (retaining the semantic cache).
-* `DELETE /api/jobs/tests/cleanup`: Purges test artifacts created by automated test runs.
+* `DELETE /api/jobs/tests/cleanup`: Purges test artifacts created by automated test runs while strictly preserving real user jobs and translated documents in `temp/outputs/`.
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Reads, saves, and deletes configuration parameters.
 * `GET /api/gemini/pool`: Returns detailed Multi-Key Pool status (total keys, active keys, individual slot health, and cooldown timestamps).
 * `POST /api/gemini/pool`: Configures or updates the pool keys (`{"keys": ["AIzaSy...", ...]}`), clearing quota cooldowns.
@@ -281,6 +282,9 @@ On application startup, `cleanup_old_jobs()` automatically deletes orphaned jobs
 ## 6. Automated Test Suite Execution
 
 The repository includes a comprehensive master test runner with **100% endpoint coverage across all 45 FastAPI routes**:
+
+> [!IMPORTANT]
+> **User Output Protection During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore non-test directories and SQLite records.
 
 ```bash
 # Execute all 40 test suites (Full Master Suite):
