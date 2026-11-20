@@ -14,7 +14,7 @@ A modern, high-performance local web application to **translate documents** betw
 * 📖 **[User Manual (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**  
   *Comprehensive step-by-step user guide covering: Unified Upload & Smart Batch Queue (1–20 files), Prior Quota Routing Choice (Wait for Reset with live countdown timer vs Auto-Fallback to Free model), Automatic Free Mode default when no API key is provided, Single-Pass AI Translation & Polish (with live batch + page progress & full settings restore on Resume), automatic detection of Graphic Novels & Scanned PDFs (with compatible options lock), Manga (RTL), format pickers (PDF, CBZ, CBR, EPUB), Greek editorial typography rules, auto-genre detection, multi-voice audiobooks, live voice auditions, Refresh button, and Dark/Light Mode.*
 * 🛠️ **[Administrator & Deployment Manual (docs/ADMIN_MANUAL.md)](docs/ADMIN_MANUAL.md)**  
-  *In-depth technical guide for system administrators: Hybrid AI architecture (Google Gemini + Free local/cloud models), quota management (circuit breaker, countdown, per-task routing, quota_behavior: 'wait' | 'fallback'), Free Mode automation, SQLite database persistence (`data/bookapp.db`) with metadata settings & `file_path` auto-healing, Smart Batch Queue engine (`backend/queue_manager.py`) with ZIP completion gating (HTTP 409 while items are running, immediate individual download for completed items), semantic translation & Vision AI caches (`gemini_polish_v4` full-prompt SHA-256 hash & `gemini_comic_vision_v2`), Single-Pass Full Gemini Flash with `thinkingBudget: 0`, `maxOutputTokens: 16384`, `BLOCK_NONE` safety settings, `thought` filtering, recursive page/paragraph bisection, `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` boundary deduplication, whole-book stratified Entity Consistency Dossier & Greek mixed-script quality gate, zero-tofu PDF glyph guard & URL wrapping, two-pass non-blank comic balloon renderer with natural CBZ page sorting & Zip Slip protection, 429 Circuit Breaker with automatic Gemini failover, universal `job_id` path-traversal validation, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy with SSE, 45 REST API endpoints, and 41 automated test suites.*
+  *In-depth technical guide for system administrators: Hybrid AI architecture (Google Gemini + Free local/cloud models), quota management (circuit breaker, countdown, per-task routing, quota_behavior: 'wait' | 'fallback'), Free Mode automation, SQLite database persistence (`data/bookapp.db`) with metadata settings & `file_path` auto-healing, Smart Batch Queue engine (`backend/queue_manager.py`) with ZIP completion gating (HTTP 409 while items are running, immediate individual download for completed items), semantic translation & Vision AI caches (`gemini_polish_v4` full-prompt SHA-256 hash & `gemini_comic_vision_v2`), Single-Pass Full Gemini Flash with `thinkingBudget: 0`, `maxOutputTokens: 16384`, `BLOCK_NONE` safety settings, `thought` filtering, recursive page/paragraph bisection, `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` boundary deduplication, whole-book stratified Entity Consistency Dossier & Greek mixed-script quality gate, zero-tofu PDF glyph guard & URL wrapping, two-pass non-blank comic balloon renderer with natural CBZ page sorting & Zip Slip protection, 429 Circuit Breaker with automatic Gemini failover, universal `job_id` path-traversal validation, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy with SSE, 45 REST API endpoints, and 42 automated test suites.*
 
 ---
 
@@ -140,7 +140,7 @@ BookApp/
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 40 Automated Test Suites (100% PASS · 45/45 Endpoints)
+├── tests/                   # 42 Automated Test Suites (100% PASS · 45/45 Endpoints)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt
@@ -175,10 +175,10 @@ BookApp/
 The master runner automatically protects & restores your `config/settings.json` (never touching your saved API keys), clears all temporary test sessions cleanly upon completion, and starts a temporary test server if none is running:
 
 ```bash
-# Run all 40 automated test suites (Full Suite)
+# Run all 42 automated test suites (Full Suite)
 .\.venv\Scripts\python run_all_tests.py
 
-# Run fast local suite (35 static/unit/security/contract/resilience/UI/queue/benchmark suites in ~45s)
+# Run fast local suite (37 static/unit/security/contract/resilience/UI/queue/benchmark suites in ~48s)
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
@@ -196,6 +196,7 @@ Or run individual focused guard suites directly:
 .\.venv\Scripts\python tests/test_smart_batch_queue.py
 .\.venv\Scripts\python tests/test_e2e_regression_guard.py
 .\.venv\Scripts\python tests/test_gemini_diagnostics.py
+.\.venv\Scripts\python tests/test_scripted_editorial_pass.py
 ```
 
 ---
