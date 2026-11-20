@@ -26,7 +26,7 @@ def test_categorized_glossary_api():
     status, flat = api_get("/glossary")
     assert status == 200
     assert isinstance(flat, dict)
-    assert len(flat) >= 1000
+    assert len(flat) >= 3000
     print(f"  GET /glossary (flat): OK ({len(flat)} terms)")
 
     # 2. Categorized GET /api/glossary?categorized=true
@@ -35,9 +35,9 @@ def test_categorized_glossary_api():
     assert "categories" in cat_data
     assert "counts" in cat_data
     assert "terms" in cat_data
-    assert cat_data["counts"]["technical"] >= 500
-    assert cat_data["counts"]["literary"] >= 500
-    assert cat_data["counts"]["general"] >= 500
+    assert cat_data["counts"]["technical"] >= 1000
+    assert cat_data["counts"]["literary"] >= 1000
+    assert cat_data["counts"]["general"] >= 1000
     print(f"  GET /glossary?categorized=true: OK (Tech={cat_data['counts']['technical']}, Lit={cat_data['counts']['literary']}, Gen={cat_data['counts']['general']})")
 
     # 3. Filter by category

@@ -241,7 +241,11 @@ For publications requiring professional editorial tone:
 
 ### ⚙️ Categorized Custom Glossary
 Click **⚙️ Glossary** in the top navigation to configure persistent domain terms:
-* Add custom translation pairs across 3 categories (**Technical**, **Literary**, **General**).
+* Out-of-the-box expanded library of **3,366+ specialized terms**:
+  * 💻 **Technical (`technical`):** 1,130 terms (AI, LLMs, Machine Learning, Cloud, DevOps, Networks, Cybersecurity, Databases, Robotics, Hardware, Hard Sci-Fi).
+  * 📚 **Literary (`literary`):** 1,032 terms (Poetics, Rhetoric, Narrative Structure, Character Tropes, Classical Drama, Genres, Versification).
+  * ⚙️ **General (`general`):** 1,204 terms (Publishing, Typography, Legal, Economics, Public Policy, Environment, Medicine, Daily Idioms).
+* Add and edit custom translation pairs across all 3 categories with live search and filtering.
 * **Domain Isolation:** When translating literature, poetry, or comics, technical IT/DevOps terms (e.g. `pod`, `sandbox`) are automatically ignored to prevent awkward translations in fiction.
 
 ### In-Place Layout & Style Preservation

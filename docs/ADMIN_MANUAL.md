@@ -234,7 +234,7 @@ BookApp/
 │   ├── job_manager.py       # Task lifecycle manager, SQLite sync & file healing
 │   └── parsers.py           # Document parsers and comic detection heuristics
 ├── config/
-│   ├── glossary.json        # Custom glossary terms
+│   ├── glossary.json        # Categorized custom glossary terms (3,366+ terms across Technical, Literary, General)
 │   └── settings.json        # Persistent configuration & API keys (gitignored)
 ├── data/
 │   └── bookapp.db           # Persistent SQLite database (jobs, settings & semantic cache)
