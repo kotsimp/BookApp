@@ -225,14 +225,17 @@ async def _translate_with_retry(
                 else:
                     await asyncio.sleep(0.5 * (attempt + 1))
 
-    # 2. Fast MyMemory fallback for short chunks when GTX is rate-limited
+    # 2. Fast free MyMemory fallback for short chunks when GTX is rate-limited
     if len(text) <= 490:
         try:
-            from deep_translator import MyMemoryTranslator
-            src_norm = "english" if (source_lang or "").lower().startswith("en") else source_lang
-            tgt_norm = "greek" if (target_lang or "").lower().startswith(("el", "gr")) else target_lang
-            mm_trans = MyMemoryTranslator(source=src_norm, target=tgt_norm)
-            mm_res = await loop.run_in_executor(None, mm_trans.translate, text)
+            if session is not None:
+                mm_res = await _translate_mymemory_async(session, text, source_lang, target_lang)
+            else:
+                from deep_translator import MyMemoryTranslator
+                src_norm = "english" if (source_lang or "").lower().startswith("en") else source_lang
+                tgt_norm = "greek" if (target_lang or "").lower().startswith(("el", "gr")) else target_lang
+                mm_trans = MyMemoryTranslator(source=src_norm, target=tgt_norm)
+                mm_res = await loop.run_in_executor(None, mm_trans.translate, text)
             if mm_res and mm_res.strip() and not any(m in mm_res.upper() for m in _MYMEMORY_ERROR_MARKERS):
                 if cache_key and _db_set_cached:
                     try:
@@ -245,35 +248,30 @@ async def _translate_with_retry(
 
     # 3. Fallback to deep_translator (only if not actively in Google 429 cooldown)
     if time.time() >= _GTX_COOLDOWN_UNTIL:
-        if deep_trans is None:
-            try:
-                src_c = LANG_CODES.get(source_lang, "en")
-                tgt_c = LANG_CODES.get(target_lang, "el")
-                deep_trans = GoogleTranslator(source=src_c, target=tgt_c)
-            except Exception:
-                pass
-
-        if deep_trans:
-            try:
-                logger.info("Attempting fallback via deep_translator...")
-                result = await loop.run_in_executor(None, deep_trans.translate, text)
-                if result and result.strip():
-                    if cache_key and _db_set_cached:
-                        try:
-                            _db_set_cached(cache_key, text, result, source_lang, target_lang, engine="google")
-                        except Exception:
-                            pass
-                    return result
-            except Exception as e:
-                logger.error(f"Fallback translation error: {e}")
-                if "too many requests" in str(e).lower() or "429" in str(e):
-                    _GTX_COOLDOWN_UNTIL = time.time() + 20.0
+        try:
+            logger.info("Attempting fallback via deep_translator...")
+            src_c = _resolve_lang_code(source_lang, "en")
+            tgt_c = _resolve_lang_code(target_lang, "el")
+            # Create a dedicated instance per executor thread to eliminate concurrent mutation races
+            def _run_deep_trans(t):
+                return GoogleTranslator(source=src_c, target=tgt_c).translate(t)
+            result = await loop.run_in_executor(None, _run_deep_trans, text)
+            if result and result.strip():
+                if cache_key and _db_set_cached:
+                    try:
+                        _db_set_cached(cache_key, text, result, source_lang, target_lang, engine="google")
+                    except Exception:
+                        pass
+                return result
+        except Exception as e:
+            logger.error(f"Fallback translation error: {e}")
+            if "too many requests" in str(e).lower() or "429" in str(e):
+                _GTX_COOLDOWN_UNTIL = time.time() + 20.0
 
     # 4. Automatic Gemini Flash failover when Google Translate is rate-limited (429) and an API key exists
     try:
-        import os
-        from backend.settings_manager import get_setting
-        gemini_key = (get_setting("gemini_api_key", "") or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+        from backend.gemini_key_pool import resolve_gemini_api_key
+        gemini_key = resolve_gemini_api_key()
         if gemini_key and not gemini_key.startswith(("AQ.Test", "AIzaTest")):
             from backend.ai_polisher import _call_gemini_api, is_gemini_quota_exhausted, DailyQuotaExhaustedError
             if not is_gemini_quota_exhausted():

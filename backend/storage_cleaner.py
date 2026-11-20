@@ -21,7 +21,7 @@ def _active_job_ids() -> set:
     try:
         from backend.job_manager import _jobs, _active_tasks
         for jid, j in list(_jobs.items()):
-            if getattr(j, "status", "") in ("running", "queued") or jid in _active_tasks:
+            if getattr(j, "status", "") in ("running", "queued", "idle") or jid in _active_tasks:
                 active.add(jid)
     except Exception:
         pass
@@ -102,6 +102,21 @@ def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[s
                         bytes_freed += size
             except Exception as e:
                 errors.append(f"{item.name}: {e}")
+
+    # 1b. Clean stale abandoned partial uploads inside temp/uploads/tmp
+    tmp_upload_dir = TEMP_DIR / "uploads" / "tmp"
+    if tmp_upload_dir.exists() and tmp_upload_dir.is_dir():
+        for f in list(tmp_upload_dir.iterdir()):
+            if f.is_file():
+                try:
+                    if f.stat().st_mtime < cutoff_temp:
+                        size = f.stat().st_size
+                        if not dry_run:
+                            f.unlink(missing_ok=True)
+                        files_deleted += 1
+                        bytes_freed += size
+                except Exception as e:
+                    errors.append(f"tmp/{f.name}: {e}")
 
     # 2. Clean root temp loose files (e.g. temp/chunk_*.mp3)
     for item in list(TEMP_DIR.iterdir()):

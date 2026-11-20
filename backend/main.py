@@ -919,8 +919,8 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
         if not is_comic_job and fmt in ("cbz", "cbr"):
             raise HTTPException(400, f"Format '{fmt.upper()}' is only supported for Graphic Novels / Comics.")
 
-        # 1. Check if a file in the requested format already exists (unless layout changed)
-        if out_dir.exists() and not layout_changed:
+        # 1. Check if a file in the requested format already exists (unless layout changed for text documents)
+        if out_dir.exists() and (not layout_changed or fmt in ("mp3", "m4b")):
             matching = [
                 f for f in out_dir.iterdir()
                 if f.is_file() and f.suffix.lower() == f".{fmt}" and not f.name.endswith("_original.txt")
@@ -1214,9 +1214,12 @@ async def debug_extract(job_id: str, max_chars: int = 500):
 async def clear_all_jobs():
     """Clean up all jobs and all temporary files inside temp/."""
     from backend.job_manager import _jobs, _active_tasks
-    # Cancel all running tasks BEFORE deleting directories
+    # Cancel and await all running tasks BEFORE deleting directories
+    tasks_to_cancel = [t for t in _active_tasks.values() if not t.done()]
     for active_id in list(_active_tasks.keys()):
         cancel_job(active_id)
+    if tasks_to_cancel:
+        await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
     for parent_dir in [UPLOAD_DIR, OUTPUT_DIR]:
         if parent_dir.exists():
             for child in parent_dir.iterdir():

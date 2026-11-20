@@ -1788,6 +1788,17 @@ async def _call_gemini_api(
                                 return polished
                             elif resp.status in (401, 403):
                                 err_text = await resp.text()
+                                if allow_pool_rotation:
+                                    GeminiKeyPool.mark_key_exhausted(active_key, 86400.0, reason=f"Auth error ({resp.status}): {err_text[:120]}")
+                                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys)
+                                    if next_pool_key:
+                                        logger.warning(
+                                            f"[Gemini Key Pool] Active key {mask_api_key(active_key)} failed auth ({resp.status}). "
+                                            f"Seamlessly rotating to next key {mask_api_key(next_pool_key)}..."
+                                        )
+                                        current_key = next_pool_key
+                                        switched_key = True
+                                        break
                                 raise PermissionError(f"Gemini API authentication error ({resp.status}): {err_text}")
                             elif resp.status == 404:
                                 logger.debug(f"Model {model} returned 404, trying next candidate...")
@@ -1804,51 +1815,61 @@ async def _call_gemini_api(
                             elif resp.status == 429:
                                 err_text = await resp.text()
                                 last_error = f"Gemini API error (429): {err_text}"
+                                err_low = err_text.lower()
 
-                                cooldown_sec = 3600.0
-                                m_delay = re.search(r'"retryDelay":\s*"(\d+)s"', err_text)
+                                # Parse retry delay if provided by Google API
+                                delay_sec = None
+                                m_delay = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', err_text)
                                 if m_delay:
                                     try:
-                                        cooldown_sec = max(300.0, float(m_delay.group(1)))
+                                        delay_sec = float(m_delay.group(1))
                                     except Exception:
                                         pass
 
-                                err_low = err_text.lower()
-                                if (
+                                # Differentiate transient burst rate-limits (e.g. 15 RPM, retryDelay <= 60s)
+                                # from daily / persistent quota exhaustion
+                                is_daily_quota = (
                                     "requests per day limit exceeded" in err_low
                                     or "quota exceeded" in err_low
-                                    or "resource_exhausted" in err_low
                                     or "per day" in err_low
-                                    or cooldown_sec >= 180.0
-                                ):
-                                    GeminiKeyPool.mark_key_exhausted(active_key, cooldown_sec, reason=err_text[:120])
-                                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
-                                    if next_pool_key:
-                                        logger.warning(
-                                            f"[Gemini Key Pool] Active key {mask_api_key(active_key)} reached quota. "
-                                            f"Seamlessly rotating to next available key {mask_api_key(next_pool_key)}..."
-                                        )
-                                        current_key = next_pool_key
-                                        switched_key = True
-                                        break
+                                    or "daily" in err_low
+                                    or (delay_sec is not None and delay_sec > 60.0)
+                                )
 
-                                    trip_gemini_quota_exhaustion(cooldown_sec)
-                                    q_info = get_gemini_quota_info()
+                                # If it is transient and we have attempts left, wait and retry with the same key
+                                if not is_daily_quota and attempt < max_attempts - 1:
+                                    wait_time = max(2.5, min(60.0, (delay_sec or 2.0) + 1.0))
                                     logger.warning(
-                                        f"Gemini daily quota exhausted ({resp.status}). All {len(attempted_keys)} pool keys exhausted. Tripping circuit breaker for {int(cooldown_sec)}s."
+                                        f"Model {model} transient rate limit (attempt {attempt + 1}/{max_attempts}). "
+                                        f"Backing off for {wait_time:.1f}s before retry..."
                                     )
-                                    raise DailyQuotaExhaustedError(
-                                        f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
-                                        f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                                        f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
-                                        f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
-                                    )
-
-                                logger.warning(f"Model {model} rate limited (attempt {attempt + 1}/{max_attempts}): {last_error}")
-                                if attempt < max_attempts - 1:
-                                    await asyncio.sleep(2.5)
+                                    await asyncio.sleep(wait_time)
                                     continue
-                                break
+
+                                # If transient retries are exhausted or it is an explicit daily quota error, mark key exhausted
+                                cooldown_sec = max(300.0, delay_sec if (delay_sec and delay_sec > 60.0) else 3600.0)
+                                GeminiKeyPool.mark_key_exhausted(active_key, cooldown_sec, reason=err_text[:120])
+                                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
+                                if next_pool_key:
+                                    logger.warning(
+                                        f"[Gemini Key Pool] Active key {mask_api_key(active_key)} exhausted quota ({resp.status}). "
+                                        f"Seamlessly rotating to next available key {mask_api_key(next_pool_key)}..."
+                                    )
+                                    current_key = next_pool_key
+                                    switched_key = True
+                                    break
+
+                                trip_gemini_quota_exhaustion(cooldown_sec)
+                                q_info = get_gemini_quota_info()
+                                logger.warning(
+                                    f"Gemini daily quota exhausted ({resp.status}). All {len(attempted_keys)} pool keys exhausted. Tripping circuit breaker for {int(cooldown_sec)}s."
+                                )
+                                raise DailyQuotaExhaustedError(
+                                    f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
+                                    f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
+                                    f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
+                                    f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
+                                )
                             else:
                                 err_text = await resp.text()
                                 # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
@@ -1865,6 +1886,17 @@ async def _call_gemini_api(
                                     continue
                                 last_error = f"Gemini API error ({resp.status}): {err_text}"
                                 if resp.status == 400 and "API_KEY_INVALID" in err_text:
+                                    if allow_pool_rotation:
+                                        GeminiKeyPool.mark_key_exhausted(active_key, 86400.0, reason=f"Invalid API Key: {err_text[:120]}")
+                                        next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys)
+                                        if next_pool_key:
+                                            logger.warning(
+                                                f"[Gemini Key Pool] Active key {mask_api_key(active_key)} is invalid. "
+                                                f"Seamlessly rotating to next key {mask_api_key(next_pool_key)}..."
+                                            )
+                                            current_key = next_pool_key
+                                            switched_key = True
+                                            break
                                     raise PermissionError(last_error)
                                 logger.warning(f"Model {model} failed: {last_error}")
                                 break

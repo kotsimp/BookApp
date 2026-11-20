@@ -1047,12 +1047,14 @@ def export_comic_archive(
     out_p.parent.mkdir(parents=True, exist_ok=True)
 
     doc = pymupdf.open(str(pdf_p))
-    with zipfile.ZipFile(str(out_p), "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=dpi)
-            img_bytes = pix.tobytes("jpeg")
-            zf.writestr(f"page_{i+1:04d}.jpg", img_bytes)
-    doc.close()
+    try:
+        with zipfile.ZipFile(str(out_p), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for i, page in enumerate(doc):
+                pix = page.get_pixmap(dpi=dpi)
+                img_bytes = pix.tobytes("jpeg")
+                zf.writestr(f"page_{i+1:04d}.jpg", img_bytes)
+    finally:
+        doc.close()
     return out_p
 
 
@@ -1078,36 +1080,37 @@ def export_comic_epub(
     out_p.parent.mkdir(parents=True, exist_ok=True)
 
     doc = pymupdf.open(str(pdf_p))
-    book = epub.EpubBook()
-    book.set_identifier(f"comic-{pdf_p.stem}")
-    book.set_title(title)
-    book.set_language("el")
-    book.add_author("BookApp Comic Engine")
-    if reading_direction.lower() == "rtl":
-        book.set_direction("rtl")
-        try:
-            book.add_metadata(None, "meta", "rtl", {"property": "page-progression-direction"})
-        except Exception:
-            pass
+    try:
+        book = epub.EpubBook()
+        book.set_identifier(f"comic-{pdf_p.stem}")
+        book.set_title(title)
+        book.set_language("el")
+        book.add_author("BookApp Comic Engine")
+        if reading_direction.lower() == "rtl":
+            book.set_direction("rtl")
+            try:
+                book.add_metadata(None, "meta", "rtl", {"property": "page-progression-direction"})
+            except Exception:
+                pass
 
-    spine = ["nav"]
-    chapters = []
+        spine = ["nav"]
+        chapters = []
 
-    for i, page in enumerate(doc):
-        pix = page.get_pixmap(dpi=dpi)
-        img_bytes = pix.tobytes("jpeg")
-        img_name = f"images/page_{i+1:04d}.jpg"
-        img_item = epub.EpubItem(
-            uid=f"img_{i+1}",
-            file_name=img_name,
-            media_type="image/jpeg",
-            content=img_bytes,
-        )
-        book.add_item(img_item)
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(dpi=dpi)
+            img_bytes = pix.tobytes("jpeg")
+            img_name = f"images/page_{i+1:04d}.jpg"
+            img_item = epub.EpubItem(
+                uid=f"img_{i+1}",
+                file_name=img_name,
+                media_type="image/jpeg",
+                content=img_bytes,
+            )
+            book.add_item(img_item)
 
-        w = int(page.rect.width)
-        h = int(page.rect.height)
-        html_content = f"""<!DOCTYPE html>
+            w = int(page.rect.width)
+            h = int(page.rect.height)
+            html_content = f"""<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <title>Page {i+1}</title>
@@ -1121,18 +1124,19 @@ def export_comic_epub(
   <img src="{img_name}" alt="Page {i+1}"/>
 </body>
 </html>"""
-        c = epub.EpubHtml(title=f"Page {i+1}", file_name=f"page_{i+1:04d}.xhtml", lang="el")
-        c.content = html_content
-        book.add_item(c)
-        spine.append(c)
-        chapters.append(c)
+            c = epub.EpubHtml(title=f"Page {i+1}", file_name=f"page_{i+1:04d}.xhtml", lang="el")
+            c.content = html_content
+            book.add_item(c)
+            spine.append(c)
+            chapters.append(c)
 
-    doc.close()
-    book.spine = spine
-    book.toc = tuple(chapters)
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    epub.write_epub(str(out_p), book, {})
+        book.spine = spine
+        book.toc = tuple(chapters)
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        epub.write_epub(str(out_p), book, {})
+    finally:
+        doc.close()
     return out_p
 
 

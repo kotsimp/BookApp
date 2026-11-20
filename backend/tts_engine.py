@@ -664,7 +664,8 @@ async def _tts_chunk_with_retry(
 
 
 async def _concatenate_mp3s(chunk_files: list[str], output_path: str):
-    """Concatenates MP3 files by binary concatenation (fast, no re-encoding)."""
+    """Concatenates MP3 files by streamed binary concatenation (fast, zero memory overhead, no re-encoding)."""
+    import shutil
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     # Filter out empty files
@@ -673,11 +674,11 @@ async def _concatenate_mp3s(chunk_files: list[str], output_path: str):
     if not valid_files:
         raise RuntimeError("No valid audio chunks to concatenate.")
 
-    # Simple binary concatenation works for CBR MP3s (edge-tts output)
+    # Streamed binary concatenation works for CBR MP3s (edge-tts output)
     with open(output_path, "wb") as out_f:
         for chunk_file in valid_files:
             with open(chunk_file, "rb") as in_f:
-                out_f.write(in_f.read())
+                shutil.copyfileobj(in_f, out_f, length=65536)
 
 
 def get_available_voices() -> dict:
