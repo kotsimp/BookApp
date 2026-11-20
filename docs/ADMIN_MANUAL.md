@@ -63,6 +63,7 @@ The application implements an asynchronous, event-driven API architecture:
 * **Greek Editorial Typography Engine (`backend/typography.py`):** 1.25M words/sec publishing engine that converts quotes to `«...»`, standardizes dialogue dashes (`—`), enforces modern Greek final "ν" rules (protecting conjunctive `δε` and privative `μη`), rejoins hyphenated wraps without altering interrupted dialogue, and normalizes Greek punctuation (`;`, `;!`, `;;!!`).
 * **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously (providing up to 6,000 free requests/day). Features instantaneous failover upon HTTP 429 exhaustion, transient burst retry handling (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
 * **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
+* **Test Session Isolation & Disk Hygiene Guard (`backend/job_manager.py`, `backend/database.py`, `run_all_tests.py`):** Multi-layered protection separating test execution from user state. Broadened test pattern detection (`test_*`, `reg_*`, `mock_*`, `sample_*`, `direct_text*`, `book*`, `temp_*`, `stress_*`, `bench_*`) combined with pre-test filesystem/database snapshotting ensures 100% of temporary directories, orphaned artifacts, and test jobs are purged upon test completion without touching real user documents.
 
 ---
 
@@ -254,7 +255,7 @@ The backend provides **45 REST endpoints** for complete administrative control:
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
 * `DELETE /api/jobs/{job_id}`: Deletes a specific job from memory, database, queue, and purges its upload and output directories.
 * `DELETE /api/jobs`: Clears all job history and temporary files (retaining the semantic cache).
-* `DELETE /api/jobs/tests/cleanup`: Purges test artifacts created by automated test runs while strictly preserving real user jobs and translated documents in `temp/outputs/`.
+* `DELETE /api/jobs/tests/cleanup`: Purges test artifacts, temporary scratch folders, and test-generated jobs from memory, SQLite, and disk (`temp/outputs/` and `temp/uploads/`) while strictly safeguarding real user jobs and translated documents.
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Reads, saves, and deletes configuration parameters.
 * `GET /api/gemini/pool`: Returns detailed Multi-Key Pool status (total keys, active keys, individual slot health, and cooldown timestamps).
 * `POST /api/gemini/pool`: Configures or updates the pool keys (`{"keys": ["AIzaSy...", ...]}`), clearing quota cooldowns.

@@ -333,7 +333,7 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 * **Interrupted Job Resumption:** If an AI translation was paused, clicking **Start Translation** continues from the saved checkpoint (`.direct_ai_checkpoint.json`).
 * **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
 * **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete old jobs and temporary files while preserving the translation cache.
-* **Automatic Test Job Isolation:** Automated system tests (files prefixed with `test_`, `reg_`, etc.) are purged and filtered out automatically, keeping your history clean.
+* **Automatic Test Job Isolation & Zero-Junk History:** Automated test runs and test-generated jobs (files or identifiers matching `test_*`, `reg_*`, `mock_*`, `sample_*`, `direct_text*`, `book*`, `temp_*`, `stress_*`) are automatically purged from disk and strictly filtered out of Session History. Even if test suites execute in the background, your Session History stays 100% clean, displaying only your real personal translations.
 
 ---
 
