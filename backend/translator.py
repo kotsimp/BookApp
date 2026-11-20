@@ -275,7 +275,7 @@ async def _translate_with_retry(
         if gemini_key and not gemini_key.startswith(("AQ.Test", "AIzaTest")):
             from backend.ai_polisher import _call_gemini_api, is_gemini_quota_exhausted, DailyQuotaExhaustedError
             if not is_gemini_quota_exhausted():
-                tgt_label = "Greek" if target_lang.lower().startswith(("gr", "el")) else "English"
+                tgt_label = "Modern Greek (δημοτική)" if target_lang.lower().startswith(("gr", "el")) else "English"
                 src_label = "English" if source_lang.lower().startswith("en") else "Greek"
                 prompt = (
                     f"Translate the following text accurately and naturally from {src_label} to {tgt_label}. "
@@ -296,6 +296,17 @@ async def _translate_with_retry(
                     logger.warning(f"Gemini automatic failover failed: {ex}")
     except Exception as ex:
         logger.debug(f"Gemini failover check error: {ex}")
+
+    # 5. Last resort retry with exponential backoff if all primary engines rate-limited
+    if target_lang.lower() in ("greek", "el", "gr") and len(re.findall(r"[a-zA-Z]", text)) > 25:
+        logger.warning("All fast translation services busy/rate-limited; cooling down 2.5s for final recovery attempt...")
+        await asyncio.sleep(2.5)
+        try:
+            res_final = await loop.run_in_executor(None, _translate_gtx, text, source_lang, target_lang)
+            if res_final and res_final.strip() and len(re.findall(r"[\u0370-\u03ff]", res_final)) > 0:
+                return res_final
+        except Exception:
+            pass
 
     logger.error("All translation retries failed for chunk. Returning original text.")
     return text

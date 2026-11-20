@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 STYLE_PROMPTS = {
     "literature": (
         "Είσαι διακεκριμένος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη πεζογραφία και την επιστημονική φαντασία (sci-fi / speculative fiction). "
-        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα, ρυθμό και ατμοσφαιρικό βάθος: "
+        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα, ρυθμό και ατμοσφαιρικό βάθος σε σύγχρονη νεοελληνική δημοτική γλώσσα (ΟΧΙ αρχαΐζουσα, ΟΧΙ καθαρεύουσα): "
         "1. ΕΞΑΛΕΙΨΗ ΚΑΤΑ ΛΕΞΗ ΜΕΤΑΦΡΑΣΗΣ & ΑΓΓΛΙΣΜΩΝ: "
         "   - Εξάλειψε πλήρως μηχανικές αδεξιότητες, αγγλισμούς και ξύλινες δομές (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις', 'έκανε νόημα' -> 'έγνεψε', 'ήταν ικανός να' -> 'μπορούσε να'). "
         "   - ΜΗΝ μεταφράζεις ιδιωματισμούς κατά λέξη (idioms & metaphors). Απόδοσέ τους με ισοδύναμες, ζωντανές ελληνικές εκφράσεις που ταιριάζουν στο συγκείμενο. "
@@ -38,13 +38,15 @@ STYLE_PROMPTS = {
         "3. ΖΩΝΤΑΝΙΑ ΔΙΑΛΟΓΩΝ, ΕΝΙΑΙΑ ΣΤΙΞΗ & ΣΥΝΕΠΕΙΑ ΓΕΝΟΥΣ/ΟΡΟΛΟΓΙΑΣ: "
         "   - Απόδωσε τους διαλόγους με προφορική ζωντάνια και φυσικότητα. "
         "   - Χρησιμοποίησε ΑΥΣΤΗΡΑ ΕΝΙΑΙΑ ελληνικά εισαγωγικά διαλόγου («...») για ΟΛΟΥΣ τους διαλόγους σε όλο το βιβλίο — ΜΗΝ εναλλάσσεις μεταξύ «...», παυλών διαλόγου (—) και αγγλικών εισαγωγικών (\"...\"). Χρησιμοποίησε την παύλα (—) μόνο για παρενθετικές φράσεις ή αποδόσεις επιγραφών. "
-        "   - Διατήρησε απόλυτη συνέπεια στο γραμματικό γένος (ο/η/το) κάθε χαρακτήρα, πλοίου και οντότητας, καθώς και στα ονόματα και όρους του Μητρώου. ΜΗΝ συγχέεις διαφορετικές οντότητες ή όρους μεταξύ τους. "
+        "   - Διατήρησε απόλυτη συνέπεια στο γραμματικό γένος (ο/η/το) κάθε χαρακτήρα, πλοίου και οντότητας, καθώς και στα ονόματα και όρους του Μητρώου. "
+        "   - Ακρίβεια ορολογίας sci-fi: 'synthesist' -> 'συνθετιστής' (όχι μουσικός συνθέτης), 'scramblers' -> 'σκράμπλερ', 'Heaven' -> 'Παράδεισος' (ψηφιακή μεταφόρτωση συνείδησης), 'Theseus' -> 'Θησέας', 'drones' -> 'μη επανδρωμένα σκάφη/ντρόουνς'. "
         "   - Διόρθωσε όλα τα γραμματικά, συντακτικά και πτωτικά λάθη. "
         "4. ΔΙΑΤΗΡΗΣΗ ΔΟΜΗΣ, ΟΡΙΩΝ & ΔΕΙΚΤΩΝ: "
         "   - Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων, τα κενά σκηνών (π.χ. * * *) και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
         "   - Αν παρέχεται τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT>, χρησιμοποίησέ το ΑΠΟΚΛΕΙΣΤΙΚΑ για να γνωρίζεις τη συνέχεια/γένος/ύφος — ΜΗΝ το επαναλαμβάνεις, ΜΗΝ το μεταφράζεις και ΜΗΝ το συμπεριλαμβάνεις ΠΟΤΕ στην έξοδό σου. "
         "5. ΚΑΘΑΡΟΤΗΤΑ ΕΞΟΔΟΥ (ΑΥΣΤΗΡΟ): "
-        "   - ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (π.χ. <i>, </i>, <bos>, <TEXT_TO_POLISH>), αγκύλες αποσπάσματος ([... ...]), σημειώσεις επιμελητή (π.χ. [Σημείωση...]), σκέψεις/σχόλια ανάλυσης ή ξένους χαρακτήρες (λατινικούς, κυριλλικούς, εβραϊκούς κ.λπ.) μέσα σε ελληνικές λέξεις. "
+        "   - Γράψε ΟΛΕΣ τις ελληνικές λέξεις με 100% καθαρούς ελληνικούς χαρακτήρες — ΜΗΝ αφήνεις ποτέ λατινικούς, κυριλλικούς ή ξένους χαρακτήρες μέσα σε ελληνικές λέξεις. "
+        "   - ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (π.χ. <i>, </i>, <bos>, <TEXT_TO_POLISH>), αγκύλες αποσπάσματος ([... ...]), σημειώσεις επιμελητή (π.χ. [Σημείωση...]), σκέψεις/σχόλια ανάλυσης. "
         "   - Μην προσθέτεις εισαγωγικά σχόλια, προοίμια ή επεξηγηματικές σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
     ),
     "natural": (
@@ -156,19 +158,18 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    # Full Flash models FIRST for maximum linguistic quality & zero subword bleed
+    # Full Flash models (high translation quality, 1,500 RPD / 15 RPM)
     "gemini-3.5-flash",
-    "gemini-3.8-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash",
+    # High-throughput Flash-Lite models (1,500 RPD / 15 RPM fallback)
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
+    # Preview and tier-limited models (with automatic per-model cooldown tracking)
+    "gemini-3.8-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    # Flash-Lite models as fallback
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
     "gemini-pro-latest",
 ]
 
@@ -329,7 +330,7 @@ _LEAKED_ELLIPSIS_BRACKET_RE = re.compile(
     re.DOTALL,
 )
 _EDITOR_NOTE_RE = re.compile(
-    r"\[(?:Σημείωση\s+(?:επιμελητή|μεταφραστή|εκδότη)|Editor'?s?\s+note|Translator'?s?\s+note|Note)\s*:[^\]]*\]",
+    r"\[(?:Σημείωση(?:\s+(?:επιμελητή|μεταφραστή|εκδότη))?|Editor'?s?\s+note|Translator'?s?\s+note|Note)\s*:[^\]]*\]",
     re.IGNORECASE,
 )
 _COT_BLOCK_LINE_RE = re.compile(
@@ -354,6 +355,36 @@ _EXOTIC_SCRIPT_RE = re.compile(
 _GREEK_CHAR_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]")
 _LATIN_LETTER_RE = re.compile(r"[A-Za-z\u00c0-\u024f]")
 _SCI_UNIT_RE = re.compile(r"^[μµΔΩαβγλσπρ][A-Za-z]{1,2}\d*$")
+
+_MIXED_HOMOGLYPHS = {
+    'a': 'α', 'A': 'Α', 'b': 'β', 'B': 'Β', 'c': 'σ', 'C': 'Σ', 'd': 'δ', 'D': 'Δ',
+    'e': 'ε', 'E': 'Ε', 'h': 'η', 'H': 'Η', 'i': 'ι', 'I': 'Ι', 'k': 'κ', 'K': 'Κ',
+    'l': 'λ', 'm': 'μ', 'M': 'Μ', 'n': 'ν', 'N': 'Ν', 'o': 'ο', 'O': 'Ο', 'p': 'ρ',
+    'P': 'Ρ', 'r': 'ρ', 's': 'σ', 't': 'τ', 'T': 'Τ', 'u': 'υ', 'v': 'ν', 'w': 'ω',
+    'x': 'χ', 'X': 'Χ', 'y': 'υ', 'Y': 'Υ', 'z': 'ζ'
+}
+
+
+def fix_mixed_script_words(text: str) -> str:
+    """Repairs subword token bleed where Latin letters leaked inside Greek words."""
+    if not text:
+        return text
+
+    def _repair_tok(match):
+        w = match.group(0)
+        if "http" in w or "@" in w or _SCI_UNIT_RE.match(w):
+            return w
+        # Common multi-letter subwords
+        w = w.replace('ka', 'κα').replace('ri', 'ρι').replace('el', 'ει').replace('ANES', 'ανες')
+        out = []
+        for ch in w:
+            out.append(_MIXED_HOMOGLYPHS.get(ch, ch))
+        res = ''.join(out)
+        res = re.sub(r'σ(?=[.,;:!?\s]|$)', 'ς', res)
+        return res
+
+    pat = re.compile(r'(?<![A-Za-z0-9_\u0370-\u03ff])(?=[^\s]*[\u0370-\u03ff])(?=[^\s]*[A-Za-z])[^\s,;.:!?«»"\'()\[\]—–\-/\\*<>]+(?![A-Za-z0-9_\u0370-\u03ff])')
+    return pat.sub(_repair_tok, text)
 
 
 def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
@@ -389,8 +420,9 @@ def sanitize_ai_output(text: str) -> str:
     - HTML/XML inline tags ('εισπ</i>νευστική' -> 'εισπνευστική')
     - Special LLM tokens ('<bos>', '<eos>', '<|endoftext|>')
     - Echoed <PREVIOUS_CONTEXT_DO_NOT_REPEAT> blocks, wrapper XML tags, and '[... ...]' context echoes
-    - Bracketed editor/translator meta-notes ('[Σημείωση επιμελητή: ...]')
+    - Bracketed editor/translator meta-notes ('[Σημείωση...: ...]')
     - Leaked chain-of-thought / self-review lines ('**Review against Rules...**', 'Proceed to output...')
+    - Subword token bleed (mixed Greek/Latin chars repaired)
     - Markdown code fences wrapping prose
     - Broken hyphenated Greek words ('υποσχέ- θηκαν' -> 'υποσχέθηκαν')
     """
@@ -412,6 +444,9 @@ def sanitize_ai_output(text: str) -> str:
     cleaned = _HTML_INLINE_TAG_RE.sub("", cleaned)
     cleaned = _EDITOR_NOTE_RE.sub("", cleaned)
     cleaned = _LEAKED_PROMPT_HEADER_RE.sub("", cleaned)
+
+    # Repair any mixed-script subword token bleed
+    cleaned = fix_mixed_script_words(cleaned)
 
     # Remove Chain-of-Thought / self-review blocks (from first leaked review heading to end or per-line)
     out_lines: list[str] = []
@@ -531,6 +566,25 @@ def detect_greek_output_issues(
             and bool(_GREEK_CHAR_RE.search(clean_out[-1]))
         ):
             issues.append(f"truncated_midword(ratio={ratio:.2f})")
+
+    # 5. Untranslated English passages check
+    clean_out_words = [w for w in clean_out.split() if w.strip()]
+    if len(clean_out_words) >= 15:
+        greek_chars = len(_GREEK_CHAR_RE.findall(clean_out))
+        latin_chars = len(_LATIN_LETTER_RE.findall(clean_out))
+        if latin_chars > greek_chars and greek_chars < 50:
+            issues.append(f"untranslated_english(greek={greek_chars},latin={latin_chars})")
+        max_consec_latin = 0
+        cur_consec_latin = 0
+        for w in clean_out_words:
+            if re.match(r"^[A-Za-z]+[.,;:!?\"'«»—–-]?$", w) and not _SCI_UNIT_RE.match(w):
+                cur_consec_latin += 1
+                if cur_consec_latin > max_consec_latin:
+                    max_consec_latin = cur_consec_latin
+            else:
+                cur_consec_latin = 0
+        if max_consec_latin >= 12:
+            issues.append(f"untranslated_passage(max_consec_latin={max_consec_latin})")
 
     return issues
 
@@ -1604,7 +1658,7 @@ async def _call_gemini_api(
     meta_out: Optional[dict[str, Any]] = None,
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
-    from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
+    from backend.gemini_key_pool import GeminiKeyPool, GeminiRateLimiter, parse_gemini_error, mask_api_key
 
     # Resolve active key: use provided key or next available key from the 4-key pool
     attempted_keys: set[str] = set()
@@ -1725,6 +1779,20 @@ async def _call_gemini_api(
                 if filtered:
                     candidates = filtered
 
+            # Filter out candidate models that are currently cooling down for this specific key
+            candidates = GeminiKeyPool.get_active_models_for_key(active_key, candidates)
+            if not candidates:
+                if allow_pool_rotation:
+                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys)
+                    if next_pool_key:
+                        logger.warning(
+                            f"[Gemini Key Pool] All candidate models cooling down for key {mask_api_key(active_key)}. "
+                            f"Rotating to next key {mask_api_key(next_pool_key)}..."
+                        )
+                        current_key = next_pool_key
+                        continue
+                raise DailyQuotaExhaustedError("All Gemini candidate models are in cooldown across configured keys.")
+
             last_error = None
             saw_truncation = False
             saw_block = False
@@ -1759,7 +1827,10 @@ async def _call_gemini_api(
                 max_attempts = 3
                 for attempt in range(max_attempts):
                     try:
-                        req_timeout = aiohttp.ClientTimeout(total=20)
+                        # Smoothly pace requests to conform to per-key and per-model RPM/TPM limits
+                        await GeminiRateLimiter.acquire(active_key, model=model, estimated_tokens=1500)
+
+                        req_timeout = aiohttp.ClientTimeout(total=25)
                         async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
                             if resp.status == 200:
                                 result = await resp.json()
@@ -1780,7 +1851,7 @@ async def _call_gemini_api(
                                     saw_block = True
                                     last_error = f"Model {model} returned empty text after sanitization."
                                     break
-                                # Only pin full non-lite Flash models as the cached primary model
+                                # Cache working model
                                 if "lite" not in m_low and not m_low.startswith("gemma"):
                                     _CACHED_WORKING_MODEL = model
                                 if meta_out is not None:
@@ -1823,45 +1894,49 @@ async def _call_gemini_api(
                             elif resp.status == 429:
                                 err_text = await resp.text()
                                 last_error = f"Gemini API error (429): {err_text}"
-                                err_low = err_text.lower()
+                                parsed_err = parse_gemini_error(429, err_text)
+                                cat = parsed_err.get("category")
 
-                                # Parse retry delay if provided by Google API
-                                delay_sec = None
-                                m_delay = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', err_text)
-                                if m_delay:
-                                    try:
-                                        delay_sec = float(m_delay.group(1))
-                                    except Exception:
-                                        pass
-
-                                # If it is a model-specific tier limit ("check your plan and billing details"),
-                                # do NOT kill the key! Immediately try the next candidate model on the same key!
-                                if "billing details" in err_low or "plan" in err_low:
-                                    logger.info(f"Model {model} unavailable on current key tier ({resp.status}). Trying next candidate model...")
+                                # 1. Model-specific daily quota exhaustion (e.g. limit: 20 on gemini-3.8-flash)
+                                if cat == "QUOTA_EXCEEDED_DAILY_MODEL":
+                                    exh_mod = parsed_err.get("model") or model
+                                    cooldown_mod = parsed_err.get("retry_delay_sec") or 86400.0
+                                    GeminiKeyPool.mark_model_exhausted(
+                                        active_key, exh_mod, cooldown_seconds=cooldown_mod, reason=err_text[:120]
+                                    )
+                                    logger.warning(
+                                        f"[Gemini Key Pool] Model '{exh_mod}' reached daily quota limit ({parsed_err.get('quota_value', 'daily')} requests) "
+                                        f"on key {mask_api_key(active_key)}. Seamlessly falling back to next candidate model on SAME key..."
+                                    )
+                                    if _CACHED_WORKING_MODEL == model:
+                                        _CACHED_WORKING_MODEL = None
                                     break
 
-                                # Differentiate transient burst rate-limits (e.g. 15 RPM, retryDelay <= 60s)
-                                # from daily / persistent quota exhaustion
-                                is_daily_quota = (
-                                    "requests per day limit exceeded" in err_low
-                                    or "quota exceeded" in err_low
-                                    or "per day" in err_low
-                                    or "daily" in err_low
-                                    or (delay_sec is not None and delay_sec > 60.0)
-                                )
+                                # 2. Model tier restriction (e.g. plan/billing requirement)
+                                if cat == "MODEL_TIER_RESTRICTED":
+                                    GeminiKeyPool.mark_model_exhausted(active_key, model, cooldown_seconds=86400.0, reason="Tier restricted")
+                                    logger.info(f"Model {model} unavailable on current key tier ({resp.status}). Trying next candidate model on SAME key...")
+                                    if _CACHED_WORKING_MODEL == model:
+                                        _CACHED_WORKING_MODEL = None
+                                    break
 
-                                # If it is transient and we have attempts left, wait and retry with the same key
-                                if not is_daily_quota and attempt < max_attempts - 1:
-                                    wait_time = max(2.5, min(60.0, (delay_sec or 2.0) + 1.0))
-                                    logger.warning(
-                                        f"Model {model} transient rate limit (attempt {attempt + 1}/{max_attempts}). "
-                                        f"Backing off for {wait_time:.1f}s before retry..."
-                                    )
-                                    await asyncio.sleep(wait_time)
-                                    continue
+                                # 3. Transient per-minute rate limit (RPM burst / retryDelay <= 60s)
+                                if cat == "RATE_LIMIT_TRANSIENT":
+                                    delay_sec = parsed_err.get("retry_delay_sec") or (2.0 * (attempt + 1))
+                                    GeminiRateLimiter.record_retry_after(active_key, model=model, delay_seconds=delay_sec)
+                                    if attempt < max_attempts - 1:
+                                        wait_time = max(0.1, min(30.0, delay_sec + 0.1 if delay_sec < 1.0 else delay_sec + 0.5))
+                                        logger.warning(
+                                            f"Model {model} transient rate limit (attempt {attempt + 1}/{max_attempts}). "
+                                            f"Backing off for {wait_time:.1f}s before retry..."
+                                        )
+                                        await asyncio.sleep(wait_time)
+                                        continue
+                                    # If transient attempts exhausted on this model, advance to next model on same key
+                                    break
 
-                                # If transient retries are exhausted or it is an explicit daily quota error, mark key exhausted
-                                cooldown_sec = max(300.0, delay_sec if (delay_sec and delay_sec > 60.0) else 3600.0)
+                                # 4. Key-wide daily quota exhaustion
+                                cooldown_sec = parsed_err.get("retry_delay_sec") or 3600.0
                                 GeminiKeyPool.mark_key_exhausted(active_key, cooldown_sec, reason=err_text[:120])
                                 next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
                                 if next_pool_key:
@@ -1895,7 +1970,6 @@ async def _call_gemini_api(
                                 )
                             else:
                                 err_text = await resp.text()
-                                # If model rejected thinkingConfig or safetySettings, strip and retry cleanly
                                 if resp.status == 400 and "thinkingConfig" in req_payload.get("generationConfig", {}):
                                     req_payload = {
                                         **req_payload,
@@ -1949,34 +2023,18 @@ async def _call_gemini_api(
                 raise _TruncatedOutputError(last_error or "Gemini output truncated by MAX_TOKENS.")
             if saw_block:
                 raise _ContentBlockedError(last_error or "Gemini content blocked/empty across all candidates.")
-            err_low = (last_error or "").lower()
-            if "429" in err_low or "quota" in err_low or "resource_exhausted" in err_low or "rate limit" in err_low:
-                GeminiKeyPool.mark_key_exhausted(active_key, 3600.0, reason=err_low[:120])
-                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys) if allow_pool_rotation else None
+
+            # If all candidates on this key failed, attempt failover to next key in pool
+            if allow_pool_rotation:
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys)
                 if next_pool_key:
                     logger.warning(
-                        f"[Gemini Key Pool] Active key {mask_api_key(active_key)} rate limited. Seamlessly rotating to next key {mask_api_key(next_pool_key)}..."
+                        f"[Gemini Key Pool] All candidate models failed on key {mask_api_key(active_key)}. "
+                        f"Seamlessly rotating to next key {mask_api_key(next_pool_key)}..."
                     )
                     current_key = next_pool_key
                     continue
 
-                cooldown_to_trip = 3600.0
-                try:
-                    pool_st = GeminiKeyPool.get_pool_status()
-                    if pool_st.get("total_keys", 0) > 0:
-                        earliest_ts = pool_st.get("earliest_reset_timestamp", 0.0)
-                        if earliest_ts > time.time():
-                            cooldown_to_trip = max(5.0, earliest_ts - time.time())
-                except Exception:
-                    pass
-                trip_gemini_quota_exhaustion(cooldown_to_trip)
-                q_info = get_gemini_quota_info()
-                raise DailyQuotaExhaustedError(
-                    f"⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
-                    f"Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. "
-                    f"Έτοιμο ξανά στις {q_info['reset_time_str']} (απομένουν ~{q_info['cooldown_time_str']}). "
-                    f"Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings)."
-                )
             raise RuntimeError(last_error or "All Gemini candidate models failed.")
     finally:
         if owns_session:
@@ -2028,7 +2086,7 @@ async def translate_and_polish_direct_with_gemini(
 
     # Build direct translation+polish system instruction
     src_label = "Αγγλικά" if source_lang.lower().startswith("en") else "Ελληνικά"
-    tgt_label = "Ελληνικά" if target_lang.lower().startswith("gr") or target_lang.lower() == "el" else "Αγγλικά"
+    tgt_label = "Σύγχρονα Ελληνικά (ζωντανή νεοελληνική δημοτική γλώσσα)" if target_lang.lower().startswith("gr") or target_lang.lower() == "el" else "Αγγλικά"
     base_style_prompt = STYLE_PROMPTS.get(style, STYLE_PROMPTS["literature"])
 
     direct_prompt = (
@@ -2036,10 +2094,11 @@ async def translate_and_polish_direct_with_gemini(
         f"Μετάφρασε ΑΠΕΥΘΕΙΑΣ το ακόλουθο κείμενο από {src_label} σε άψογα, φυσικά και καλαίσθητα {tgt_label} "
         f"(σε ένα ενιαίο βήμα μετάφρασης + επιμέλειας), τηρώντας αυστηρά τις εξής αρχές:\n"
         f"{base_style_prompt}\n"
-        f"ΚΡΙΣΙΜΟ: Διατήρησε ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων (=== PAGE X ===) ακριβώς στις θέσεις τους. "
-        f"Μην παραλείπεις καμία παράγραφο ή πρόταση. ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (<i>, </i>, <bos>), "
-        f"σημειώσεις επιμελητή ([Σημείωση...]), σκέψεις ανάλυσης ή ξένα γράμματα (λατινικά/κυριλλικά/εβραϊκά) μέσα σε ελληνικές λέξεις. "
-        f"Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς σχόλια."
+        f"ΚΡΙΣΙΜΟ: Μετάφρασε ΠΛΗΡΩΣ όλες τις παραγράφους και προτάσεις — ΜΗΝ αφήνεις κανένα τμήμα κειμένου στα Αγγλικά. "
+        f"Διατήρησε ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων (=== PAGE X ===) ακριβώς στις θέσεις τους. "
+        f"ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (<i>, </i>, <bos>), σημειώσεις επιμελητή ([Σημείωση...]), σκέψεις ανάλυσης "
+        f"ή ξένα γράμματα (λατινικά/κυριλλικά/εβραϊκά) μέσα σε ελληνικές λέξεις. "
+        f"Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς κανένα άλλο σχόλιο ή σημείωση."
     )
 
     # Disk checkpoint support for instant resume

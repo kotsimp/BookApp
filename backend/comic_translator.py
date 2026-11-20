@@ -522,14 +522,18 @@ async def _ai_polish_comic_balloons(
         with urllib.request.urlopen(req_obj, timeout=15) as r:
             return r.read().decode("utf-8")
 
+    from backend.gemini_key_pool import GeminiKeyPool
+    pool_keys = GeminiKeyPool.get_keys()
+    initial_key = (api_key or "").strip()
+    allow_pool_rotation = (not initial_key) or (initial_key in pool_keys)
+
     for model in [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
         "gemini-3-flash-preview",
         "gemini-3.5-flash",
         "gemini-flash-latest",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-3.5-flash-lite",
-        "gemini-flash-lite-latest",
     ]:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
@@ -559,13 +563,14 @@ async def _ai_polish_comic_balloons(
             return results
         except urllib.error.HTTPError as h_err:
             if h_err.code in (401, 403):
-                from backend.gemini_key_pool import GeminiKeyPool
-                GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({h_err.code})")
-                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
-                if next_pool_key:
-                    logger.warning(f"[Gemini Key Pool] Comic Polish rotated from key {api_key[:6]}... to {next_pool_key[:6]}... on auth error")
-                    api_key = next_pool_key
-                    continue
+                if allow_pool_rotation:
+                    GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({h_err.code})")
+                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                    if next_pool_key:
+                        logger.warning(f"[Gemini Key Pool] Comic Polish rotated from key {api_key[:6]}... to {next_pool_key[:6]}... on auth error")
+                        api_key = next_pool_key
+                        continue
+                raise PermissionError(f"Gemini API auth error ({h_err.code})")
             if h_err.code == 429:
                 err_body = ""
                 try:
@@ -969,10 +974,12 @@ async def _detect_comic_balloons_vision_async(
 
     try:
         from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
-        if not api_key or GeminiKeyPool.is_key_exhausted(api_key):
-            active_pool_key = GeminiKeyPool.get_active_key()
-            if active_pool_key:
-                api_key = active_pool_key
+        pool_keys = GeminiKeyPool.get_keys()
+        initial_key = (api_key or "").strip()
+        if not initial_key or (not initial_key.startswith(("AQ.Test", "AIzaTest")) and GeminiKeyPool.is_key_exhausted(initial_key)):
+            initial_key = GeminiKeyPool.get_active_key() or initial_key
+        allow_pool_rotation = (not (api_key or "").strip()) or (initial_key in pool_keys)
+        api_key = initial_key
 
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         # Up to 2 rounds so transient 429/503 spikes can recover cleanly
@@ -1045,18 +1052,18 @@ async def _detect_comic_balloons_vision_async(
                         elif resp.status in (400, 401, 403):
                             err_detail = await resp.text()
                             if "API_KEY_INVALID" in err_detail or "not valid" in err_detail.lower() or resp.status in (401, 403):
-                                from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
-                                logger.warning(
-                                    f"[Gemini Key Pool] Comic Vision key {mask_api_key(api_key)} auth error ({resp.status}): {err_detail[:120]}. "
-                                    f"Marking key and rotating..."
-                                )
-                                GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({resp.status}): {err_detail[:120]}")
-                                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
-                                if next_pool_key:
-                                    logger.info(f"[Gemini Key Pool] Comic Vision rotated to next key {mask_api_key(next_pool_key)}")
-                                    api_key = next_pool_key
-                                    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-                                    continue
+                                if allow_pool_rotation:
+                                    logger.warning(
+                                        f"[Gemini Key Pool] Comic Vision key {mask_api_key(api_key)} auth error ({resp.status}): {err_detail[:120]}. "
+                                        f"Marking key and rotating..."
+                                    )
+                                    GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({resp.status}): {err_detail[:120]}")
+                                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                                    if next_pool_key:
+                                        logger.info(f"[Gemini Key Pool] Comic Vision rotated to next key {mask_api_key(next_pool_key)}")
+                                        api_key = next_pool_key
+                                        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+                                        continue
                                 logger.error(f"Gemini API key is invalid across all pool keys: {err_detail}")
                                 raise PermissionError("Το Gemini API Key είναι άκυρο. Ελέγξτε το κλειδί σας στις Ρυθμίσεις (Settings).")
                             if resp.status == 400 and ("thinking" in err_detail.lower() or "safety" in err_detail.lower()):
