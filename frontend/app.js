@@ -2650,15 +2650,24 @@ async function openAiPolishModal() {
     }
   } catch (_) {}
 
-  // Prefer whichever has more keys — NEVER silently discard user keys from local storage!
-  const poolKeys = (localPool.length >= serverPool.length && localPool.length > 0) ? localPool : serverPool;
+  // Intelligent merge: retain every unique key from both server and local storage!
+  const poolKeys = [...serverPool];
+  for (const k of localPool) {
+    if (k && !poolKeys.includes(k) && poolKeys.length < 4) {
+      poolKeys.push(k);
+    }
+  }
 
-  // If local has more keys than server, sync them to server immediately
-  if (localPool.length > serverPool.length && localPool.length > 0) {
+  // Keep both local and server synchronized with the complete pool
+  if (poolKeys.length > 0) {
+    localStorage.setItem('gemini_api_key', poolKeys[0]);
+    localStorage.setItem('gemini_api_keys', JSON.stringify(poolKeys));
+  }
+  if (poolKeys.length > serverPool.length) {
     fetch(`${API}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gemini_api_key: localPool[0], gemini_api_keys: localPool }),
+      body: JSON.stringify({ gemini_api_key: poolKeys[0], gemini_api_keys: poolKeys }),
     }).then(r => r.json()).then(d => {
       if (d.pool) renderGeminiPoolStatus(d.pool);
     }).catch(() => {});
@@ -2994,6 +3003,11 @@ async function saveGeminiKeyOnly() {
       const data = await res.json();
       if (data.pool) renderGeminiPoolStatus(data.pool);
     }
+    // Keep input slots cleanly aligned with saved keys
+    slotIds.forEach((id, idx) => {
+      const input = document.getElementById(id);
+      if (input) input.value = keys[idx] || '';
+    });
   } catch (_) {}
 
   try {
@@ -4104,22 +4118,51 @@ async function init() {
   applyAppMode(currentAppMode);
 
   // Auto-sync Gemini API key pool between localStorage and backend server
-  const localKey = localStorage.getItem('gemini_api_key');
-  let localKeys = [];
+  // Authoritative sync: Server settings are primary. Merge unique keys, never delete server keys on reload.
   try {
-    const rawKeys = localStorage.getItem('gemini_api_keys');
-    if (rawKeys) localKeys = JSON.parse(rawKeys);
+    const sRes = await fetch(`${API}/settings`);
+    if (sRes.ok) {
+      const sData = await sRes.json();
+      const serverKeys = Array.isArray(sData.gemini_api_keys) ? sData.gemini_api_keys : (sData.gemini_api_key ? [sData.gemini_api_key] : []);
+
+      let localKeys = [];
+      try {
+        const rawKeys = localStorage.getItem('gemini_api_keys');
+        if (rawKeys) localKeys = JSON.parse(rawKeys);
+      } catch (_) {}
+      if (!Array.isArray(localKeys) || localKeys.length === 0) {
+        const single = localStorage.getItem('gemini_api_key');
+        if (single) localKeys = [single];
+      }
+
+      // Merge unique keys preserving server priority up to 4 keys
+      const merged = [...serverKeys];
+      for (const k of localKeys) {
+        if (k && !merged.includes(k) && merged.length < 4) {
+          merged.push(k);
+        }
+      }
+
+      // Keep localStorage in sync with authoritative merged list
+      if (merged.length > 0) {
+        localStorage.setItem('gemini_api_key', merged[0]);
+        localStorage.setItem('gemini_api_keys', JSON.stringify(merged));
+      }
+
+      // If local had new keys that server was missing, sync merged pool to server
+      if (merged.length > serverKeys.length) {
+        await fetch(`${API}/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gemini_api_key: merged[0], gemini_api_keys: merged }),
+        });
+      }
+
+      if (sData.pool) {
+        renderGeminiPoolStatus(sData.pool);
+      }
+    }
   } catch (_) {}
-  if (localKey || (Array.isArray(localKeys) && localKeys.length > 0)) {
-    const payload = {};
-    if (localKey) payload.gemini_api_key = localKey;
-    if (Array.isArray(localKeys) && localKeys.length > 0) payload.gemini_api_keys = localKeys;
-    fetch(`${API}/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  }
 
   // Check backend is reachable
   try {
