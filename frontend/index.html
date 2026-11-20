@@ -270,7 +270,7 @@
         <div id="comic-format-hint" style="display:none; font-size:0.8rem; color:var(--amber); margin-top:8px; padding:8px 12px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; align-items:center; gap:8px">
           <span>💡 <strong>Graphic Novel mode:</strong> Τα formats TXT &amp; DOCX είναι απενεργοποιημένα επειδή διατηρούνται ανέπαφες οι εικόνες και τα μπαλόνια. Επιλέξτε <strong>PDF, CBZ, CBR ή EPUB</strong>.</span>
         </div>
-        <input type="hidden" id="tr-output-format" value="txt" />
+        <input type="hidden" id="tr-output-format" value="pdf" />
       </div>
 
       <div class="form-group mode-advanced-only">
@@ -443,10 +443,16 @@
       <div id="tr-result-quota-notice" style="display:none; margin:12px auto; max-width:640px; padding:10px 16px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.5); border-radius:10px; font-size:0.85rem; color:var(--text-primary); text-align:left; line-height:1.4">
         ⚠️ <strong>Ειδοποίηση Ορίου Gemini:</strong> <span id="tr-result-quota-text"></span>
       </div>
-      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px">
+      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:16px; align-items:center">
         <a class="btn btn-download" href="#" onclick="downloadOutput('tr'); return false;" id="tr-download-btn">
-          ⬇️ Download <span id="tr-format-label">TXT</span> File
+          ⬇️ Download <span id="tr-format-label">PDF</span> File
         </a>
+        <div style="display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap" id="tr-quick-download-formats">
+          <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'pdf')" title="Κατέβασμα ως PDF" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(239,68,68,0.4); color:var(--rose)">📄 PDF</button>
+          <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'docx')" title="Κατέβασμα ως Word DOCX" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(59,130,246,0.4); color:var(--blue)">📝 DOCX</button>
+          <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'epub')" title="Κατέβασμα ως EPUB e-book" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(16,185,129,0.4); color:var(--emerald)">📱 EPUB</button>
+          <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'txt')" title="Κατέβασμα ως Plain Text" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(124,58,237,0.4); color:var(--violet)">📃 TXT</button>
+        </div>
         <button class="btn btn-outline" onclick="copyTranslatedText()" id="tr-copy-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet); color:var(--violet); font-weight:600">
           📋 Αντιγραφή Κειμένου
         </button>

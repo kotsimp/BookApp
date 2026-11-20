@@ -997,7 +997,13 @@ async function startTranslation() {
 
   const sourceLang = document.getElementById('tr-source-lang').value;
   const targetLang = document.getElementById('tr-target-lang').value;
-  let outputFormat = document.getElementById('tr-output-format').value || 'txt';
+  let outputFormat = document.getElementById('tr-output-format').value || 'pdf';
+  const rawTrName = document.getElementById('tr-file-name')?.textContent || '';
+  const fileExt = (state.tr.file?.name || rawTrName || '').split('.').pop().toLowerCase();
+  if (currentAppMode === 'basic' && ['pdf', 'docx', 'epub', 'cbz', 'cbr', 'txt'].includes(fileExt)) {
+    outputFormat = fileExt;
+    document.getElementById('tr-output-format').value = fileExt;
+  }
   const layoutMode = document.getElementById('tr-layout-mode')?.value || 'standard';
   if (layoutMode === 'comic' && (outputFormat === 'txt' || outputFormat === 'docx')) {
     outputFormat = 'pdf';
@@ -1568,9 +1574,13 @@ function showResult(prefix, data) {
     }
   }
   if (prefix === 'tr') {
-    const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
+    const serverFmt = (data?.output_format || '').toLowerCase();
+    const curFmt = (document.getElementById('tr-output-format')?.value || '').toLowerCase();
+    const fmt = serverFmt || curFmt || 'pdf';
     const label = fmt.toUpperCase();
-    const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+    const trFmtInput = document.getElementById('tr-output-format');
+    if (trFmtInput) trFmtInput.value = fmt;
+    const layout = (data?.layout_mode || document.getElementById('tr-layout-mode')?.value || 'standard').toLowerCase();
     if (layout === 'comic') {
       meta.textContent = 'Το Graphic Novel / Comic μεταφράστηκε με επιτυχία! Η εικονογράφηση διατηρήθηκε 100% και τα μπαλόνια διαλόγου αποδόθηκαν στα Ελληνικά.';
     } else {
@@ -2083,6 +2093,11 @@ async function loadHistoryJob(jobId, mode) {
         const fmtBtn = document.getElementById(`fmt-${savedFmt}`);
         if (fmtBtn && !fmtBtn.disabled) {
           selectFormat(savedFmt, fmtBtn);
+        } else {
+          const trFmtInput = document.getElementById('tr-output-format');
+          if (trFmtInput) trFmtInput.value = savedFmt;
+          const labelEl = document.getElementById('tr-format-label');
+          if (labelEl) labelEl.textContent = savedFmt.toUpperCase();
         }
       }
 
