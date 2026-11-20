@@ -124,9 +124,21 @@ class TestE2ERegressionGuard(unittest.TestCase):
 
     def test_2_clear_all_jobs_empties_api_and_sqlite_preserving_cache(self):
         print("-> 2. Testing Clear All (DELETE /api/jobs) empties API + SQLite while preserving cache...")
-        from backend.job_manager import is_test_job_filename
+        from backend.job_manager import is_test_job_identifier
         existing_jobs = db_list_jobs(limit=1000)
-        existing_user_jobs = [j for j in existing_jobs if not is_test_job_filename(j.get("file_name"))]
+        existing_user_jobs = [j for j in existing_jobs if not is_test_job_identifier(j.get("job_id"), j.get("file_name"))]
+        import tempfile, shutil
+        backed_up_dirs = []
+        user_backup_dir = Path(tempfile.mkdtemp(prefix="user_jobs_bak_"))
+        for sub in ("uploads", "outputs"):
+            sub_path = Path("temp") / sub
+            if sub_path.exists():
+                for child in sub_path.iterdir():
+                    if child.is_dir() and not is_test_job_identifier(child.name):
+                        dst = user_backup_dir / sub / child.name
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copytree(str(child), str(dst))
+                        backed_up_dirs.append((dst, child))
         cache_before = db_get_cache_stats()["cached_entries"]
         tmp1 = Path("temp/reg_clear_1.docx")
         tmp2 = Path("temp/reg_clear_2.docx")
@@ -157,6 +169,14 @@ class TestE2ERegressionGuard(unittest.TestCase):
         finally:
             tmp1.unlink(missing_ok=True)
             tmp2.unlink(missing_ok=True)
+            for dst, src in backed_up_dirs:
+                try:
+                    if dst.exists() and not src.exists():
+                        src.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copytree(str(dst), str(src))
+                except Exception:
+                    pass
+            shutil.rmtree(str(user_backup_dir), ignore_errors=True)
             for uj in existing_user_jobs:
                 try:
                     db_save_job(uj)

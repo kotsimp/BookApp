@@ -50,8 +50,8 @@ def _start_temp_server():
 
 
 def _clear_test_sessions():
-    """Clear all test jobs, batch queue items, and temp test artifacts while preserving translation_cache."""
-    for endpoint in ("/api/queue", "/api/jobs"):
+    """Clear all test jobs, batch queue items, and temp test artifacts while preserving user jobs and translation_cache."""
+    for endpoint in ("/api/queue", "/api/jobs/tests/cleanup"):
         try:
             req = urllib.request.Request(f"http://127.0.0.1:8000{endpoint}", method="DELETE")
             with urllib.request.urlopen(req, timeout=5):
@@ -59,33 +59,17 @@ def _clear_test_sessions():
         except Exception:
             pass
 
-    # Fallback SQLite + disk cleanup in case server wasn't reachable
-    db_file = BASE_DIR / "data" / "bookapp.db"
-    if db_file.exists():
-        try:
-            import sqlite3
-            with sqlite3.connect(str(db_file)) as conn:
-                conn.execute("DELETE FROM jobs")
-                conn.commit()
-        except Exception:
-            pass
+    # Fallback cleanup of test jobs in case server wasn't reachable
+    try:
+        from backend.job_manager import cleanup_test_jobs
+        cleanup_test_jobs()
+    except Exception:
+        pass
 
-    for sub in ("uploads", "outputs"):
-        sub_dir = BASE_DIR / "temp" / sub
-        if sub_dir.is_dir():
-            for child in list(sub_dir.iterdir()):
-                try:
-                    if child.is_dir():
-                        shutil.rmtree(child, ignore_errors=True)
-                    else:
-                        child.unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-    # Remove stray temp/test_* or sample_* files created by tests
+    # Remove stray temp/test_* or sample_* files created by tests in root temp dir
     temp_dir = BASE_DIR / "temp"
     if temp_dir.is_dir():
-        for pattern in ("test_*", "sample_*"):
+        for pattern in ("test_*", "sample_*", "reg_*", "q_iso_*"):
             for f in temp_dir.glob(pattern):
                 try:
                     if f.is_dir():
