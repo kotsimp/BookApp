@@ -2912,21 +2912,25 @@ async function saveGeminiKeyOnly() {
   await checkGlobalGeminiQuotaStatus();
 
   // If there is an active job or queue waiting on quota, automatically resume it now!
-  if (state.tr.jobId && (state.tr.status === 'error' || state.tr.status === 'idle')) {
+  const hasVisibleTrResume = (
+    document.getElementById('tr-resume-btn')?.style.display !== 'none' ||
+    document.getElementById('tr-error-resume-btn')?.style.display !== 'none'
+  );
+  if (state.tr.jobId && state.tr.status !== 'done' && (state.tr.status === 'error' || state.tr.status === 'idle' || hasVisibleTrResume)) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση μετάφρασης...`, 'success');
     setTimeout(() => {
       resumeTranslation('tr');
-    }, 600);
+    }, 400);
     return;
   }
 
-  if (_batchQueueState.total_count > 0 && (_batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
+  if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση της ουράς...`, 'success');
     setTimeout(() => {
-      resumeBatchQueue();
-    }, 600);
+      startBatchQueue();
+    }, 400);
     return;
   }
 
