@@ -2501,22 +2501,24 @@ let _polishRunning = false;
 function toggleApiKeyVisibility() {
   const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
   const firstInput = document.getElementById('gemini-api-key');
-  const isPass = firstInput && firstInput.type === 'password';
-  const newType = isPass ? 'text' : 'password';
+  const isHidden = firstInput && (firstInput.type === 'password' || firstInput.style.webkitTextSecurity !== 'none');
   const labelEl = document.getElementById('toggle-key-label');
 
   slotIds.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.type = newType;
+    if (el) {
+      el.type = 'text';
+      el.style.webkitTextSecurity = isHidden ? 'none' : 'disc';
+    }
   });
 
   const btn = document.getElementById('btn-toggle-key');
   if (btn) {
     const iconSpan = btn.querySelector('span:first-child');
-    if (iconSpan) iconSpan.textContent = isPass ? '🔒' : '👁️';
+    if (iconSpan) iconSpan.textContent = isHidden ? '🔒' : '👁️';
   }
   if (labelEl) {
-    labelEl.textContent = isPass ? 'Απόκρυψη' : 'Εμφάνιση';
+    labelEl.textContent = isHidden ? 'Απόκρυψη' : 'Εμφάνιση';
   }
 }
 
@@ -2618,34 +2620,49 @@ async function openAiPolishModal() {
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
 
-  let poolKeys = [];
+  let localPool = [];
   try {
     const rawLocal = localStorage.getItem('gemini_api_keys');
     if (rawLocal) {
-      poolKeys = JSON.parse(rawLocal);
+      localPool = JSON.parse(rawLocal);
     }
   } catch (_) {}
 
-  if (!Array.isArray(poolKeys) || poolKeys.length === 0) {
+  if (!Array.isArray(localPool) || localPool.length === 0) {
     const single = localStorage.getItem('gemini_api_key');
-    if (single) poolKeys = [single];
+    if (single) localPool = [single];
   }
 
   // Fetch latest settings & pool state from server
+  let serverPool = [];
   try {
     const sRes = await fetch(`${API}/settings`);
     if (sRes.ok) {
       const sData = await sRes.json();
       if (Array.isArray(sData.gemini_api_keys) && sData.gemini_api_keys.length > 0) {
-        poolKeys = sData.gemini_api_keys;
-      } else if (sData.gemini_api_key && poolKeys.length === 0) {
-        poolKeys = [sData.gemini_api_key];
+        serverPool = sData.gemini_api_keys;
+      } else if (sData.gemini_api_key) {
+        serverPool = [sData.gemini_api_key];
       }
       if (sData.pool) {
         renderGeminiPoolStatus(sData.pool);
       }
     }
   } catch (_) {}
+
+  // Prefer whichever has more keys — NEVER silently discard user keys from local storage!
+  const poolKeys = (localPool.length >= serverPool.length && localPool.length > 0) ? localPool : serverPool;
+
+  // If local has more keys than server, sync them to server immediately
+  if (localPool.length > serverPool.length && localPool.length > 0) {
+    fetch(`${API}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gemini_api_key: localPool[0], gemini_api_keys: localPool }),
+    }).then(r => r.json()).then(d => {
+      if (d.pool) renderGeminiPoolStatus(d.pool);
+    }).catch(() => {});
+  }
 
   const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
   slotIds.forEach((id, idx) => {
@@ -2930,7 +2947,11 @@ function onGeminiQuotaRestored() {
 async function saveGeminiKeyOnly() {
   const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
   const keys = [];
-  for (const id of slotIds) {
+  const seen = new Set();
+  let hasDuplicate = false;
+
+  for (let idx = 0; idx < slotIds.length; idx++) {
+    const id = slotIds[idx];
     const input = document.getElementById(id);
     const val = (input ? input.value : '').trim();
     if (val) {
@@ -2938,13 +2959,20 @@ async function saveGeminiKeyOnly() {
                       (val.startsWith('AIza') && val.length >= 35) ||
                       (val.length >= 25);
       if (!isValid) {
-        toast('Μη έγκυρη μορφή API Key. Τα κλειδιά Google Gemini ξεκινούν με AIzaSy... ή AQ.', 'error');
+        toast(`Slot ${idx + 1}: Μη έγκυρη μορφή API Key (ξεκινούν με AIzaSy... ή AQ).`, 'error');
         return;
       }
-      if (!keys.includes(val)) {
+      if (seen.has(val)) {
+        hasDuplicate = true;
+      } else {
+        seen.add(val);
         keys.push(val);
       }
     }
+  }
+
+  if (hasDuplicate) {
+    toast('⚠️ Προσοχή: Εντοπίστηκε το ίδιο API Key σε πολλαπλά Slots. Τα κλειδιά πρέπει να είναι διαφορετικά για να λειτουργεί η εναλλαγή.', 'warning');
   }
 
   if (keys.length === 0) {
