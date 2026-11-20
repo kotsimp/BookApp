@@ -472,9 +472,10 @@ async function detectDocumentGenre(jobId, fileType) {
     });
     if (res.ok) {
       const gInfo = await res.json();
-      showGenreHint(gInfo);
-      if (currentAppMode === 'basic' && gInfo.genre) {
-        applyDetectedGenre(gInfo.genre);
+      const shouldAutoApply = (currentAppMode === 'basic' && Boolean(gInfo.genre));
+      showGenreHint(gInfo, shouldAutoApply);
+      if (shouldAutoApply) {
+        applyDetectedGenre(gInfo.genre, true);
       }
     }
   } catch (e) {
@@ -482,7 +483,7 @@ async function detectDocumentGenre(jobId, fileType) {
   }
 }
 
-function showGenreHint(gInfo) {
+function showGenreHint(gInfo, isAutoApplied = false) {
   const hintEl = document.getElementById('tr-genre-hint');
   if (!hintEl) return;
   const genreTitles = {
@@ -494,14 +495,18 @@ function showGenreHint(gInfo) {
   };
   const title = genreTitles[gInfo.genre] || gInfo.genre;
   const confPct = Math.round((gInfo.confidence || 0.8) * 100);
+  const actionHtml = isAutoApplied
+    ? `<span id="tr-genre-applied-badge" style="margin-left:auto; font-size:0.76rem; font-weight:600; color:var(--emerald); background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.35); white-space:nowrap">✓ Εφαρμόστηκε αυτόματα</span>`
+    : `<button id="tr-genre-apply-btn" class="btn-sm btn-outline" style="margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap" onclick="applyDetectedGenre('${gInfo.genre}')">Εφαρμογή Προτεινόμενου</button>`;
+
   hintEl.innerHTML = `
     <span>💡 <strong>Ανιχνεύθηκε ύφος:</strong> ${title} (${confPct}% βεβαιότητα). ${gInfo.reason || ''}</span>
-    <button class="btn-sm btn-outline" style="margin-left:auto; padding:3px 10px; font-size:0.75rem; white-space:nowrap" onclick="applyDetectedGenre('${gInfo.genre}')">Εφαρμογή Προτεινόμενου</button>
+    ${actionHtml}
   `;
   hintEl.style.display = 'flex';
 }
 
-function applyDetectedGenre(genre) {
+function applyDetectedGenre(genre, silent = false) {
   if (genre === 'comic') {
     const b = document.getElementById('layout-comic');
     if (b) selectLayout('comic', b);
@@ -512,7 +517,21 @@ function applyDetectedGenre(genre) {
     const b = document.getElementById('layout-standard');
     if (b) selectLayout('standard', b);
   }
-  toast(`✅ Εφαρμόστηκε στυλ: ${genre}`, 'success');
+
+  const applyBtn = document.getElementById('tr-genre-apply-btn');
+  if (applyBtn) {
+    const badge = document.createElement('span');
+    badge.id = 'tr-genre-applied-badge';
+    badge.style.cssText = 'margin-left:auto; font-size:0.76rem; font-weight:600; color:var(--emerald); background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.35); white-space:nowrap';
+    badge.textContent = silent ? '✓ Εφαρμόστηκε αυτόματα' : '✓ Εφαρμόστηκε';
+    if (applyBtn.parentNode) {
+      applyBtn.parentNode.replaceChild(badge, applyBtn);
+    }
+  }
+
+  if (!silent) {
+    toast(`✅ Εφαρμόστηκε στυλ: ${genre}`, 'success');
+  }
 }
 
 // ── Language Swap (Translate Tab) ──────────────────────────
