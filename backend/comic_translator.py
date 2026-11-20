@@ -36,24 +36,32 @@ COMIC_FONTS = [
     "C:/Windows/Fonts/comicbd.ttf",      # Comic Sans MS Bold
     "C:/Windows/Fonts/segoeui.ttf",      # Segoe UI
     "C:/Windows/Fonts/arial.ttf",         # Arial
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 
 CONDENSED_COMIC_FONTS = [
     "C:/Windows/Fonts/arialn.ttf",       # Arial Narrow (ideal fallback for super-dense Greek balloons)
     "C:/Windows/Fonts/arial.ttf",
     "C:/Windows/Fonts/segoeui.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 
 
-def _get_comic_font_path() -> str:
+def _get_comic_font_path() -> Optional[str]:
     """Returns the best available comic font supporting Greek characters."""
     for p in COMIC_FONTS:
         if os.path.exists(p):
             return p
-    return "C:/Windows/Fonts/arial.ttf"
+    return None
 
 
-def _get_condensed_comic_font_path() -> str:
+def _get_condensed_comic_font_path() -> Optional[str]:
     """Returns a narrow/condensed Unicode Greek font for dense speech balloons."""
     for p in CONDENSED_COMIC_FONTS:
         if os.path.exists(p):
@@ -213,8 +221,19 @@ def _plan_balloon_layout(
 
     page_w, page_h = page.rect.width, page.rect.height
     condensed_path = _get_condensed_comic_font_path()
-    primary_font = fitz.Font(fontfile=font_path)
-    condensed_font = fitz.Font(fontfile=condensed_path) if condensed_path != font_path else primary_font
+    try:
+        primary_font = fitz.Font(fontfile=font_path) if (font_path and os.path.exists(font_path)) else fitz.Font("helv")
+    except Exception:
+        primary_font = fitz.Font("helv")
+
+    try:
+        condensed_font = (
+            fitz.Font(fontfile=condensed_path)
+            if (condensed_path and os.path.exists(condensed_path) and condensed_path != font_path)
+            else primary_font
+        )
+    except Exception:
+        condensed_font = primary_font
 
     # Candidate layout strategies: (font_path, font_name, font_obj, ex_x, ex_y, sizes, line_mult, allow_break)
     strategies = [
@@ -277,9 +296,14 @@ def _draw_planned_balloon_text(
 ) -> None:
     """Draws horizontally & vertically centered Greek comic text for a precomputed balloon layout plan."""
     fpath, fname, fobj, final_box, fs, lines, line_h = plan
-    page.insert_font(fontname=fname, fontfile=fpath)
+    if fpath and os.path.exists(fpath):
+        try:
+            page.insert_font(fontname=fname, fontfile=fpath)
+        except Exception:
+            pass
     total_h = len(lines) * line_h
     start_y = final_box.y0 + max(1.0, (final_box.height - total_h) / 2.0) + fs * 0.85
+    use_fontname = fname if (fpath and os.path.exists(fpath)) else "helv"
     for idx, ln in enumerate(lines):
         lw = fobj.text_length(ln, fontsize=fs)
         tx = final_box.x0 + max(1.0, (final_box.width - lw) / 2.0)
@@ -287,7 +311,7 @@ def _draw_planned_balloon_text(
         page.insert_text(
             fitz.Point(tx, ty),
             ln,
-            fontname=fname,
+            fontname=use_fontname,
             fontsize=fs,
             color=text_color,
             overlay=True,

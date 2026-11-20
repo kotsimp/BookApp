@@ -10,11 +10,15 @@ WORKDIR /app
 
 # Install system dependencies:
 # - ffmpeg: required for M4B audiobook export and audio conversion
-# - fonts-dejavu-core: ensures clean Unicode Greek glyphs in generated PDFs
+# - fonts-dejavu-core & fonts-dejavu-extra: ensures clean Unicode Greek Serif & Sans glyphs in generated PDFs and comic speech balloons
+# - fonts-liberation: metric-compatible fallback fonts
+# - fontconfig: font management and discovery
 # - ca-certificates: secure HTTPS connections for APIs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu-core \
+    fonts-dejavu-extra \
+    fonts-liberation \
     fontconfig \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

@@ -11,6 +11,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
-      - ./temp/outputs:/app/temp/outputs
+      - ./temp:/app/temp
     environment:
       - PYTHONUNBUFFERED=1
