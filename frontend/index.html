@@ -59,7 +59,7 @@
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
     </button>
-    <button class="tab-btn" id="btn-settings" onclick="openAiPolishModal()" title="Ρυθμίσεις & Gemini API Key">
+    <button class="tab-btn" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
       <span class="tab-icon">🔑</span>
       <span class="tab-label">Gemini API Key</span>
       <span id="nav-gemini-quota-badge" style="display:none; font-size:0.72rem; padding:2px 7px; border-radius:10px; font-weight:600; margin-left:6px"></span>
@@ -85,7 +85,7 @@
             <span id="home-gemini-quota-text">Εξαντλήθηκε το ημερήσιο όριο χρήσης (15 RPM / 1.500 RPD).</span>
           </div>
         </div>
-        <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; white-space:nowrap; padding:5px 12px">
+        <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; white-space:nowrap; padding:5px 12px">
           🔑 Αλλαγή API Key
         </button>
       </div>
@@ -165,7 +165,7 @@
               <strong>Ημερήσιο Όριο Gemini (Free Tier):</strong>
               <span id="queue-quota-warning-text"></span>
             </div>
-            <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); white-space:nowrap; padding:4px 10px; font-size:0.8rem">
+            <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="border-color:var(--amber); color:var(--amber); white-space:nowrap; padding:4px 10px; font-size:0.8rem">
               🔑 Αλλαγή API Key
             </button>
           </div>
@@ -422,7 +422,7 @@
       <p class="progress-step" id="tr-progress-detail"></p>
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px">
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-          <button type="button" class="btn btn-sm btn-outline" id="tr-quota-key-btn" onclick="openAiPolishModal()" style="display:none; border-color:var(--amber); color:var(--amber); font-weight:600; padding:6px 12px">
+          <button type="button" class="btn btn-sm btn-outline" id="tr-quota-key-btn" onclick="openApiKeyModal()" style="display:none; border-color:var(--amber); color:var(--amber); font-weight:600; padding:6px 12px">
             🔑 Αλλαγή API Key
           </button>
           <button type="button" class="btn btn-sm btn-primary" id="tr-resume-btn" onclick="resumeTranslation('tr')" style="display:none; background:var(--emerald, #10b981); border:none; font-weight:600; padding:6px 14px; box-shadow:0 2px 10px rgba(16,185,129,0.35)">
@@ -462,7 +462,7 @@
         <button class="btn btn-secondary" onclick="openEditor()" id="tr-edit-btn" style="display:inline-flex; align-items:center; gap:8px">
           ✏️ Review &amp; Edit (Έλεγχος)
         </button>
-        <button class="btn btn-secondary" onclick="openAiPolishModal()" id="tr-polish-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet)">
+        <button class="btn btn-secondary" onclick="openAiPolishModal('polish')" id="tr-polish-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet)">
           ✨ AI Polish (Gemini)
         </button>
         <div class="audio-convert-group" style="display:inline-flex; align-items:center; gap:6px">
@@ -486,7 +486,7 @@
         </div>
         <div class="editor-actions">
           <button class="btn-sm btn-outline" onclick="toggleFindReplace()" id="btn-toggle-find">🔍 Find &amp; Replace</button>
-          <button class="btn-sm btn-ai" onclick="openAiPolishModal()">✨ AI Polish</button>
+          <button class="btn-sm btn-ai" onclick="openAiPolishModal('polish')">✨ AI Polish</button>
           <button class="btn-sm btn-primary" onclick="saveEditorText()" id="btn-save-editor">💾 Save &amp; Update Files</button>
           <button class="btn-sm btn-icon" onclick="closeEditor()" title="Close Editor">✕</button>
         </div>
@@ -529,7 +529,7 @@
           ❌ <strong>Error:</strong> <span id="tr-error-msg"></span>
         </div>
         <div id="tr-error-quota-actions" style="display:none; gap:8px; align-items:center; flex-wrap:wrap">
-          <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; padding:4px 10px; font-size:0.8rem">
+          <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; padding:4px 10px; font-size:0.8rem">
             🔑 Αλλαγή API Key
           </button>
           <button type="button" class="btn btn-sm btn-primary" id="tr-error-resume-btn" onclick="resumeTranslation('tr')" style="background:var(--emerald, #10b981); border:none; font-weight:600; padding:4px 12px; font-size:0.8rem; box-shadow:0 2px 8px rgba(16,185,129,0.3)">
@@ -750,7 +750,7 @@
       <p class="progress-step" id="ab-progress-detail">Preparing document...</p>
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px">
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-          <button type="button" class="btn btn-sm btn-outline" id="ab-quota-key-btn" onclick="openAiPolishModal()" style="display:none; border-color:var(--amber); color:var(--amber); font-weight:600; padding:6px 12px">
+          <button type="button" class="btn btn-sm btn-outline" id="ab-quota-key-btn" onclick="openApiKeyModal()" style="display:none; border-color:var(--amber); color:var(--amber); font-weight:600; padding:6px 12px">
             🔑 Αλλαγή API Key
           </button>
           <button type="button" class="btn btn-sm btn-primary" id="ab-resume-btn" onclick="resumeTranslation('ab')" style="display:none; background:var(--emerald, #10b981); border:none; font-weight:600; padding:6px 14px; box-shadow:0 2px 10px rgba(16,185,129,0.35)">
@@ -827,7 +827,7 @@
           ❌ <strong>Error:</strong> <span id="ab-error-msg"></span>
         </div>
         <div id="ab-error-quota-actions" style="display:none; gap:8px; align-items:center; flex-wrap:wrap">
-          <button type="button" class="btn btn-sm btn-outline" onclick="openAiPolishModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; padding:4px 10px; font-size:0.8rem">
+          <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; padding:4px 10px; font-size:0.8rem">
             🔑 Αλλαγή API Key
           </button>
           <button type="button" class="btn btn-sm btn-primary" id="ab-error-resume-btn" onclick="resumeTranslation('ab')" style="background:var(--emerald, #10b981); border:none; font-weight:600; padding:4px 12px; font-size:0.8rem; box-shadow:0 2px 8px rgba(16,185,129,0.3)">
@@ -863,15 +863,15 @@
 <div class="modal-overlay" id="ai-polish-modal" style="display:none">
   <div class="modal-box">
     <div class="modal-header">
-      <div class="modal-title">✨ AI Translation Polish &amp; Proofreading</div>
+      <div class="modal-title" id="ai-polish-modal-title">✨ AI Translation Polish &amp; Proofreading</div>
       <button class="modal-close" onclick="closeAiPolishModal()">✕</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px">
+      <p id="ai-polish-modal-desc" style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px">
         Refine the Greek translation into flawless, natural language using Google Gemini AI. Select your preferred style:
       </p>
 
-      <div class="form-group">
+      <div class="form-group" id="ai-polish-tone-group">
         <label class="form-label" for="ai-polish-style">Stylistic Tone / Ύφος Κειμένου</label>
         <select class="form-select" id="ai-polish-style">
           <option value="literature">📚 Λογοτεχνικό / Μυθιστόρημα (Literature, Fiction &amp; Sci-Fi)</option>
@@ -882,7 +882,7 @@
         </select>
       </div>
 
-      <div class="form-group" style="margin-top:10px">
+      <div class="form-group" id="ai-polish-bilingual-group" style="margin-top:10px">
         <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem">
           <input type="checkbox" id="ai-polish-bilingual" checked style="width:16px; height:16px; accent-color:var(--violet)" />
           <span style="font-weight:500">🎯 Source-Anchored Verification (Δίγλωσση σύγκριση με πρωτότυπο)</span>

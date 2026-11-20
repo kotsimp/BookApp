@@ -817,6 +817,9 @@ async def progress_stream(job_id: str):
                 "done_pages": int(getattr(job, "done_pages", 0) or 0),
                 "error": job.error,
                 "output_path": job.output_path,
+                "output_format": getattr(job, "output_format", "") or "",
+                "layout_mode": getattr(job, "layout_mode", "") or "",
+                "file_name": getattr(job, "file_name", "") or "",
                 "ai_polish": bool(getattr(job, "ai_polish", False)),
                 "quota_behavior": getattr(job, "quota_behavior", "wait"),
             }

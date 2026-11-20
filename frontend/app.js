@@ -2650,9 +2650,48 @@ function updateNavGeminiBadge(poolData) {
   }
 }
 
-async function openAiPolishModal() {
+let _currentAiModalMode = 'polish';
+
+async function openApiKeyModal() {
+  return openAiPolishModal('settings');
+}
+
+async function openAiPolishModal(mode = 'polish') {
+  _currentAiModalMode = (mode === 'settings' || mode === 'keys') ? 'settings' : 'polish';
   const modal = document.getElementById('ai-polish-modal');
   modal.style.display = 'flex';
+
+  const modalTitle = document.getElementById('ai-polish-modal-title');
+  const modalDesc = document.getElementById('ai-polish-modal-desc');
+  const toneGroup = document.getElementById('ai-polish-tone-group');
+  const bilingualGroup = document.getElementById('ai-polish-bilingual-group');
+  const btnRunPolish = document.getElementById('btn-run-polish');
+  const btnCancelPolish = document.getElementById('btn-cancel-polish');
+
+  if (_currentAiModalMode === 'settings') {
+    if (modalTitle) modalTitle.innerHTML = '🔑 Gemini Multi-Key Pool &amp; Ρυθμίσεις API';
+    if (modalDesc) modalDesc.innerHTML = 'Διαχειριστείτε τα δωρεάν Google Gemini API Keys (έως 4 κλειδιά) για αυτόματη εναλλαγή (auto-failover) και αδιάλειπτη ροή χωρίς διακοπές:';
+    if (toneGroup) toneGroup.style.display = 'none';
+    if (bilingualGroup) bilingualGroup.style.display = 'none';
+    if (btnRunPolish) btnRunPolish.style.display = 'none';
+    if (btnCancelPolish) {
+      btnCancelPolish.textContent = '✓ Έτοιμο / Κλείσιμο';
+      btnCancelPolish.className = 'btn btn-primary';
+    }
+  } else {
+    if (modalTitle) modalTitle.innerHTML = '✨ AI Translation Polish &amp; Proofreading';
+    if (modalDesc) modalDesc.innerHTML = 'Refine the Greek translation into flawless, natural language using Google Gemini AI. Select your preferred style:';
+    if (toneGroup) toneGroup.style.display = '';
+    if (bilingualGroup) bilingualGroup.style.display = '';
+    if (btnRunPolish) {
+      btnRunPolish.style.display = '';
+      btnRunPolish.disabled = _polishRunning;
+    }
+    if (btnCancelPolish) {
+      btnCancelPolish.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
+      btnCancelPolish.className = 'btn btn-secondary';
+    }
+  }
 
   let localPool = [];
   try {
@@ -2759,6 +2798,7 @@ async function openAiPolishModal() {
 
 function closeAiPolishModal() {
   document.getElementById('ai-polish-modal').style.display = 'none';
+  _currentAiModalMode = 'polish';
   if (!_polishRunning) {
     if (_polishPollTimer) {
       clearInterval(_polishPollTimer);
@@ -3197,7 +3237,7 @@ function openDirectPolishModal() {
     // Only default Source-Anchored Verification to checked when a prior translation exists
     biChk.checked = (state.tr.status === 'done');
   }
-  openAiPolishModal();
+  openAiPolishModal('polish');
 }
 
 async function openDirectEditor() {
