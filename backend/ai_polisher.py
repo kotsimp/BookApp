@@ -1206,7 +1206,7 @@ async def polish_text_with_gemini(
                         except Exception as ex_r:
                             right_err = ex_r
                             right_txt = "\n\n".join(f"{m}\n\n{c}" if m else c for m, c in batch_items[mid:])
-                        if not left_ok and not right_ok:
+                        if not left_txt.strip() and not right_txt.strip():
                             raise (left_err or right_err or RuntimeError(reason_label))
                         right_first_pg = None
                         pm_r = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", batch_items[mid][0])
@@ -1709,19 +1709,13 @@ async def _call_gemini_api(
                     if pref in discovered and pref not in candidates:
                         candidates.append(pref)
 
-                # 2. Other non-gemma, non-lite models
+                # 2. Other valid Gemini models (exclude research, embedding, and non-generative models)
+                _EXCLUDED_MODELS = ("gemma", "hydrogen", "neon", "carbon", "robotics", "computer-use", "custom", "embedding", "aqa", "imagen")
                 for m in discovered:
-                    if not m.startswith("gemma") and "lite" not in m.lower() and m not in candidates:
-                        candidates.append(m)
-
-                # 3. Remaining non-gemma (lite) models
-                for m in discovered:
-                    if not m.startswith("gemma") and m not in candidates:
-                        candidates.append(m)
-
-                # 4. Gemma models as last resort
-                for m in discovered:
-                    if m.startswith("gemma") and m not in candidates:
+                    m_low = m.lower()
+                    if any(bad in m_low for bad in _EXCLUDED_MODELS):
+                        continue
+                    if m not in candidates:
                         candidates.append(m)
             else:
                 for fb in PREFERRED_FLASH_MODELS:
@@ -1767,7 +1761,7 @@ async def _call_gemini_api(
                 max_attempts = 3
                 for attempt in range(max_attempts):
                     try:
-                        req_timeout = aiohttp.ClientTimeout(total=60)
+                        req_timeout = aiohttp.ClientTimeout(total=20)
                         async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
                             if resp.status == 200:
                                 result = await resp.json()
@@ -1776,6 +1770,8 @@ async def _call_gemini_api(
                                     saw_block = True
                                     last_error = f"Model {model} returned empty/blocked content (reason: {finish_reason or 'UNKNOWN'})"
                                     logger.warning(f"Model {model} candidate returned no content parts (finishReason: {finish_reason or 'UNKNOWN'})")
+                                    if finish_reason in ("SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST"):
+                                        raise _ContentBlockedError(f"Gemini content blocked by safety policy ({finish_reason})")
                                     break
                                 if finish_reason == "MAX_TOKENS":
                                     logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
@@ -2211,7 +2207,7 @@ async def translate_and_polish_direct_with_gemini(
                             tr_r = await _translate_with_retry(txt_r, source_lang, target_lang) if txt_r else ""
                             fb_r.append(f"=== PAGE {pn_r} ===\n{tr_r}" if pn_r is not None else tr_r)
                         right_res = "\n\n".join(fb_r)
-                    if not left_ok and not right_ok:
+                    if not left_res.strip() and not right_res.strip():
                         raise (left_err or right_err or RuntimeError(reason_label))
                     r_first_pg = b_items[mid][0]
                     right_clean = _deduplicate_batch_boundary(left_res, right_res, expected_first_page=r_first_pg)
@@ -2247,7 +2243,7 @@ async def translate_and_polish_direct_with_gemini(
                             right_err = ex_r
                             from backend.translator import _translate_with_retry
                             right_res = await _translate_with_retry(r_txt, source_lang, target_lang)
-                        if not left_ok and not right_ok:
+                        if not left_res.strip() and not right_res.strip():
                             raise (left_err or right_err or RuntimeError(reason_label))
                         right_clean = _deduplicate_batch_boundary(left_res, right_res, expected_first_page=None)
                         return f"{left_res.strip()}\n\n{right_clean.strip()}".strip()
