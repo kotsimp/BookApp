@@ -4,7 +4,7 @@
 
 'use strict';
 
-const API = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null' && window.location.protocol.startsWith('http'))
+const API = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null' && (window.location.protocol || '').startsWith('http'))
   ? `${window.location.origin}/api`
   : 'http://localhost:8000/api';
 
@@ -771,7 +771,7 @@ function detectTextLanguage(text) {
 function restrictAudiobookLanguage(allowedLang) {
   const langSelect = document.getElementById('ab-lang-select');
   if (!langSelect) return;
-  Array.from(langSelect.options).forEach(opt => {
+  Array.from(langSelect.options || []).forEach(opt => {
     const blocked = Boolean(allowedLang && opt.value !== allowedLang);
     opt.disabled = blocked;
     opt.hidden = blocked;
@@ -783,7 +783,7 @@ function restrictAudiobookLanguage(allowedLang) {
 }
 
 function updateVoices() {
-  const lang = document.getElementById('ab-lang-select').value;
+  const lang = document.getElementById('ab-lang-select')?.value || 'greek';
   const transOpt = document.getElementById('ab-translate-option');
   const useTranslated = document.getElementById('ab-use-translated');
   if (transOpt && transOpt.style.display !== 'none' && useTranslated) {
@@ -853,11 +853,13 @@ function playVoicePreview(voiceCode, event, customText = null) {
   if (sample) {
     url += `&text=${encodeURIComponent(sample)}`;
   }
-  currentAudioPreview = new Audio(url);
-  toast(`🔊 Παραγωγή δείγματος για ${voiceCode}...`, 'info');
-  currentAudioPreview.play().catch(e => {
-    console.debug('Preview audio playback failed:', e);
-  });
+  if (typeof Audio !== 'undefined') {
+    currentAudioPreview = new Audio(url);
+    toast(`🔊 Παραγωγή δείγματος για ${voiceCode}...`, 'info');
+    currentAudioPreview.play().catch(e => {
+      console.debug('Preview audio playback failed:', e);
+    });
+  }
 }
 
 async function playActiveVoiceCustomPreview() {
@@ -1906,7 +1908,10 @@ async function deleteHistoryJob(event, jobId) {
 }
 
 async function clearAllHistory() {
-  if (!confirm('Are you sure you want to delete all session history and temporary files?')) {
+  const doConfirm = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+    ? window.confirm
+    : (typeof confirm === 'function' ? confirm : null);
+  if (doConfirm && !doConfirm('Are you sure you want to delete all session history and temporary files?')) {
     return;
   }
   try {
@@ -2109,7 +2114,9 @@ async function openEditor() {
     document.getElementById('editor-translated-text').value = data.translated_text || '';
     clearEditorDirty();
     updateEditorStats();
-    editorCard.scrollIntoView({ behavior: 'smooth' });
+    if (typeof editorCard?.scrollIntoView === 'function') {
+      editorCard.scrollIntoView({ behavior: 'smooth' });
+    }
   } catch (err) {
     toast(`Failed to load text for editor: ${err.message}`, 'error');
   }
@@ -2969,8 +2976,12 @@ function openDirectPolishModal() {
 
 async function openDirectEditor() {
   const editorCard = document.getElementById('tr-editor-card');
-  editorCard.style.display = 'block';
-  editorCard.scrollIntoView({ behavior: 'smooth' });
+  if (editorCard) {
+    editorCard.style.display = 'block';
+    if (typeof editorCard.scrollIntoView === 'function') {
+      editorCard.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
 
   if (state.tr.jobId) {
     await openEditor();
