@@ -1315,6 +1315,14 @@ function updateProgress(prefix, data) {
   document.getElementById(`${prefix}-progress-bar`).style.width = `${pct}%`;
   document.getElementById(`${prefix}-progress-step`).textContent = step;
 
+  const fileMetaEl = document.getElementById(`${prefix}-file-meta`);
+  if (fileMetaEl && (data.total_pages > 0 || data.total_chunks > 0)) {
+    const pagesTag = data.total_pages > 0 ? `${data.total_pages} pages · ` : '';
+    const fmtTag = data.output_format ? `${data.output_format.toUpperCase()} · ` : '';
+    const statusLabel = data.status === 'done' ? 'Completed' : (data.status === 'running' ? 'In Progress' : 'Ready');
+    fileMetaEl.textContent = `${pagesTag}${fmtTag}${statusLabel}`;
+  }
+
   // Update Hybrid Engine Badge
   const engineBadge = document.getElementById(`${prefix}-engine-badge`);
   if (engineBadge) {
@@ -2041,9 +2049,10 @@ async function loadHistoryJob(jobId, mode) {
       if (nameEl) nameEl.textContent = data.file_name;
       const pagesTag = data.total_pages > 0 ? `${data.total_pages} pages · ` : '';
       const fmtTag = data.output_format ? `${data.output_format.toUpperCase()} · ` : '';
-      if (metaEl) metaEl.textContent = data.status === 'done'
-        ? `Loaded from Session History · ${pagesTag}${fmtTag}Ready`
-        : `Loaded from Session History · ${pagesTag}${fmtTag}${data.current_step || 'Ready to resume'}`;
+      if (metaEl) {
+        const statusLabel = data.status === 'done' ? 'Completed' : (data.status === 'running' ? 'In Progress' : 'Ready');
+        metaEl.textContent = `Loaded from Session History · ${pagesTag}${fmtTag}${statusLabel}`;
+      }
       if (uploadZone) uploadZone.style.display = 'none';
       if (selectedFile) {
         selectedFile.style.display = '';
