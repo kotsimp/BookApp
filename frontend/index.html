@@ -55,6 +55,10 @@
       <span class="tab-icon">🎧</span>
       <span class="tab-label">Generate Audiobook</span>
     </button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-insights" id="btn-insights" onclick="switchTab('insights')">
+      <span class="tab-icon">💡</span>
+      <span class="tab-label">Book Insights</span>
+    </button>
     <button class="tab-btn" id="btn-glossary" onclick="openGlossaryModal()" style="margin-left:auto">
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
@@ -857,6 +861,159 @@
       </div>
     </div>
 
+  </section>
+
+  <!-- ════════════════════════════════════
+       TAB 3: BOOK INSIGHTS (Summaries, Synopses & Audio)
+       ════════════════════════════════════ -->
+  <section id="tab-insights" class="tab-content" role="tabpanel" aria-labelledby="btn-insights">
+
+    <div class="card animate-in">
+      <div class="card-title">
+        <span class="card-title-icon">📄</span>
+        Βιβλίο / Έγγραφο
+      </div>
+      <div class="upload-zone" id="ins-upload-zone"
+           onclick="document.getElementById('ins-file-input').click()"
+           ondragover="handleDragOver(event, 'ins-upload-zone')"
+           ondragleave="handleDragLeave(event, 'ins-upload-zone')"
+           ondrop="handleInsightsDrop(event)"
+           role="button" tabindex="0"
+           aria-label="Upload a document for Book Insights">
+        <span class="upload-icon">💡</span>
+        <h3>Ρίξτε εδώ το βιβλίο σας</h3>
+        <p>ή κάντε κλικ για επιλογή αρχείου</p>
+        <div class="file-types">
+          <span class="file-badge">PDF</span>
+          <span class="file-badge">DOCX</span>
+          <span class="file-badge">EPUB</span>
+        </div>
+        <input type="file" id="ins-file-input" accept=".pdf,.docx,.epub" hidden onchange="handleInsightsFileSelect(event)" />
+      </div>
+      <button type="button" class="btn btn-secondary" id="ins-use-current-btn" onclick="useCurrentDocumentForInsights()" style="display:none; margin-top:12px; width:100%">
+        📎 Χρήση του εγγράφου που ήδη ανεβάσατε
+      </button>
+      <div class="selected-file" id="ins-selected-file">
+        <span class="file-icon-large" id="ins-file-icon">📄</span>
+        <div class="file-info">
+          <div class="file-info-name" id="ins-file-name">filename.pdf</div>
+          <div class="file-info-meta" id="ins-file-meta">Ανάλυση…</div>
+        </div>
+        <button class="remove-file-btn" onclick="removeInsightsDocument()" aria-label="Αφαίρεση εγγράφου">✕</button>
+      </div>
+      <div id="ins-key-warning" role="alert" style="display:none; margin-top:12px; padding:12px 16px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.86rem; line-height:1.45">
+        ⚠️ Για τα Book Insights απαιτείται κλειδί Google Gemini API (δωρεάν).
+        <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="margin-left:6px">🔑 Προσθήκη κλειδιού</button>
+      </div>
+    </div>
+
+    <!-- Basic Mode -->
+    <div class="card animate-in mode-basic-only" id="ins-basic-card">
+      <div class="card-title">
+        <span class="card-title-icon">⚡</span>
+        1-Click Insights
+      </div>
+      <p style="font-size:0.85rem; color:var(--text-muted); margin:0 0 14px">Το αποτέλεσμα γράφεται αυτόματα στη γλώσσα του βιβλίου.</p>
+      <div class="ins-basic-grid">
+        <button type="button" class="btn btn-primary ins-big-btn" id="ins-basic-summary-btn" onclick="runInsight('basic', 'summary')" disabled>
+          📝 1-Click Summary<small>Σύντομη περίληψη</small>
+        </button>
+        <button type="button" class="btn btn-primary ins-big-btn" id="ins-basic-synopsis-btn" onclick="runInsight('basic', 'synopsis')" disabled>
+          📚 1-Click Synopsis<small>Πλήρης σύνοψη</small>
+        </button>
+      </div>
+      <p class="ins-reason" id="ins-basic-synopsis-reason" role="status" style="display:none"></p>
+    </div>
+
+    <!-- Advanced Mode -->
+    <div class="card animate-in mode-advanced-only" id="ins-adv-card">
+      <div class="card-title">
+        <span class="card-title-icon">⚙️</span>
+        Insights — Προχωρημένες Ρυθμίσεις
+      </div>
+      <div class="ins-adv-grid">
+        <fieldset class="ins-fieldset">
+          <legend>📝 Περίληψη (Summary)</legend>
+          <label class="form-label" for="ins-summary-type">Τύπος</label>
+          <select class="form-select" id="ins-summary-type">
+            <option value="one_sentence">Μίας πρότασης (20–40 λέξεις)</option>
+            <option value="short_summary" selected>Σύντομη (150–300 λέξεις)</option>
+            <option value="extended_summary">Εκτενής (500–1.000 λέξεις)</option>
+          </select>
+          <label class="form-label" for="ins-summary-lang">Γλώσσα εξόδου</label>
+          <select class="form-select" id="ins-summary-lang">
+            <option value="greek">Ελληνικά</option>
+            <option value="english">English</option>
+          </select>
+          <label class="form-label" for="ins-summary-format">Μορφή εξόδου</label>
+          <select class="form-select" id="ins-summary-format">
+            <option value="screen">Εμφάνιση στην οθόνη</option>
+            <option value="pdf">PDF</option>
+            <option value="docx">DOC / DOCX</option>
+            <option value="txt">TXT</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="ins-adv-summary-btn" onclick="runInsight('advanced', 'summary')" disabled style="width:100%; margin-top:12px">📝 Δημιουργία περίληψης</button>
+        </fieldset>
+        <fieldset class="ins-fieldset">
+          <legend>📚 Σύνοψη (Synopsis)</legend>
+          <label class="form-label" for="ins-synopsis-type">Τύπος</label>
+          <select class="form-select" id="ins-synopsis-type">
+            <option value="standard_synopsis" selected>Τυπική (800–1.200 λέξεις)</option>
+            <option value="extended_synopsis">Εκτενής (1.500–2.500 λέξεις)</option>
+          </select>
+          <label class="form-label" for="ins-synopsis-lang">Γλώσσα εξόδου</label>
+          <select class="form-select" id="ins-synopsis-lang">
+            <option value="greek">Ελληνικά</option>
+            <option value="english">English</option>
+          </select>
+          <label class="form-label" for="ins-synopsis-format">Μορφή εξόδου</label>
+          <select class="form-select" id="ins-synopsis-format">
+            <option value="screen">Εμφάνιση στην οθόνη</option>
+            <option value="pdf">PDF</option>
+            <option value="docx">DOC / DOCX</option>
+            <option value="txt">TXT</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="ins-adv-synopsis-btn" onclick="runInsight('advanced', 'synopsis')" disabled style="width:100%; margin-top:12px">📚 Δημιουργία σύνοψης</button>
+          <p class="ins-reason" id="ins-adv-synopsis-reason" role="status" style="display:none"></p>
+        </fieldset>
+      </div>
+      <p style="font-size:0.75rem; color:var(--text-muted); margin:10px 0 0">Τα όρια λέξεων είναι οδηγίες· σε μικρά κείμενα το μήκος προσαρμόζεται ώστε να μην προστίθενται πληροφορίες που δεν υπάρχουν στο βιβλίο.</p>
+    </div>
+
+    <!-- Progress -->
+    <div class="card" id="ins-progress-card" style="display:none" aria-live="polite">
+      <div class="progress-header" style="display:flex; justify-content:space-between; align-items:center">
+        <span class="progress-label" id="ins-progress-step">Έναρξη…</span>
+        <span class="progress-pct" id="ins-progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill shimmer" id="ins-progress-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div id="ins-error" class="ins-error" role="alert" style="display:none"></div>
+
+    <!-- Result -->
+    <div class="card" id="ins-result-card" style="display:none">
+      <div class="card-title">
+        <span class="card-title-icon">💡</span>
+        <span id="ins-result-title">Αποτέλεσμα</span>
+      </div>
+      <div class="ins-result-meta" id="ins-result-meta"></div>
+      <div class="ins-result-warnings" id="ins-result-warnings" style="display:none"></div>
+      <article class="ins-result-body" id="ins-result-body" tabindex="0"></article>
+      <div class="ins-actions">
+        <button type="button" class="btn btn-sm btn-secondary" id="ins-copy-btn" onclick="copyInsightText()">📋 Αντιγραφή</button>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('pdf')">⬇️ PDF</button>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('docx')">⬇️ DOCX</button>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('txt')">⬇️ TXT</button>
+        <button type="button" class="btn btn-sm btn-primary" id="ins-audio-btn" onclick="generateInsightAudio()">🎧 Δημιουργία ήχου</button>
+      </div>
+      <div id="ins-audio-box" style="display:none; margin-top:14px">
+        <audio id="ins-audio-player" controls preload="none" style="width:100%"></audio>
+        <a id="ins-audio-download" class="btn btn-sm btn-secondary" href="#" download style="margin-top:8px; display:inline-block">⬇️ Λήψη MP3</a>
+      </div>
+    </div>
   </section>
 
   <!-- ── Session History ── -->

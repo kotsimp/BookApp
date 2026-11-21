@@ -38,8 +38,9 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [AI Polish for Spoken Audio](#-ai-polish-for-spoken-audio)
    - [Built-In Pro Audiobook Player](#-built-in-pro-audiobook-player)
    - [Understanding Progress: "Audio Parts" vs "Pages"](#understanding-progress-audio-parts-vs-pages)
-5. [Session History & Task Management](#5-session-history--task-management)
-6. [Frequently Asked Questions & Troubleshooting](#6-frequently-asked-questions--troubleshooting)
+5. [Book Insights: Summaries, Synopses & Audio](#5-book-insights-summaries-synopses--audio)
+6. [Session History & Task Management](#6-session-history--task-management)
+7. [Frequently Asked Questions & Troubleshooting](#7-frequently-asked-questions--troubleshooting)
 
 ---
 
@@ -364,7 +365,61 @@ The progress indicator displays:
 
 ---
 
-## 5. Session History & Task Management
+## 5. Book Insights: Summaries, Synopses & Audio
+
+Open the **💡 Book Insights** tab. Upload a PDF, DOCX or EPUB (or press **📎 Use the document you already uploaded** to reuse the book from the Translate or Audiobook tab). The app shows how much readable text it found (words, estimated pages, language).
+
+> A **Google Gemini API key** is required (the same free key used for AI Polish). Without one, the buttons stay disabled and a message explains how to add a key.
+
+### ⚡ Basic Mode
+* **📝 1-Click Summary** — a short summary (about 150–300 words) of the main ideas or plot.
+* **📚 1-Click Synopsis** — a structured synopsis (about 800–1,200 words): subject, structure, themes, key developments, ending/conclusions.
+* The text is written automatically in the **language of the book**.
+
+### ⚙️ Advanced Mode
+| Summary types | Synopsis types |
+|---|---|
+| One sentence (20–40 words) · Short (150–300) · Extended (500–1,000) | Standard (800–1,200) · Extended (1,500–2,500) |
+
+For each, choose the **output language** (Greek or English) and the **output format**: on screen, PDF, DOC/DOCX or TXT. The result is always shown on screen as well, and you can download it later in any format with the ⬇️ buttons.
+
+**Word counts are guidelines.** For short documents the length is reduced automatically, so the text never contains padding or information that is not in the book.
+
+### 📏 Minimum length
+* **Synopsis:** needs at least **~1.5 pages of real text** (about 375 words). The app counts only meaningful text and ignores page numbers, repeated headers and links, so page counts of PDFs do not matter. For shorter documents the synopsis buttons are disabled, with an explanation.
+* **Summary:** needs at least about 80 words.
+* Scanned books (images only) contain no extractable text and cannot be summarised.
+
+### ✅ Quality check before you see anything
+Every text is checked automatically before it is displayed:
+* correct language;
+* the right length (one sentence for the one-sentence summary);
+* headings for synopses;
+* no names or numbers that do not appear in the book;
+* real condensation;
+* a synopsis that genuinely differs from the summary.
+
+Greek texts also get a proofreading pass. If a check fails, the text is regenerated once. If it still fails, you see an error instead of an unreliable text. Minor notes (e.g. length slightly outside the guideline) are shown above the result.
+
+### 🎧 Listening
+Press **🎧 Create audio** under any result. The final text is narrated exactly as written, with a Greek or English neural voice matching the text's language. Play it in the page or **⬇️ Download MP3**.
+
+### ⚠️ Messages you may see
+| Message | What to do |
+|---|---|
+| Document too short / not enough text | Use a longer document; scanned images have no text. |
+| Language not detected | Choose the output language in Advanced Mode. |
+| Gemini key required / key rejected | Add or correct your key with **🔑 Gemini API Key**. |
+| Daily Gemini limit reached / too many requests | Wait, or add another key to the pool. |
+| Connection problem | Check your internet connection and that the app is running. |
+| Quality check failed | Press the button again; the AI will write a new version. |
+| Audio or file export failed | Try again or choose another format. |
+
+Generating the same text twice reuses the saved result (no extra API usage). Pressing a button again while a generation is running does not start a duplicate.
+
+---
+
+## 6. Session History & Task Management
 
 The **Session History** panel at the bottom of the page tracks all jobs:
 * **Reload & Full Settings Restoration:** Clicking any history entry restores the document, output format, layout style, language direction, and page metrics.
@@ -375,7 +430,7 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 
 ---
 
-## 6. Frequently Asked Questions & Troubleshooting
+## 7. Frequently Asked Questions & Troubleshooting
 
 #### ❓ Can I download a translated book in another format without re-translating?
 * **Yes!** Simply click **PDF**, **DOCX**, **EPUB**, or **TXT** and click **⬇️ Download**. The conversion happens in less than one second without making new translation calls.

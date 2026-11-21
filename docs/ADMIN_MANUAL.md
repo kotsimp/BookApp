@@ -62,6 +62,25 @@ The application implements an asynchronous, event-driven API architecture:
 * **Graphic Novel & Manga (RTL) Comic Engine (`backend/comic_translator.py`, `backend/exporter.py`):** Prioritizes full Gemini Flash Vision models, supports Japanese Manga RTL reading progression, clamps `box_2d` to `[0..1000]`, sanitizes Greek uppercase dialytika (`ΐ`/`ΰ` ➔ `Ϊ`/`Ϋ`), renders balloons via a two-pass non-blank layout engine down to `3.0pt` with `Arial Narrow` fallback, sorts CBZ pages naturally (`page_1`, `page_2`, ..., `page_10`), and serializes concurrent vision checkpoints via `asyncio.Lock` and UUID temporary files.
 * **Greek Editorial Typography & Scripted Sanitization Pass (`backend/typography.py`):** 1.25M words/sec publishing engine that performs automated multi-stage editorial remediation: cross-lingual tokenizer bleed & foreign script removal (Polish `-łεś`, Hebrew, Armenian, Arabic, Ge'ez, Devanagari, Vietnamese words, Latin homoglyphs `k` ➔ `κ`, `pt` ➔ `πτ`, `an` ➔ `αν`, `for` ➔ `φορ`, `ti` ➔ `τι`, `Ta` ➔ `Τα`), code leak purge (`iterrows` ➔ `ίσως`), foreign word elimination (`podría` ➔ `μπορούσε`, `στην hull του` ➔ `στο κύτος του`, `Gang` ➔ `Συμμορία`), comedic calque & false friend fixes (`κατινιάσει τα πέταλα` ➔ `τινάξει τα πέταλα`, `άλωσε το πληκτρολόγιο` ➔ `άρπαξε το πληκτρολόγιο`, `αλόγους της Παναγίας` ➔ `αλογάκι της Παναγίας`, `το σκιασμένο πάνθηρα` ➔ `το σκιασμένο πλαίσιο`, `για ζήση` ➔ `για βιοπορισμό`, `να το λείψω` ➔ `να ζήσω χωρίς αυτό`, `ανθρωπάκια της κάψουλας` ➔ `άνθρωποι των λοβών`, `Είναι μια παρθένη, Σουζ` ➔ `Είναι μια παραίσθηση, Σουζ`), OCR/MT double accent cleanup (`σκύλί` ➔ `σκυλί`) while strictly preserving legitimate Greek enclitics (`το όνομά μου`, `κάνοντάς τα`), machine translation stutter elimination (`ο Σπίντελ ο Σπίντελ` ➔ `ο Σπίντελ`), translated URL restoration, standard Greek publishing quotes (`«...»`), dialogue em-dashes (`—`), and the modern Greek Rule of Final 'ν' (`δε/δεν`, `μη/μην`).
 * **Final Output Refinement & Quality-Control Stage (`backend/output_refiner.py`):** Independent, local-only (no API calls) stage invoked as the last step of `main._run_translation()` (after export, before `status="done"`) and `tts_engine.generate_audiobook()` (after assembly, before the `tts_tmp_*` chunk directory is removed). Each hook is wrapped in its own `try/except`: a failure is logged with traceback and the original output is kept; the job still completes. **Translations:** `refine_text_content()` applies conservative deterministic fixes (function-word stutters, accented monosyllables, final-ν, hyphenation, punctuation spacing, blank lines, three unambiguous calques). Ambiguous patterns are reported only. Layout-aware: `poetry`, `preserve` and `comic` skip whitespace changes; French-family targets keep the space before `; : ! ?`. Safety guards revert on page-marker change, paragraph-count change or >10% length drift. `refine_translation_output()` writes via `mkstemp` + `os.replace` (staging names end in `.refine-tmp`, never `.txt`). It re-exports PDF/DOCX/EPUB into a staging directory first, swaps the document after the text, and rolls the text back if the document swap fails. Flows that preserve formatting (comic, in-place DOCX/EPUB) pass `allow_reexport=False` and are inspection-only (`status="inspected"`). **Audiobooks:** `refine_audiobook_output_async()` checks the header (MP3-in-M4B fallback without ffmpeg accepted), mutagen duration, truncation (final size ≥ Σ chunk sizes) and section continuity against `expected_indices` (segments whose cleaned text is empty are excluded). It re-synthesises up to `MAX_AUDIO_HEAL_CHUNKS = 25` failed sections through the existing `_tts_chunk_with_retry`, re-assembles with the existing concat/M4B exporter into a staging file, validates it, then atomically replaces the original. ID3 tags are written only when `TIT2` is missing. **Configuration:** setting `final_refinement_enabled` (default `true`, `GET/POST /api/settings`), env var `FINAL_REFINEMENT_ENABLED` (takes precedence over the setting), and per-request `final_refinement` on `/api/translate`, `/api/audiobook` and `/api/polish`. Queue items follow the global setting. **Result:** a compact `refinement_report` (status, corrections, issues, missing sections) is persisted in the job metadata and exposed via `GET /api/status/{job_id}` and SSE.
+* **Book Insights (`backend/book_insights.py`):** Summaries, synopses and their audio, built only on existing services.
+  * **Reused services:** `parsers.parse_document` for extraction (cached per path and mtime, run with `asyncio.to_thread`); `ai_polisher._call_gemini_api` for generation (4-key pool rotation, `GeminiRateLimiter`, quota circuit breaker, SQLite `gemini_polish_v4` cache, `sanitize_ai_output`); `output_refiner.refine_text_content` to post-edit Greek; `exporter.export_text` for PDF/TXT, plus python-docx headings and bullets for DOCX; the `tts_engine` chunk helpers for audio (`split_into_chunks`, `_tts_chunk_with_retry`, `_concatenate_mp3s`, `tag_audiobook_file`), validated by `output_refiner.inspect_audiobook_quality`.
+  * **Job isolation:** `generate_audiobook()` is deliberately **not** used because it updates job state. Results are stored under `temp/outputs/<job_id>/insights/` (`<type>_<lang>.json` plus exports and MP3), a sub-folder the translation download fallback and the queue ZIP bundler never read. Deleting a job removes its insights.
+  * **Eligibility:** meaningful words exclude page-number lines, URLs and short repeated non-sentence lines (running headers). `WORDS_PER_PAGE = 250`, `MIN_SYNOPSIS_WORDS = 375` (1.5 pages), `MIN_SUMMARY_WORDS = 80`. Ineligible requests are rejected with HTTP 422 before any API call.
+  * **Targets:** 20–40, 150–300, 500–1,000, 800–1,200 and 1,500–2,500 words, capped by a source-length ratio (0.35/0.5/0.6/0.85) for short documents.
+  * **Language:** `detect_language()` returns `greek` / `english` / `other` / `None`. Basic Mode writes in the source language (`other` makes the model write in the source language; `None` returns HTTP 422).
+  * **Long documents:** above `SINGLE_PASS_CHARS = 90,000` characters the text is split into ~45k-character sections. Each section is condensed into notes in the source language (2 concurrent calls, cached and shared across types and languages). The notes are condensed again above 120k characters.
+  * **Quality gate (`validate_output`):** critical checks cover:
+    * wrong language, or more than 4% Latin-script words in Greek outside «quotes»;
+    * leaked prompt text;
+    * a one-sentence summary that isn't exactly one sentence of 15–50 words;
+    * length below 60% or above 180% of the target, or above 90% of the source;
+    * two or more unknown numbers of three or more digits;
+    * more than three capitalised names absent from the source (same-language outputs only);
+    * shingle similarity above 0.6 with the paired summary or synopsis.
+
+    One regeneration is made with the rejection reasons and `bypass_cache=True`. Output that still fails is never stored or shown (`ai_output_rejected`). Greek output also gets one proofreading call (temperature 0.1), kept only if heading count and length (±15%) are preserved.
+  * **Tasks:** in-memory background tasks. Identical in-flight requests (job, action, type, language) return the same `task_id` (`duplicate: true`). At most 2 generations run at once. Stored results are reused when the source hash and `INSIGHTS_VERSION` match. Errors carry a stable `code` and a Greek user message: `insufficient_text`, `too_short`, `unsupported_format`, `extraction_failed`, `language_detection_failed`, `no_api_key`, `quota_exhausted`, `rate_limited`, `auth_failed`, `network_error`, `ai_failed`, `ai_output_rejected`, `audio_failed`, `export_failed`.
+  * **Audio:** narrates `speech_text(final_text)`, which only strips Markdown markers. Any failed chunk fails the task, so the audio never silently skips text. The MP3 is invalidated when the text is regenerated.
 * **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously across different Google accounts (providing up to 6,000 free requests/day). Features sliding-window rate limiting (`GeminiRateLimiter` tracking RPM/TPM and smoothing request pacing), explicit Retry-After support, intelligent error payload classification (`parse_gemini_error`), per-model quota cooldown isolation (`_MODEL_COOLDOWNS` preventing low-quota models like `gemini-3.8-flash` with 20 RPD from blocking 1,500 RPD models on the same key), seamless key rotation upon HTTP 429 daily exhaustion, transient burst backoff (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when cooldowns expire or new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
 * **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
 * **Test Session Isolation & Disk Hygiene Guard (`backend/job_manager.py`, `backend/database.py`, `run_all_tests.py`):** Multi-layered protection separating test execution from user state. Broadened test pattern detection (`test_*`, `reg_*`, `mock_*`, `sample_*`, `direct_text*`, `book*`, `temp_*`, `stress_*`, `bench_*`) combined with pre-test filesystem/database snapshotting ensures 100% of temporary directories, orphaned artifacts, and test jobs are purged upon test completion without touching real user documents.
@@ -250,7 +269,7 @@ BookApp/
 ```
 
 ### REST API Administration Endpoints
-The backend provides **45 REST endpoints** for complete administrative control:
+The backend provides **52 REST endpoints** for complete administrative control:
 * `POST /api/translate`: Initiates document translation. Supports `quota_behavior: "wait" | "fallback"`.
 * `POST /api/audiobook`: Initiates neural audiobook synthesis.
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
@@ -265,6 +284,13 @@ The backend provides **45 REST endpoints** for complete administrative control:
 * `GET/HEAD /api/cover/{job_id}`: Inspects and retrieves active cover art.
 * `POST /api/cover/{job_id}`: Uploads custom cover artwork (`multipart/form-data`).
 * `DELETE /api/cover/{job_id}`: Removes cover artwork for a job.
+* `GET /api/insights/{job_id}/analysis`: Meaningful word count, estimated pages, detected language, summary/synopsis availability with reasons, `has_api_key`, existing insights.
+* `GET /api/insights/{job_id}`: Stored insights (full text, audio URL).
+* `POST /api/insights/generate`: `{"job_id", "insight_type": "summary"|"synopsis"|"one_sentence"|"short_summary"|"extended_summary"|"standard_synopsis"|"extended_synopsis", "language": "auto"|"greek"|"english", "api_key"?}` → `{"task_id", "duplicate"}`. HTTP 401 without a key, 422 for too-short/insufficient/undetectable documents, 400 for invalid options or unsupported formats.
+* `GET /api/insights/tasks/{task_id}`: Task progress, step, result or `{code, message}` error.
+* `POST /api/insights/export`: `{"job_id", "insight_type", "language", "format": "pdf"|"docx"|"doc"|"txt"}` → download URL.
+* `POST /api/insights/audio`: `{"job_id", "insight_type", "language", "voice_name"?}` → `{"task_id", "duplicate"}`.
+* `GET /api/insights/{job_id}/files/{filename}`: Serves exports/MP3 strictly from the job's `insights/` folder (name whitelist, no dot-files, resolved-parent check).
 * `GET /api/refine/config`: Final Output Refinement status (enabled flag, version, stages, `uses_external_api: false`).
 * `POST /api/refine`: On-demand refinement. `{"text": ...}` refines a snippet (nothing written; max 5M chars, HTTP 413 above). `{"job_id": ..., "mode": "translation"|"audiobook"|"auto"}` refines/validates that job's output. `file_path` is accepted **only** for files inside the job's own output folder (HTTP 400 otherwise). Running jobs are rejected with HTTP 409.
 
@@ -285,16 +311,16 @@ On application startup, `cleanup_old_jobs()` automatically deletes orphaned jobs
 
 ## 6. Automated Test Suite Execution
 
-The repository includes a comprehensive master test runner with **100% endpoint coverage across all 45 FastAPI routes**:
+The repository includes a comprehensive master test runner with **100% endpoint coverage across all 52 FastAPI routes**:
 
 > [!IMPORTANT]
 > **User Output Protection & Zero-Junk Guarantee During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore real user directories and SQLite records. All test sessions, temporary artifacts, and scratch directories created during tests are guaranteed 100% purged upon completion, ensuring zero junk files or test history in the user interface.
 
 ```bash
-# Execute all 43 test suites (Full Master Suite):
+# Execute all 44 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (38 local static, unit, contract, UI, and queue suites):
+# Fast execution (39 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
@@ -342,6 +368,16 @@ The master runner automatically executes all test suites:
 41. `test_gemini_diagnostics.py`: Dedicated API Key Diagnostics & Stress-Test Suite (CRUD, error parsing, sliding-window rate limiting, per-model isolation, E2E 4-key rotation simulation, pool exhaustion, cooldown recovery, transient backoff/retry, concurrency, and live key diagnostics).
 42. `test_scripted_editorial_pass.py`: Dedicated Sanitization & Scripted Editorial Pass Suite (verifying automated remediation of subword token bleed, code leaks, comedic calques, double accents, and stutters).
 43. `test_output_refinement.py`: Final Output Refinement stage (47 tests). Covers: automatic triggering at the end of the translation and audiobook workflows; correction of injected errors; no-op on clean text; meaning safety for ambiguous phrasing and emphatic repetition; poetry, French and code-like spacing; idempotency; empty, malformed and undecodable inputs; rollback on re-export, document-swap and write failures; inspection-only behaviour for format-preserved DOCX; audio header, truncation and missing-section detection; healing of failed sections; rejection of corrupt re-assembly and timeouts; metadata added only when missing; disabled-stage pass-through; settings, env and per-job toggles; a no-network guarantee; and API security (path traversal, foreign files, running jobs).
+44. `test_book_insights.py`: Book Insights (32 tests). Gemini and edge-tts are mocked in-process on a private uvicorn port. Covers:
+    * Basic and Advanced modes; all five types in Greek and English; word-count and structure guidelines; ordering (extended synopsis > synopsis > short summary).
+    * Summary vs synopsis distinctness; PDF/DOCX/DOC/TXT exports and export failure.
+    * Minimum-length thresholds below and above the limit, with no API usage when ineligible.
+    * Language detection (Greek/English/other/none); extraction failure; unsupported comics; missing key.
+    * Quota, network, auth and generic AI failures; the quality-gate retry, and rejection of wrong-language or fabricated output (never stored).
+    * Latin-script and condensation checks; the proofreading guard; English stutter collapse.
+    * Audio for all types with spoken text == final text; audio failure leaving no file; audio requiring generated text.
+    * Duplicate and concurrent requests; result caching; map-reduce for long books.
+    * File-endpoint traversal; XSS-safe Markdown rendering (Node); unchanged DocTranslate/Audiobook job state and downloads.
 
 All test suites consistently pass with **`42/42 PASS (37/37 in --fast mode · 45/45 FastAPI endpoints verified)`**.
 

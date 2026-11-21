@@ -1983,6 +1983,206 @@ async def refine_output_endpoint(req: RefinementRequest):
 
 
 # ---------------------------------------------------------------------------
+# Book Insights (summaries, synopses & audio versions) — backend/book_insights.py
+# ---------------------------------------------------------------------------
+
+class InsightsGenerateRequest(BaseModel):
+    job_id: str
+    insight_type: str                     # one_sentence | short_summary | extended_summary | standard_synopsis |
+                                          # extended_synopsis | summary (basic) | synopsis (basic)
+    language: Optional[str] = None        # 'greek' | 'english' | None/'auto' (= document language)
+    api_key: Optional[str] = None
+
+
+class InsightsExportRequest(BaseModel):
+    job_id: str
+    insight_type: str
+    language: str
+    format: str                           # pdf | docx | doc | txt
+
+
+class InsightsAudioRequest(BaseModel):
+    job_id: str
+    insight_type: str
+    language: str
+    voice_name: Optional[str] = None
+
+
+def _insights_http_error(e) -> HTTPException:
+    return HTTPException(getattr(e, "http_status", 400), detail=e.user_message)
+
+
+def _insights_job(job_id: str):
+    _validate_job_id(job_id)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Το έγγραφο δεν βρέθηκε. Ανεβάστε το ξανά.")
+    return job
+
+
+async def _insights_source_text(job) -> str:
+    from backend.book_insights import extract_document_text, InsightsError
+    if (job.file_type or "").lower() in ("cbz", "cbr", "zip") or (getattr(job, "layout_mode", "") or "") == "comic":
+        raise _insights_http_error(InsightsError("unsupported_format"))
+    try:
+        return await asyncio.to_thread(extract_document_text, job.file_path, job.file_type)
+    except InsightsError as e:
+        raise _insights_http_error(e)
+
+
+def _insights_resolve_type(raw: str) -> str:
+    from backend.book_insights import INSIGHT_TYPES, BASIC_TYPES, InsightsError
+    t = (raw or "").strip().lower()
+    t = BASIC_TYPES.get(t, t)
+    if t not in INSIGHT_TYPES:
+        raise _insights_http_error(InsightsError("invalid_request"))
+    return t
+
+
+def _insights_public_record(job_id: str, rec: dict) -> dict:
+    pub = {k: v for k, v in rec.items() if k not in ("source_hash", "text_hash", "audio_text_hash")}
+    if rec.get("audio_file"):
+        pub["audio_url"] = f"/api/insights/{job_id}/files/{rec['audio_file']}"
+    return pub
+
+
+@app.get("/api/insights/tasks/{task_id}")
+async def insights_task_status(task_id: str):
+    """Progress / result of a Book Insights background task."""
+    from backend.book_insights import get_task
+    if not re.fullmatch(r"[0-9a-f]{32}", task_id or ""):
+        raise HTTPException(400, "Invalid task id.")
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Η εργασία δεν βρέθηκε (ίσως έγινε επανεκκίνηση του διακομιστή). Δοκιμάστε ξανά.")
+    data = task.public()
+    if data.get("result"):
+        data["result"] = _insights_public_record(task.job_id, data["result"])
+    return data
+
+
+@app.get("/api/insights/{job_id}/analysis")
+async def insights_analysis(job_id: str):
+    """Meaningful-text length, detected language and summary/synopsis availability for a document."""
+    from backend.book_insights import analyze_text, list_insights
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    job = _insights_job(job_id)
+    text = await _insights_source_text(job)
+    info = await asyncio.to_thread(analyze_text, text)
+    info["has_api_key"] = bool(resolve_gemini_api_key(None))
+    info["file_name"] = job.file_name
+    info["existing"] = list_insights(_job_output_dir(job_id))
+    return info
+
+
+@app.get("/api/insights/{job_id}")
+async def insights_list(job_id: str):
+    """Previously generated insights for a document (text included)."""
+    from backend.book_insights import list_insights, load_insight
+    _insights_job(job_id)
+    out_dir = _job_output_dir(job_id)
+    items = []
+    for meta in list_insights(out_dir):
+        rec = load_insight(out_dir, meta["insight_type"], meta["language"])
+        if rec:
+            items.append(_insights_public_record(job_id, rec))
+    return {"job_id": job_id, "insights": items}
+
+
+@app.post("/api/insights/generate")
+async def insights_generate(req: InsightsGenerateRequest):
+    """Starts summary/synopsis generation in the background. Identical in-flight requests are de-duplicated."""
+    from backend.book_insights import (
+        start_task, generate_insight, analyze_text, InsightsError, INSIGHT_TYPES, OUTPUT_LANGUAGES,
+    )
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    job = _insights_job(req.job_id)
+    insight_type = _insights_resolve_type(req.insight_type)
+    lang = (req.language or "auto").strip().lower()
+    if lang not in OUTPUT_LANGUAGES + ("auto",):
+        raise _insights_http_error(InsightsError("invalid_request"))
+    api_key = resolve_gemini_api_key(req.api_key)
+    if not api_key:
+        raise _insights_http_error(InsightsError("no_api_key", http_status=401))
+    text = await _insights_source_text(job)
+    # Fail fast (before any API usage) when the document is ineligible
+    info = await asyncio.to_thread(analyze_text, text)
+    if not info["can_summary"]:
+        raise _insights_http_error(InsightsError("insufficient_text", http_status=422))
+    if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and not info["can_synopsis"]:
+        raise HTTPException(422, info["reasons"]["synopsis"])
+    if lang == "auto" and info["detected_language"] is None:
+        raise _insights_http_error(InsightsError("language_detection_failed", http_status=422))
+
+    out_dir = _job_output_dir(req.job_id)
+    title = Path(job.file_name or "document").stem
+
+    async def _run(task):
+        def _prog(pct, step):
+            task.progress, task.step = int(pct), step
+        return await generate_insight(text, insight_type, None if lang == "auto" else lang, api_key,
+                                      title=title, job_output_dir=out_dir, progress=_prog)
+
+    task, duplicate = start_task(req.job_id, "generate", insight_type, lang, _run)
+    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate, "insight_type": insight_type}
+
+
+@app.post("/api/insights/export")
+async def insights_export(req: InsightsExportRequest):
+    """Exports a generated insight to PDF, DOCX or TXT and returns its download URL."""
+    from backend.book_insights import load_insight, export_insight, InsightsError
+    _insights_job(req.job_id)
+    insight_type = _insights_resolve_type(req.insight_type)
+    rec = load_insight(_job_output_dir(req.job_id), insight_type, (req.language or "").lower())
+    if not rec:
+        raise _insights_http_error(InsightsError("not_generated", http_status=404))
+    try:
+        path = await asyncio.to_thread(export_insight, rec, _job_output_dir(req.job_id), req.format)
+    except InsightsError as e:
+        raise _insights_http_error(e)
+    return {"file_name": path.name, "url": f"/api/insights/{req.job_id}/files/{path.name}"}
+
+
+@app.post("/api/insights/audio")
+async def insights_audio(req: InsightsAudioRequest):
+    """Starts narration of the final insight text with the existing neural TTS voices."""
+    from backend.book_insights import load_insight, synthesize_insight_audio, start_task, InsightsError
+    _insights_job(req.job_id)
+    insight_type = _insights_resolve_type(req.insight_type)
+    lang = (req.language or "").lower()
+    out_dir = _job_output_dir(req.job_id)
+    rec = load_insight(out_dir, insight_type, lang)
+    if not rec:
+        raise _insights_http_error(InsightsError("not_generated", http_status=404))
+    if lang not in ("greek", "english"):
+        raise _insights_http_error(InsightsError("audio_unsupported_language"))
+
+    async def _run(task):
+        def _prog(pct, step):
+            task.progress, task.step = int(pct), step
+        record = load_insight(out_dir, insight_type, lang) or rec
+        await synthesize_insight_audio(record, out_dir, voice_name=req.voice_name, progress=_prog)
+        return record
+
+    task, duplicate = start_task(req.job_id, "audio", insight_type, lang, _run)
+    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate}
+
+
+@app.get("/api/insights/{job_id}/files/{filename}")
+async def insights_file(job_id: str, filename: str):
+    """Downloads/streams an exported insight file or its audio (strictly inside the job's insights folder)."""
+    _insights_job(job_id)
+    if not re.fullmatch(r"[\w\-. ]{1,160}", filename or "", flags=re.UNICODE) or filename.startswith("."):
+        raise HTTPException(400, "Invalid file name.")
+    base = (_job_output_dir(job_id) / "insights").resolve()
+    path = (base / filename).resolve()
+    if path.parent != base or not path.is_file() or path.suffix.lower() not in (".pdf", ".docx", ".txt", ".mp3"):
+        raise HTTPException(404, "Το αρχείο δεν βρέθηκε.")
+    return FileResponse(str(path), media_type=MIME_MAP.get(path.suffix.lower(), "application/octet-stream"),
+                        filename=path.name)
+
+
+# ---------------------------------------------------------------------------
 # Glossary Management
 # ---------------------------------------------------------------------------
 
