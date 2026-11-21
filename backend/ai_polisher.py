@@ -1657,8 +1657,14 @@ async def _call_gemini_api(
     exclude_models: Optional[set[str]] = None,
     bypass_cache: bool = False,
     meta_out: Optional[dict[str, Any]] = None,
+    cache_gate: Optional[Callable[[str], bool]] = None,
 ) -> str:
-    """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection."""
+    """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection.
+
+    ``cache_gate``: optional predicate deciding whether a successful output may be cached. By default only
+    outputs passing the Greek translation quality gate are cached, which rejects legitimately short or
+    non-Greek outputs (summaries, notes, English text); callers producing those pass their own gate.
+    """
     from backend.gemini_key_pool import GeminiKeyPool, GeminiRateLimiter, parse_gemini_error, mask_api_key
 
     # Resolve active key: use provided key or next available key from the 4-key pool
@@ -1718,6 +1724,12 @@ async def _call_gemini_api(
             pass
 
     global _CACHED_WORKING_MODEL
+
+    # Size-aware pacing & timeout: a fixed 25 s timeout made long batches (up to 16k output tokens) time out on
+    # full Flash models and silently fall back to weaker Lite models; a fixed 1.5k-token estimate under-counted TPM.
+    payload_chars = len(system_prompt or "") + len(content_text or "")
+    est_tokens = max(500, min(60_000, payload_chars // 2))          # ~input + comparable output
+    req_timeout_s = float(max(30.0, min(180.0, 30.0 + len(content_text or "") / 200.0)))
 
     base_payload = {
         "contents": [
@@ -1829,9 +1841,9 @@ async def _call_gemini_api(
                 for attempt in range(max_attempts):
                     try:
                         # Smoothly pace requests to conform to per-key and per-model RPM/TPM limits
-                        await GeminiRateLimiter.acquire(active_key, model=model, estimated_tokens=1500)
+                        await GeminiRateLimiter.acquire(active_key, model=model, estimated_tokens=est_tokens)
 
-                        req_timeout = aiohttp.ClientTimeout(total=25)
+                        req_timeout = aiohttp.ClientTimeout(total=req_timeout_s, sock_connect=15)
                         async with session.post(url, json=req_payload, headers=headers, timeout=req_timeout) as resp:
                             if resp.status == 200:
                                 result = await resp.json()
@@ -1859,7 +1871,11 @@ async def _call_gemini_api(
                                     meta_out["model"] = model
                                     meta_out["finish_reason"] = finish_reason
                                 logger.info(f"Gemini API success using model: {model}")
-                                if cache_key and not detect_greek_output_issues(polished, source_text=content_text):
+                                cacheable = (
+                                    cache_gate(polished) if cache_gate is not None
+                                    else not detect_greek_output_issues(polished, source_text=content_text)
+                                )
+                                if cache_key and cacheable:
                                     try:
                                         from backend.database import db_set_cached_translation
                                         db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v4")
@@ -2001,8 +2017,8 @@ async def _call_gemini_api(
                     except (PermissionError, _TruncatedOutputError, DailyQuotaExhaustedError):
                         raise
                     except asyncio.TimeoutError:
-                        last_error = f"Model {model} timed out after 60s."
-                        logger.warning(f"Model {model} timed out after 60s. Switching immediately to next candidate...")
+                        last_error = f"Model {model} timed out after {req_timeout_s:.0f}s."
+                        logger.warning(f"Model {model} timed out after {req_timeout_s:.0f}s. Switching immediately to next candidate...")
                         if _CACHED_WORKING_MODEL == model:
                             _CACHED_WORKING_MODEL = None
                         break

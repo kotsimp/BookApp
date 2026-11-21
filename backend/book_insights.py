@@ -344,8 +344,11 @@ async def _ai(content: str, system_prompt: str, api_key: str, session, temperatu
               bypass_cache: bool = False) -> str:
     from backend.ai_polisher import _call_gemini_api
     try:
+        # Notes, summaries and English text are legitimately short / non-Greek: cache any non-empty output
+        # (final texts are still validated by validate_output before they are used).
         out = await _call_gemini_api(content, api_key, system_prompt, session=session,
-                                     temperature=temperature, bypass_cache=bypass_cache)
+                                     temperature=temperature, bypass_cache=bypass_cache,
+                                     cache_gate=lambda o: bool(o and o.strip()))
     except Exception as e:
         raise _classify_ai_error(e) from e
     if not out or not out.strip():

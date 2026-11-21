@@ -131,7 +131,8 @@ class FakeGemini:
         self._wrong_once_done = False
 
     async def __call__(self, content, api_key, system_prompt, session=None, temperature=0.25,
-                       exclude_models=None, bypass_cache=False, meta_out=None):
+                       exclude_models=None, bypass_cache=False, meta_out=None, cache_gate=None):
+        assert cache_gate is not None and cache_gate("x") and not cache_gate("  "), "insights must pass a cache gate"
         from backend.ai_polisher import DailyQuotaExhaustedError
         self.calls.append(system_prompt)
         if self.delay:

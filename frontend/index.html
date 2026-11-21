@@ -351,7 +351,7 @@
         </span>
       </div>
 
-      <div class="form-group" style="margin-top:10px">
+      <div class="form-group mode-advanced-only" style="margin-top:10px">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
           <input type="checkbox" id="tr-final-refinement" class="final-refinement-toggle" checked onchange="setFinalRefinementEnabled(this.checked)" style="width:18px;height:18px;accent-color:var(--emerald)" />
           <span style="font-size:0.9rem">🔍 <strong>Τελικός Αυτόματος Έλεγχος Ποιότητας</strong> — Final Output Refinement</span>
@@ -359,6 +359,17 @@
         <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
           Τοπικός έλεγχος &amp; ασφαλείς διορθώσεις στο τέλος κάθε μετάφρασης/ηχητικού βιβλίου (χωρίς κατανάλωση API).
         </span>
+      </div>
+
+      <div class="form-group mode-advanced-only" style="margin-top:10px">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
+          <input type="checkbox" id="tr-ai-refinement" onchange="onAiRefinementToggle()" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span style="font-size:0.9rem">🤖 <strong>AI Τελική Επιμέλεια (Gemini)</strong> — 2nd refinement stage</span>
+        </label>
+        <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
+          Μετά τον τοπικό έλεγχο, το Gemini διορθώνει γραμματική, ορθογραφία, στίξη και «μεταφραστικά» σημεία χωρίς να αλλάζει το νόημα.
+        </span>
+        <div id="tr-ai-refinement-warning" role="alert" style="display:none; margin:8px 0 0 28px; padding:10px 12px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.8rem; line-height:1.45"></div>
       </div>
 
       <!-- Gemini Quota Limit Behavior Option -->
@@ -681,7 +692,7 @@
         </label>
       </div>
 
-      <div class="form-group" style="margin-top:10px">
+      <div class="form-group mode-advanced-only" style="margin-top:10px">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
           <input type="checkbox" id="ab-final-refinement" class="final-refinement-toggle" checked onchange="setFinalRefinementEnabled(this.checked)" style="width:18px;height:18px;accent-color:var(--emerald)" />
           <span style="font-size:0.9rem">🔍 <strong>Τελικός Αυτόματος Έλεγχος Ποιότητας</strong> — Final Output Refinement</span>

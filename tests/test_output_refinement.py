@@ -795,3 +795,243 @@ class TestRefinementAPI(_RefinementTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ===========================================================================
+# 7. Stage 2: AI refinement (Gemini, Advanced Mode opt-in)
+# ===========================================================================
+
+class _FakeAI:
+    """Stand-in for backend.ai_polisher._call_gemini_api."""
+
+    def __init__(self, transform=None, fail_after=None, exc=None):
+        self.transform = transform or (lambda s: s.replace("γιά", "για").replace("ίσια", "ίσια"))
+        self.calls = []
+        self.fail_after = fail_after
+        self.exc = exc
+
+    async def __call__(self, content, api_key, system_prompt, session=None, temperature=0.25, **kw):
+        assert kw.get("cache_gate") is not None, "AI refinement must pass a cache gate"
+        self.calls.append(content)
+        if self.fail_after is not None and len(self.calls) > self.fail_after:
+            raise self.exc
+        return self.transform(content)
+
+
+def _book(paragraphs_per_page=3, pages=3):
+    out = []
+    for p in range(1, pages + 1):
+        out.append(f"{'=' * 60}\nPAGE {p}\n{'=' * 60}")
+        for k in range(paragraphs_per_page):
+            out.append(f"Η Ελένη έμεινε στο σπίτι γιά λίγο ακόμη, σελίδα {p}, παράγραφος {k}. Ο αέρας μύριζε θάλασσα.")
+    return "\n\n".join(out)
+
+
+class TestAIRefinementStage(_RefinementTestBase):
+
+    def _run_ai(self, fake, text, **kw):
+        from backend.output_refiner import ai_refine_text
+        with mock.patch("backend.ai_polisher._call_gemini_api", new=fake):
+            return asyncio.run(ai_refine_text(text, "greek", "test-key", **kw))
+
+    def test_chunks_refined_page_markers_never_sent(self):
+        from backend.output_refiner import _PAGE_MARKER_REGEX
+        text = _book()
+        fake = _FakeAI()
+        out, stats = self._run_ai(fake, text)
+        self.assertNotIn("γιά", out)
+        self.assertEqual(_PAGE_MARKER_REGEX.findall(out), _PAGE_MARKER_REGEX.findall(text))
+        self.assertTrue(all("PAGE" not in c and "=====" not in c for c in fake.calls))
+        self.assertEqual(stats["chunks_refined"], stats["chunks_total"])
+        self.assertEqual(out.count("\n\n"), text.count("\n\n"), "paragraph separators preserved exactly")
+
+    def test_large_text_is_split_into_bounded_chunks(self):
+        from backend.output_refiner import AI_REFINE_CHUNK_CHARS, estimate_ai_refinement_cost
+        text = "\n\n".join(f"Παράγραφος {i}. " + "Λέξεις κειμένου " * 60 for i in range(120))
+        fake = _FakeAI(transform=lambda s: s)
+        out, stats = self._run_ai(fake, text)
+        self.assertGreater(len(fake.calls), 3)
+        self.assertTrue(all(len(c) <= AI_REFINE_CHUNK_CHARS + 1200 for c in fake.calls))
+        self.assertEqual(out, text)
+        self.assertEqual(stats["chunks_unchanged"], stats["chunks_total"])
+        est = estimate_ai_refinement_cost(text)
+        self.assertEqual(est["requests"], len(fake.calls))
+        self.assertGreater(est["estimated_tokens"], len(text) // 3)
+
+    def test_unsafe_ai_output_is_rejected(self):
+        text = _book(pages=1)
+        for bad in (lambda s: s.replace("\n\n", " "),                  # merged paragraphs
+                    lambda s: s + " " + s,                               # doubled / added content
+                    lambda s: "=== PAGE 9 ===\n" + s,                    # injected marker
+                    lambda s: "",                                         # empty
+                    lambda s: "The text was translated to English here and there."):  # script drift
+            out, stats = self._run_ai(_FakeAI(transform=bad), text)
+            self.assertEqual(out, text)
+            self.assertEqual(stats["chunks_refined"], 0)
+
+    def test_quota_exhaustion_stops_but_keeps_refined_chunks(self):
+        from backend.ai_polisher import DailyQuotaExhaustedError
+        from backend.output_refiner import AI_REFINE_CHUNK_CHARS
+        text = "\n\n".join(f"Κείμενο γιά την ενότητα {i}. " + "λέξη " * (AI_REFINE_CHUNK_CHARS // 10) for i in range(4))
+        fake = _FakeAI(fail_after=1, exc=DailyQuotaExhaustedError("quota"))
+        out, stats = self._run_ai(fake, text)
+        self.assertEqual(stats["stopped_reason"], "quota_exhausted")
+        self.assertGreaterEqual(stats["chunks_refined"], 1)
+        self.assertIn("γιά", out, "chunks after the quota stop keep their original text")
+        self.assertLess(len(fake.calls), 4 + 1)
+
+    def test_generic_failures_and_cancellation(self):
+        text = _book(pages=2)
+        out, stats = self._run_ai(_FakeAI(fail_after=0, exc=RuntimeError("model down")), text)
+        self.assertEqual(out, text)
+        self.assertEqual(stats["chunks_failed"], stats["chunks_total"])
+        out2, stats2 = self._run_ai(_FakeAI(), text, is_cancelled=lambda: True)
+        self.assertEqual(out2, text)
+        self.assertEqual(stats2["stopped_reason"], "cancelled")
+
+    def test_file_stage_reexports_and_rolls_back(self):
+        from backend.output_refiner import ai_refine_translation_output
+        from backend.exporter import export_text
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            txt = td / "b_translated_greek.txt"
+            txt.write_text(_book(pages=2), encoding="utf-8")
+            docx = Path(export_text(txt.read_text(encoding="utf-8"), td, "docx", txt.stem))
+            with mock.patch("backend.ai_polisher._call_gemini_api", new=_FakeAI()):
+                rep = asyncio.run(ai_refine_translation_output("test_ai", str(txt), str(docx), "greek", "k",
+                                                               output_format="docx"))
+            self.assertEqual(rep["status"], "refined", rep)
+            self.assertNotIn("γιά", txt.read_text(encoding="utf-8"))
+            from docx import Document
+            self.assertNotIn("γιά", "\n".join(p.text for p in Document(str(docx)).paragraphs))
+            json.dumps(rep)
+
+            txt.write_text(_book(pages=2), encoding="utf-8")
+            before_txt, before_doc = txt.read_text(encoding="utf-8"), docx.read_bytes()
+            with mock.patch("backend.ai_polisher._call_gemini_api", new=_FakeAI()), \
+                 mock.patch("backend.exporter.export_text", side_effect=OSError("disk full")):
+                rep2 = asyncio.run(ai_refine_translation_output("test_ai", str(txt), str(docx), "greek", "k",
+                                                                output_format="docx"))
+            self.assertEqual(rep2["status"], "error")
+            self.assertEqual(txt.read_text(encoding="utf-8"), before_txt)
+            self.assertEqual(docx.read_bytes(), before_doc)
+
+    def test_file_stage_skips_without_key_or_for_preserved_formats(self):
+        from backend.output_refiner import ai_refine_translation_output
+        with tempfile.TemporaryDirectory() as td:
+            txt = Path(td) / "c_translated_greek.txt"
+            txt.write_text(_book(pages=1), encoding="utf-8")
+            docx = Path(td) / "c_translated_greek.docx"
+            docx.write_bytes(b"PK preserved")
+            fake = _FakeAI()
+            with mock.patch("backend.ai_polisher._call_gemini_api", new=fake):
+                r1 = asyncio.run(ai_refine_translation_output("t", str(txt), str(txt), "greek", "", output_format="txt"))
+                r2 = asyncio.run(ai_refine_translation_output("t", str(txt), str(docx), "greek", "k",
+                                                              output_format="docx", allow_reexport=False))
+            self.assertEqual((r1["status"], r1["reason"]), ("skipped", "no_api_key"))
+            self.assertEqual((r2["status"], r2["reason"]), ("skipped", "format_preserved_output"))
+            self.assertEqual(fake.calls, [])
+            self.assertEqual(docx.read_bytes(), b"PK preserved")
+
+    def _flow(self, ai_flag):
+        import backend.main as main_mod
+        job, out_dir = _new_test_job("test_ai_refine_flow.pdf", "pdf")
+        src = OUTPUT_ROOT.parent / "uploads" / f"test_ai_src_{job.job_id}.txt"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text("source", encoding="utf-8")
+        output_path = str(main_mod._job_output_dir(job.job_id) / f"{src.stem}_translated_greek.txt")
+        update_job(job.job_id, output_format="txt", layout_mode="standard", status="running",
+                   file_path=str(src), ai_refinement=ai_flag)
+
+        async def fake_td(job_id, file_path, file_type, source_lang, target_lang, output_path, style=None, **kw):
+            Path(output_path).write_text(_book(pages=2), encoding="utf-8")
+        fake = _FakeAI(transform=lambda s: s.replace("Ο αέρας μύριζε", "Η αύρα μύριζε"))
+        try:
+            with mock.patch.object(main_mod, "translate_document", side_effect=fake_td), \
+                 mock.patch("backend.ai_polisher._call_gemini_api", new=fake), \
+                 mock.patch("backend.gemini_key_pool.resolve_gemini_api_key", return_value="test-key"):
+                asyncio.run(main_mod._run_translation(job.job_id, str(src), "pdf", "english", "greek", output_path))
+        finally:
+            src.unlink(missing_ok=True)
+        return get_job(job.job_id), output_path, fake
+
+    def test_workflow_runs_ai_stage_only_when_opted_in(self):
+        job, out, fake = self._flow(True)
+        self.assertEqual(job.status, "done")
+        self.assertEqual(job.refinement_report["ai"]["status"], "refined")
+        self.assertIn("Η αύρα μύριζε", Path(out).read_text(encoding="utf-8"))
+        self.assertIn("status", job.refinement_report)      # stage-1 report kept alongside
+        job2, out2, fake2 = self._flow(False)
+        self.assertEqual(fake2.calls, [])
+        self.assertNotIn("ai", job2.refinement_report or {})
+        self.assertIn("Ο αέρας μύριζε", Path(out2).read_text(encoding="utf-8"))
+
+    def test_ai_stage_crash_never_fails_the_job(self):
+        import backend.main as main_mod
+        with mock.patch("backend.output_refiner.ai_refine_translation_output", side_effect=RuntimeError("boom")):
+            job, out, _ = self._flow(True)
+        self.assertEqual(job.status, "done")
+        self.assertIsNone(job.error)
+
+
+class TestGeminiCallImprovements(unittest.TestCase):
+    """Adaptive request timeout, size-aware rate-limit estimate and optional cache gate in _call_gemini_api."""
+
+    class _Resp:
+        def __init__(self, text):
+            self.status, self._text = 200, text
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def json(self, content_type=None):
+            if self._text is None:
+                return {"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]}]}
+            return {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": self._text}]}}]}
+        async def text(self):
+            return ""
+
+    class _Sess:
+        def __init__(self, reply):
+            self.reply, self.posts = reply, []
+        def post(self, url, **kw):
+            self.posts.append(kw)
+            return TestGeminiCallImprovements._Resp(self.reply)
+        def get(self, url, **kw):
+            return TestGeminiCallImprovements._Resp(None)
+        async def close(self):
+            pass
+
+    def setUp(self):
+        import backend.ai_polisher as ap
+        ap.reset_model_cache()
+        ap._CACHED_API_KEY_HASH = None
+
+    def test_timeout_scales_with_payload(self):
+        import backend.ai_polisher as ap
+        import uuid
+        short, long_ = self._Sess("Σύντομο."), self._Sess("Μεγάλο.")
+        asyncio.run(ap._call_gemini_api(f"Μικρό {uuid.uuid4()}", "REAL_KEY_T1", "Sys", session=short, bypass_cache=True))
+        asyncio.run(ap._call_gemini_api("Α" * 24000 + str(uuid.uuid4()), "REAL_KEY_T1", "Sys", session=long_, bypass_cache=True))
+        t_short = short.posts[0]["timeout"].total
+        t_long = long_.posts[0]["timeout"].total
+        self.assertTrue(30.0 <= t_short < 31.0, t_short)   # was a fixed 25 s before
+        self.assertGreater(t_long, 120.0)
+        self.assertLessEqual(t_long, 180.0)
+
+    def test_cache_gate_allows_caching_non_greek_output(self):
+        import backend.ai_polisher as ap
+        import uuid
+        content = f"English summary source {uuid.uuid4()}"
+        reply = "This is a short English summary of the book with several plain words in it today."
+        s1 = self._Sess(reply)
+        asyncio.run(ap._call_gemini_api(content, "REAL_KEY_C1", "Summarise", session=s1))
+        asyncio.run(ap._call_gemini_api(content, "REAL_KEY_C1", "Summarise", session=s1))
+        self.assertEqual(len(s1.posts), 2, "default Greek gate must not cache English output (unchanged behaviour)")
+        content2 = f"English summary source {uuid.uuid4()}"
+        s2 = self._Sess(reply)
+        gate = lambda o: bool(o.strip())
+        asyncio.run(ap._call_gemini_api(content2, "REAL_KEY_C1", "Summarise", session=s2, cache_gate=gate))
+        out = asyncio.run(ap._call_gemini_api(content2, "REAL_KEY_C1", "Summarise", session=s2, cache_gate=gate))
+        self.assertEqual(len(s2.posts), 1, "with a cache gate the second identical call is served from cache")
+        self.assertEqual(out, reply)

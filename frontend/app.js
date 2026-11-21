@@ -111,6 +111,11 @@ function applyAppMode(mode) {
   const abStart = document.getElementById('ab-start-btn');
 
   if (isBasic) {
+    // The token-consuming AI refinement exists only in Advanced Mode
+    const aiRef = document.getElementById('tr-ai-refinement');
+    if (aiRef) aiRef.checked = false;
+    const aiRefWarn = document.getElementById('tr-ai-refinement-warning');
+    if (aiRefWarn) aiRefWarn.style.display = 'none';
     // Ensure AI Polish is checked by default for both translation and audiobook
     const trAi = document.getElementById('tr-ai-polish');
     if (trAi) trAi.checked = true;
@@ -391,6 +396,8 @@ async function uploadFile(prefix, file) {
       return;
     }
     state[prefix].jobId = data.job_id;
+    state[prefix].estimatedPages = Number(data.estimated_pages || 0);
+    if (prefix === 'tr' && typeof onAiRefinementToggle === 'function') onAiRefinementToggle();
 
     const pages = data.estimated_pages > 0 ? `~${data.estimated_pages} pages · ` : '';
     let durationEst = '';
@@ -1059,6 +1066,7 @@ async function startTranslation() {
         ai_polish: aiPolish,
         api_key: apiKey || null,
         quota_behavior: quotaBehavior,
+        ai_refinement: isAiRefinementRequested(),
       }),
     });
     if (!res.ok) {
@@ -1304,6 +1312,38 @@ async function setFinalRefinementEnabled(enabled) {
   }
 }
 
+function isAiRefinementRequested() {
+  const cb = document.getElementById('tr-ai-refinement');
+  return currentAppMode === 'advanced' && Boolean(cb && cb.checked);
+}
+
+function estimateAiRefinementTokens() {
+  // ~300 words/page, ~1.6 tokens/word, sent and returned (x2), plus prompt overhead per ~9k-char request
+  const pages = Number(state.tr.estimatedPages || 0);
+  if (!pages) return null;
+  const tokens = Math.round(pages * 300 * 1.6 * 2 + Math.ceil(pages / 5) * 350);
+  return { tokens, requests: Math.max(1, Math.ceil(pages / 5)) };
+}
+
+function onAiRefinementToggle() {
+  const cb = document.getElementById('tr-ai-refinement');
+  const warn = document.getElementById('tr-ai-refinement-warning');
+  if (!cb || !warn) return;
+  if (!cb.checked) {
+    warn.style.display = 'none';
+    return;
+  }
+  const est = estimateAiRefinementTokens();
+  const estTxt = est
+    ? ` Για αυτό το έγγραφο: περίπου <strong>${est.tokens.toLocaleString('el-GR')} tokens</strong> σε ~${est.requests} αιτήματα.`
+    : ' Η κατανάλωση είναι περίπου διπλάσια του μεγέθους του κειμένου σε tokens.';
+  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  warn.innerHTML = `⚠️ <strong>Επιπλέον κατανάλωση Gemini API:</strong> ολόκληρο το μεταφρασμένο κείμενο αποστέλλεται ξανά στο Gemini και επιστρέφεται διορθωμένο.${estTxt} Μετράει στο ημερήσιο όριο των κλειδιών σας.` +
+    (document.getElementById('tr-ai-polish')?.checked ? ' Το AI Polish είναι ήδη ενεργό — αυτό θα είναι δεύτερο πέρασμα AI.' : '') +
+    (hasKey ? '' : ' <br>❗ Δεν έχει οριστεί Gemini API Key: η AI επιμέλεια θα παραλειφθεί.');
+  warn.style.display = '';
+}
+
 function notifyRefinementReport(jobId, data) {
   const rep = data && data.refinement_report;
   if (!rep || data.status !== 'done' || !jobId || _shownRefinementReports.has(jobId)) return;
@@ -1315,6 +1355,21 @@ function notifyRefinementReport(jobId, data) {
     toast(`⚠️ Τελικός έλεγχος: ${rep.critical_count} κρίσιμα ζητήματα${missing}. Ελέγξτε το αποτέλεσμα.`, 'warning');
   } else if (rep.status === 'refined' || rep.status === 'healed') {
     toast(`🔍 Τελικός έλεγχος: εφαρμόστηκαν ${nCorr} ομάδες διορθώσεων.`, 'success');
+  }
+  const ai = rep.ai;
+  if (ai && ai.status && ai.status !== 'skipped') {
+    if (ai.status === 'refined' || ai.status === 'partial') {
+      const partial = ai.status === 'partial' ? ' (μερικώς — διακόπηκε λόγω ορίου API)' : '';
+      toast(`🤖 AI επιμέλεια: βελτιώθηκαν ${ai.chunks_refined}/${ai.chunks_total} τμήματα${partial}.`, ai.status === 'partial' ? 'warning' : 'success');
+    } else if (ai.status === 'verified_clean') {
+      toast('🤖 AI επιμέλεια: δεν χρειάστηκαν διορθώσεις.', 'info');
+    } else if (ai.status === 'error') {
+      toast('🤖 Η AI επιμέλεια δεν ολοκληρώθηκε — διατηρήθηκε το αρχικό κείμενο.', 'warning');
+    }
+  } else if (ai && ai.reason === 'no_api_key') {
+    toast('🤖 Η AI επιμέλεια παραλείφθηκε: δεν υπάρχει Gemini API Key.', 'warning');
+  } else if (ai && ai.reason === 'format_preserved_output') {
+    toast('🤖 Η AI επιμέλεια δεν εφαρμόζεται σε έγγραφα με διατήρηση αρχικής μορφοποίησης.', 'info');
   }
 }
 

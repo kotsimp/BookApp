@@ -119,6 +119,7 @@ class TranslateRequest(BaseModel):
     api_key: Optional[str] = None
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     final_refinement: Optional[bool] = None
+    ai_refinement: bool = False  # Advanced Mode: extra Gemini copy-editing pass after the local refinement
 
 
 class AudiobookRequest(BaseModel):
@@ -202,6 +203,7 @@ class RefinementRequest(BaseModel):
     output_format: Optional[str] = None
     api_key: Optional[str] = None
     enabled: Optional[bool] = None
+    ai: bool = False                    # also run the AI refinement (Gemini, consumes tokens)
 
 
 class GlossaryTermRequest(BaseModel):
@@ -476,6 +478,7 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         quota_behavior=quota_behavior,
         final_refinement=req.final_refinement,
         refinement_report=None,
+        ai_refinement=bool(req.ai_refinement),
     )
 
     background_tasks.add_task(
@@ -695,6 +698,34 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 update_job(job_id, refinement_report={"status": "skipped"})
         except Exception as refine_err:
             logger.warning(f"[{job_id}] Final refinement stage failed ({refine_err}); original output preserved.", exc_info=True)
+
+        # Optional stage 2: AI refinement (Gemini) — Advanced Mode opt-in only, consumes extra tokens
+        if getattr(job, "ai_refinement", False) and not is_job_cancelled(job_id):
+            try:
+                from backend.output_refiner import ai_refine_translation_output
+                update_job(job_id, current_step="🤖 AI τελική επιμέλεια κειμένου (Gemini)…", progress=98)
+
+                def _ai_prog(done, total):
+                    update_job(job_id, current_step=f"🤖 AI τελική επιμέλεια: τμήμα {done}/{total}…")
+
+                ai_report = await ai_refine_translation_output(
+                    job_id=job_id,
+                    output_path=output_path,
+                    final_exported_path=str(final_path),
+                    target_lang=target_lang,
+                    api_key=resolved_key,
+                    layout_mode=layout,
+                    output_format=fmt,
+                    allow_reexport=refine_reexportable,
+                    progress=_ai_prog,
+                    is_cancelled=lambda: is_job_cancelled(job_id),
+                )
+                cur = get_job(job_id)
+                merged = dict(getattr(cur, "refinement_report", None) or {})
+                merged["ai"] = ai_report
+                update_job(job_id, refinement_report=merged)
+            except Exception as ai_err:
+                logger.warning(f"[{job_id}] AI refinement stage failed ({ai_err}); output preserved.", exc_info=True)
 
         if is_job_cancelled(job_id):
             return
@@ -1827,11 +1858,13 @@ async def polish_translation(req: PolishRequest):
 async def get_refine_config():
     """Returns configuration and operational status of the Final Output Refinement stage."""
     from backend.output_refiner import is_refinement_enabled, REFINER_VERSION, MAX_AUDIO_HEAL_CHUNKS
+    from backend.gemini_key_pool import resolve_gemini_api_key
     return {
         "enabled": is_refinement_enabled(),
         "version": REFINER_VERSION,
         "supported_modes": ["translation", "audiobook"],
-        "uses_external_api": False,
+        "uses_external_api": False,       # stage 1 (local); stage 2 is opt-in
+        "ai_refinement_available": bool(resolve_gemini_api_key(None)),
         "max_audio_heal_chunks": MAX_AUDIO_HEAL_CHUNKS,
         "pipeline_stages": [
             "structural_integrity",
@@ -1921,7 +1954,22 @@ async def refine_output_endpoint(req: RefinementRequest):
             req.text, target_lang=req.target_lang or "greek", source_lang=req.source_lang or "english",
             style=req.style or req.layout_mode,
         )
+        ai_stats = None
+        if req.ai:
+            from backend.gemini_key_pool import resolve_gemini_api_key
+            from backend.output_refiner import ai_refine_text
+            key = resolve_gemini_api_key(req.api_key)
+            if not key:
+                raise HTTPException(401, "AI refinement requires a Gemini API key.")
+            import aiohttp
+            async with aiohttp.ClientSession() as sess:
+                ai_txt, ai_stats = await ai_refine_text(refined_txt or req.text, req.target_lang or "greek", key,
+                                                        req.layout_mode or "standard", session=sess)
+            if ai_txt != (refined_txt or req.text):
+                refined_txt = refine_text_content(ai_txt, target_lang=req.target_lang or "greek")[0] or ai_txt
+                corrections = list(corrections) + ["AI copy-editing (Gemini)"]
         return {
+            "ai": ai_stats,
             "status": "refined" if corrections else "verified_clean",
             "mode": "translation",
             "original_text": req.text,
@@ -1978,8 +2026,22 @@ async def refine_output_endpoint(req: RefinementRequest):
         enabled=True,
         allow_reexport=_job_output_is_reexportable(job),
     )
-    update_job(req.job_id, refinement_report=build_refinement_report(res_trans))
-    return {"status": res_trans.status, "mode": "translation", "result": asdict(res_trans)}
+    report = build_refinement_report(res_trans)
+    ai_report = None
+    if req.ai:
+        from backend.gemini_key_pool import resolve_gemini_api_key
+        from backend.output_refiner import ai_refine_translation_output
+        ai_report = await ai_refine_translation_output(
+            job_id=req.job_id, output_path=str(text_p), final_exported_path=final_p,
+            target_lang=req.target_lang or getattr(job, "target_lang", "greek") or "greek",
+            api_key=resolve_gemini_api_key(req.api_key),
+            layout_mode=req.layout_mode or getattr(job, "layout_mode", "standard") or "standard",
+            output_format=req.output_format or job.output_format,
+            allow_reexport=_job_output_is_reexportable(job),
+        )
+        report["ai"] = ai_report
+    update_job(req.job_id, refinement_report=report)
+    return {"status": res_trans.status, "mode": "translation", "result": asdict(res_trans), "ai": ai_report}
 
 
 # ---------------------------------------------------------------------------
@@ -2314,6 +2376,7 @@ async def _execute_queue_item(q_item):
         ai_polish=q_item.ai_polish,
         final_refinement=None,  # queue items follow the global final_refinement_enabled setting
         refinement_report=None,
+        ai_refinement=False,    # the token-consuming AI refinement is never applied implicitly to batches
     )
     await _run_translation(
         q_item.job_id,
