@@ -27,6 +27,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Gemini Multi-Key API Pool & Auto-Failover](#-gemini-multi-key-api-pool--auto-failover)
    - [Categorized Custom Glossary](#-categorized-custom-glossary)
    - [In-Place Layout & Style Preservation](#in-place-layout--style-preservation)
+   - [Automatic Final Quality Check](#-automatic-final-quality-check-final-output-refinement)
 4. [Audiobook Generation](#4-audiobook-generation)
    - [Available Neural Voices & Live Auditions](#available-neural-voices--live-auditions)
    - [Multi-Voice Dramatization](#-multi-voice-dramatization)
@@ -273,6 +274,27 @@ Click **⚙️ Glossary** in the top navigation to configure persistent domain t
 * **Front Matter Preservation:** Line-level header/footer cleaning preserves prologues, epigraphs, and tables of contents on the opening pages.
 * **EPUB (`.epub`):** Retains CSS stylesheets, chapter hierarchies (`<h1>`–`<h6>`), and embedded images.
 * **PDF (`.pdf`):** Formats headings, validates all characters against font glyph sets to eliminate missing tofu boxes (`□□`), and wraps long URLs cleanly within page margins.
+
+---
+
+### 🔍 Automatic Final Quality Check (Final Output Refinement)
+
+Every translation and every audiobook goes through one more automatic step at the very end: a **final quality check**. You don't need to do anything. You'll briefly see *"🔍 Τελικός έλεγχος ποιότητας…"* in the progress bar.
+
+**What it does for translations**
+* Fixes only mistakes that are certainly wrong: doubled words (`και και` → `και`, `the the` → `the`), accents on one-syllable words (`γιά` → `για`), the final-ν rule (`δε μπορώ` → `δεν μπορώ`), words split by a hyphen at a line break, spaces before punctuation, excessive blank lines, and a few clear literal translations (`για σίγουρα` → `σίγουρα`).
+* Phrases that *might* be fine are **reported, not changed**, so the meaning of your book never changes. Examples are `κάνει νόημα` (which can also mean "signals") and deliberate repetition such as `Όχι όχι` or `σιγά σιγά`.
+* It also warns you about possible problems: an empty translated page, a paragraph that seems untranslated, missing page numbers, or unbalanced quotes.
+* Poetry layouts keep their spacing, and French punctuation spacing is respected.
+* If your document kept its original formatting (Word/EPUB → same format, or comics), the check only **reports**. The file is never rebuilt, so your styles, images and artwork stay exactly as they were.
+
+**What it does for audiobooks**
+* Checks that the audio file is complete, playable and in the right order.
+* If a part of the narration failed (for example after a short network outage), it automatically **tries that part again** and rebuilds the audiobook. Your original audio is replaced only if the rebuilt one is verified to be better.
+
+**When finished**, a short notification tells you what was corrected. If something serious was found (e.g. audio parts still missing), you'll see a ⚠️ warning so you can check the result.
+
+**Turning it on/off:** use the **🔍 Τελικός Αυτόματος Έλεγχος Ποιότητας** checkbox in the Translation or Audiobook panel (one setting for both). When it is off, the application works exactly as before. The check runs on your computer and **never uses your Gemini quota**.
 
 ---
 

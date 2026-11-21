@@ -1259,6 +1259,7 @@ function connectSSE(prefix, jobId) {
       return;
     }
     updateProgress(prefix, data);
+    notifyRefinementReport(jobId, data);
 
     if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
       sse.close();
@@ -1275,6 +1276,45 @@ function connectSSE(prefix, jobId) {
     }
     pollProgress(prefix, jobId);
   };
+}
+
+// ---------------------------------------------------------------------------
+// Final Output Refinement (automatic quality-control stage) — global toggle & report
+// ---------------------------------------------------------------------------
+const _shownRefinementReports = new Set();
+
+function syncFinalRefinementToggles(enabled) {
+  document.querySelectorAll('.final-refinement-toggle').forEach(cb => { cb.checked = !!enabled; });
+}
+
+async function setFinalRefinementEnabled(enabled) {
+  syncFinalRefinementToggles(enabled);
+  try {
+    const res = await fetch(`${API}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ final_refinement_enabled: !!enabled }),
+    });
+    if (!res.ok) throw new Error('save failed');
+    toast(enabled ? '🔍 Ο τελικός έλεγχος ποιότητας ενεργοποιήθηκε.' : 'Ο τελικός έλεγχος ποιότητας απενεργοποιήθηκε.', 'info');
+  } catch (_) {
+    syncFinalRefinementToggles(!enabled);
+    toast('Αποτυχία αποθήκευσης ρύθμισης τελικού ελέγχου.', 'error');
+  }
+}
+
+function notifyRefinementReport(jobId, data) {
+  const rep = data && data.refinement_report;
+  if (!rep || data.status !== 'done' || !jobId || _shownRefinementReports.has(jobId)) return;
+  _shownRefinementReports.add(jobId);
+  const nCorr = Array.isArray(rep.corrections) ? rep.corrections.length : 0;
+  if (rep.critical_count > 0) {
+    const missing = Array.isArray(rep.missing_sections) && rep.missing_sections.length
+      ? ` (${rep.missing_sections.length} τμήματα ήχου λείπουν)` : '';
+    toast(`⚠️ Τελικός έλεγχος: ${rep.critical_count} κρίσιμα ζητήματα${missing}. Ελέγξτε το αποτέλεσμα.`, 'warning');
+  } else if (rep.status === 'refined' || rep.status === 'healed') {
+    toast(`🔍 Τελικός έλεγχος: εφαρμόστηκαν ${nCorr} ομάδες διορθώσεων.`, 'success');
+  }
 }
 
 function pollProgress(prefix, jobId) {
@@ -1295,6 +1335,7 @@ function pollProgress(prefix, jobId) {
       consecutiveErrors = 0;
       const data = await res.json();
       updateProgress(prefix, data);
+      notifyRefinementReport(jobId, data);
       if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
         stopJobTracking(prefix);
       }
@@ -4215,6 +4256,7 @@ async function init() {
     const sRes = await fetch(`${API}/settings`);
     if (sRes.ok) {
       const sData = await sRes.json();
+      syncFinalRefinementToggles(sData.final_refinement_enabled !== false);
       const serverKeys = Array.isArray(sData.gemini_api_keys) ? sData.gemini_api_keys : (sData.gemini_api_key ? [sData.gemini_api_key] : []);
 
       let localKeys = [];

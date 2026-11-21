@@ -551,6 +551,66 @@ async def generate_audiobook(
                 author="BookApp",
                 cover_image_path=cover_img,
             )
+
+        # Automatic Final Output Refinement & Quality-Control stage (independent, non-fatal).
+        # Runs before the temp dir is removed so failed sections can be re-synthesised and re-assembled.
+        try:
+            from backend.job_manager import get_job as _get_job
+            from backend.output_refiner import (
+                refine_audiobook_output_async, is_refinement_enabled, build_refinement_report,
+            )
+            _job = _get_job(job_id)
+            if is_refinement_enabled(getattr(_job, "final_refinement", None) if _job else None):
+                update_job(job_id, current_step="🔍 Τελικός έλεγχος ποιότητας ηχητικού βιβλίου...", progress=98)
+
+                # Sections that must produce audio (segments that clean to empty text are legitimately silent)
+                expected_indices = [
+                    i for i, (seg_text, _v) in enumerate(voice_segments)
+                    if seg_text.strip() and _clean_tts_text(seg_text, narration_style=style)
+                ]
+
+                async def _resynthesize(idx: int) -> bool:
+                    if is_job_cancelled(job_id):
+                        return False
+                    seg_text, seg_voice = voice_segments[idx]
+                    target = temp_dir / f"chunk_{idx:06d}.mp3"
+                    await _tts_chunk_with_retry(
+                        seg_text, seg_voice, str(target),
+                        rate=effective_rate, pitch=effective_pitch, volume=effective_volume,
+                        narration_style=style,
+                    )
+                    return target.exists() and target.stat().st_size > 0
+
+                async def _reassemble(files: list[str], dest: str) -> None:
+                    if dest.lower().endswith(".m4b"):
+                        heal_mp3 = temp_dir / "full_concat_refined.mp3"
+                        await _concatenate_mp3s(files, str(heal_mp3))
+                        await export_audiobook_m4b(str(heal_mp3), dest, title=book_title,
+                                                   author="BookApp", cover_image_path=cover_img)
+                    else:
+                        await _concatenate_mp3s(files, dest)
+                        tag_audiobook_file(dest, title=book_title, author="BookApp", cover_image_path=cover_img)
+
+                audio_refine_res = await refine_audiobook_output_async(
+                    job_id=job_id,
+                    output_path=output_path,
+                    chunk_files=chunk_files,
+                    expected_chunks=total_chunks,
+                    expected_indices=expected_indices,
+                    language=language,
+                    book_title=book_title,
+                    cover_image_path=cover_img,
+                    enabled=True,
+                    resynthesize_chunk=_resynthesize,
+                    reassemble=_reassemble,
+                )
+                update_job(job_id, refinement_report=build_refinement_report(audio_refine_res))
+            else:
+                update_job(job_id, refinement_report={"status": "skipped"})
+        except asyncio.CancelledError:
+            raise
+        except Exception as ref_err:
+            logger.warning(f"[{job_id}] Final audiobook refinement failed ({ref_err}); original audio preserved.", exc_info=True)
     finally:
         # Always clean up temp directory (even on concatenation/M4B/disk errors)
         import shutil

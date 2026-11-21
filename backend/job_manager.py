@@ -37,6 +37,8 @@ class Job:
     total_pages: int = 0
     done_pages: int = 0
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
+    final_refinement: Optional[bool] = None  # per-job override of the final refinement stage (None = use setting)
+    refinement_report: Optional[dict] = None  # summary produced by backend.output_refiner
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -104,6 +106,8 @@ def _job_to_db_dict(job: Job) -> dict:
             "total_pages": int(job.total_pages or 0),
             "done_pages": int(job.done_pages or 0),
             "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
+            "final_refinement": getattr(job, "final_refinement", None),
+            "refinement_report": getattr(job, "refinement_report", None),
         },
     }
 
@@ -148,6 +152,8 @@ def _job_from_db_row(row: dict) -> Job:
         total_pages=int(meta.get("total_pages") or 0),
         done_pages=int(meta.get("done_pages") or 0),
         quota_behavior=str(meta.get("quota_behavior") or "wait"),
+        final_refinement=meta.get("final_refinement"),
+        refinement_report=meta.get("refinement_report") if isinstance(meta.get("refinement_report"), dict) else None,
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -396,6 +402,8 @@ def _notify_subscribers(job: Job):
         "file_name": getattr(job, "file_name", "") or "",
         "ai_polish": bool(getattr(job, "ai_polish", False)),
         "quota_behavior": getattr(job, "quota_behavior", "wait"),
+        "final_refinement": getattr(job, "final_refinement", None),
+        "refinement_report": getattr(job, "refinement_report", None),
     }
     try:
         running_loop = asyncio.get_running_loop()

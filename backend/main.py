@@ -118,6 +118,7 @@ class TranslateRequest(BaseModel):
     ai_polish: bool = False
     api_key: Optional[str] = None
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
+    final_refinement: Optional[bool] = None
 
 
 class AudiobookRequest(BaseModel):
@@ -132,6 +133,7 @@ class AudiobookRequest(BaseModel):
     ai_polish: bool = False              # if True, polish script with Gemini before TTS
     api_key: Optional[str] = None        # optional Gemini API key override
     quota_behavior: str = "wait"         # 'wait' or 'fallback'
+    final_refinement: Optional[bool] = None
 
 
 class GenreDetectionRequest(BaseModel):
@@ -185,6 +187,21 @@ class PolishRequest(BaseModel):
     api_key: Optional[str] = None
     layout_mode: Optional[str] = None
     bilingual_mode: bool = True
+    final_refinement: Optional[bool] = None
+
+
+class RefinementRequest(BaseModel):
+    job_id: Optional[str] = None
+    text: Optional[str] = None
+    file_path: Optional[str] = None
+    target_lang: Optional[str] = None   # defaults to the job's target language (or 'greek' for direct text)
+    source_lang: Optional[str] = None
+    mode: str = "auto"  # 'auto', 'translation', 'audiobook'
+    style: Optional[str] = None
+    layout_mode: Optional[str] = None
+    output_format: Optional[str] = None
+    api_key: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 class GlossaryTermRequest(BaseModel):
@@ -457,6 +474,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         reading_direction=reading_direction,
         ai_polish=req.ai_polish,
         quota_behavior=quota_behavior,
+        final_refinement=req.final_refinement,
+        refinement_report=None,
     )
 
     background_tasks.add_task(
@@ -506,8 +525,13 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             or (file_type == "pdf" and comic_probe.get("is_scanned", False))
         )
 
+        # Whether the final document is regenerated from the plain-text translation by export_text().
+        # Format-preserving outputs (comics, in-place DOCX/EPUB) must never be re-exported by the refiner.
+        refine_reexportable = True
+
         # 0. Graphic Novel / Comic / Scanned Image PDF translation (balloons/vision only, preserving 100% artwork)
         if is_comic_flow:
+            refine_reexportable = False
             from backend.comic_translator import translate_comic_document
             reading_dir = getattr(job, "reading_direction", "ltr") or "ltr"
             final_comic_pdf = await translate_comic_document(
@@ -576,6 +600,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
 
         # 2. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
         elif file_type == "docx" and fmt in ("docx", "doc"):
+            refine_reexportable = False
             final_docx_path = out_dir / f"{base_name}.docx"
 
             def docx_prog(done, total, msg):
@@ -600,6 +625,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
 
         # 3. EPUB In-Place Format Preservation (HTML tags, CSS, headings, styles, images)
         elif file_type == "epub" and fmt == "epub":
+            refine_reexportable = False
             final_epub_path = out_dir / f"{base_name}.epub"
 
             def epub_prog(done, total, msg):
@@ -642,6 +668,33 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 Path(output_path).write_text(txt_content, encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
             final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
+
+        if is_job_cancelled(job_id):
+            return
+
+        # Automatic Final Output Refinement & Quality-Control stage (independent, non-fatal, local-only)
+        try:
+            from backend.output_refiner import refine_translation_output, is_refinement_enabled, build_refinement_report
+            if is_refinement_enabled(getattr(job, "final_refinement", None)):
+                update_job(job_id, current_step="🔍 Τελικός έλεγχος ποιότητας & βελτίωση κειμένου...", progress=97)
+                refine_res = await refine_translation_output(
+                    job_id=job_id,
+                    output_path=output_path,
+                    final_exported_path=str(final_path),
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    layout_mode=layout,
+                    output_format=fmt,
+                    enabled=True,
+                    allow_reexport=refine_reexportable,
+                )
+                update_job(job_id, refinement_report=build_refinement_report(refine_res))
+                if refine_res.final_exported_path and Path(refine_res.final_exported_path).exists():
+                    final_path = Path(refine_res.final_exported_path)
+            else:
+                update_job(job_id, refinement_report={"status": "skipped"})
+        except Exception as refine_err:
+            logger.warning(f"[{job_id}] Final refinement stage failed ({refine_err}); original output preserved.", exc_info=True)
 
         if is_job_cancelled(job_id):
             return
@@ -724,7 +777,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Επιλέξτε 'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο' για εκφώνηση χωρίς κλειδί.")
 
     clear_job_cancellation(req.job_id)
-    update_job(req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior)
+    update_job(req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior, final_refinement=req.final_refinement, refinement_report=None)
 
     background_tasks.add_task(
         _run_audiobook,
@@ -823,6 +876,8 @@ async def progress_stream(job_id: str):
                 "file_name": getattr(job, "file_name", "") or "",
                 "ai_polish": bool(getattr(job, "ai_polish", False)),
                 "quota_behavior": getattr(job, "quota_behavior", "wait"),
+                "final_refinement": getattr(job, "final_refinement", None),
+                "refinement_report": getattr(job, "refinement_report", None),
             }
             yield f"data: {json.dumps(state)}\n\n"
 
@@ -906,6 +961,8 @@ async def job_status(job_id: str):
         "error": job.error,
         "has_output": job.output_path is not None,
         "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
+        "final_refinement": getattr(job, "final_refinement", None),
+        "refinement_report": getattr(job, "refinement_report", None),
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
         "gemini_quota_reset_timestamp": quota_info.get("reset_timestamp", 0.0),
@@ -1437,6 +1494,7 @@ class SettingsRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     gemini_api_keys: Optional[list[str]] = None
     default_quota_behavior: Optional[str] = None
+    final_refinement_enabled: Optional[bool] = None
 
 
 @app.get("/api/settings")
@@ -1451,11 +1509,14 @@ async def get_app_settings():
     if not has_key:
         quota_behavior = "fallback"
     pool_status = GeminiKeyPool.get_pool_status()
+    from backend.output_refiner import is_refinement_enabled
+    refinement_on = is_refinement_enabled()
     return {
         "gemini_api_key": key,
         "gemini_api_keys": keys,
         "pool": pool_status,
         "default_quota_behavior": quota_behavior,
+        "final_refinement_enabled": refinement_on,
         "has_gemini_key": has_key,
         "default_engine": "gemini" if has_key else "free",
     }
@@ -1484,6 +1545,8 @@ async def update_app_settings(req: SettingsRequest):
         val = req.default_quota_behavior.strip().lower()
         if val in ("wait", "fallback"):
             save_setting("default_quota_behavior", val)
+    if req.final_refinement_enabled is not None:
+        save_setting("final_refinement_enabled", bool(req.final_refinement_enabled))
     from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
     if is_queue_paused_for_quota():
         resume_queue_after_quota(_execute_queue_item)
@@ -1709,6 +1772,21 @@ async def polish_translation(req: PolishRequest):
     # Update or create output files on disk
     stem = Path(job.file_name).stem if job else "polished_document"
     tgt_lang = (getattr(job, "target_lang", "greek") if job else "greek") or "greek"
+
+    # Automatic Final Output Refinement Stage for Polish
+    try:
+        from backend.output_refiner import refine_text_content, is_refinement_enabled
+        if is_refinement_enabled(getattr(req, "final_refinement", None)):
+            polished_refined, _, _ = refine_text_content(
+                polished,
+                target_lang=tgt_lang,
+                source_lang="english",
+                style=req.style,
+            )
+            polished = polished_refined
+    except Exception as ref_ex:
+        logger.warning(f"Refinement during standalone polish warning: {ref_ex}")
+
     txt_file = out_dir / f"{stem}_translated_{tgt_lang}.txt"
     txt_file.write_text(polished, encoding="utf-8")
     base_name = txt_file.stem
@@ -1739,6 +1817,169 @@ async def polish_translation(req: PolishRequest):
         )
 
     return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
+
+
+# ---------------------------------------------------------------------------
+# Output Refinement & Quality Control Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/refine/config")
+async def get_refine_config():
+    """Returns configuration and operational status of the Final Output Refinement stage."""
+    from backend.output_refiner import is_refinement_enabled, REFINER_VERSION, MAX_AUDIO_HEAL_CHUNKS
+    return {
+        "enabled": is_refinement_enabled(),
+        "version": REFINER_VERSION,
+        "supported_modes": ["translation", "audiobook"],
+        "uses_external_api": False,
+        "max_audio_heal_chunks": MAX_AUDIO_HEAL_CHUNKS,
+        "pipeline_stages": [
+            "structural_integrity",
+            "omission_detection",
+            "orthography_and_accents",
+            "grammar_and_morphology",
+            "calque_detection_and_safe_remediation",
+            "repetition_and_stutter_filtering",
+            "formatting_normalization",
+            "audio_container_and_stream_validation",
+            "audio_sequence_continuity_verification",
+            "audio_missing_section_healing",
+            "metadata_verification",
+        ],
+    }
+
+
+def _resolve_job_output_file(job_id: str, file_path: Optional[str], suffixes: tuple) -> Optional[Path]:
+    """Resolves a file strictly inside the job's own output directory (prevents path traversal)."""
+    out_d = _job_output_dir(job_id).resolve()
+    if file_path:
+        cand = Path(file_path)
+        if not cand.is_absolute():
+            cand = out_d / cand
+        try:
+            cand = cand.resolve()
+        except OSError:
+            return None
+        if out_d not in cand.parents or not cand.is_file() or cand.suffix.lower() not in suffixes:
+            raise HTTPException(400, "file_path must reference an output file of the given job.")
+        return cand
+    job = get_job(job_id)
+    if job and job.output_path and Path(job.output_path).suffix.lower() in suffixes:
+        cand = Path(job.output_path).resolve()
+        if out_d in cand.parents and cand.is_file():
+            return cand
+    cands = [
+        f for f in out_d.iterdir()
+        if f.is_file() and f.suffix.lower() in suffixes and not f.name.endswith("_original.txt")
+    ]
+    # Prefer translation outputs, newest first
+    cands.sort(key=lambda f: ("_translated_" in f.name, f.stat().st_mtime), reverse=True)
+    return cands[0] if cands else None
+
+
+def _job_output_is_reexportable(job) -> bool:
+    """False for outputs produced by format-preserving flows (comics, in-place DOCX/EPUB)."""
+    if not job:
+        return False
+    fmt = (getattr(job, "output_format", "") or "").lower()
+    ftype = (getattr(job, "file_type", "") or "").lower()
+    if (getattr(job, "layout_mode", "") or "").lower() in ("comic", "graphic_novel") or fmt in ("cbz", "cbr"):
+        return False
+    if not getattr(job, "ai_polish", False) and (
+        (ftype == "docx" and fmt in ("docx", "doc")) or (ftype == "epub" and fmt == "epub")
+    ):
+        return False
+    return True
+
+
+@app.post("/api/refine")
+async def refine_output_endpoint(req: RefinementRequest):
+    """
+    On-demand Final Output Refinement & Quality Control.
+    - ``text``: refine a text snippet (nothing is written to disk).
+    - ``job_id``: refine/inspect that job's translation, or validate its audiobook (``mode='audiobook'``).
+    Files are only ever resolved inside the job's own output directory.
+    """
+    from dataclasses import asdict
+    from backend.output_refiner import (
+        refine_text_content, refine_translation_output, refine_audiobook_output_async,
+        is_refinement_enabled, build_refinement_report, MAX_DIRECT_TEXT_CHARS,
+    )
+
+    if not is_refinement_enabled(req.enabled):
+        return {"status": "skipped", "message": "Final refinement stage is disabled."}
+
+    req_mode = (req.mode or "auto").strip().lower()
+    if req_mode not in ("auto", "translation", "audiobook"):
+        raise HTTPException(400, "mode must be 'auto', 'translation' or 'audiobook'.")
+
+    # 1. Direct text (stateless)
+    if req.text is not None and req_mode != "audiobook":
+        if len(req.text) > MAX_DIRECT_TEXT_CHARS:
+            raise HTTPException(413, "Text too large for direct refinement.")
+        refined_txt, issues, corrections = refine_text_content(
+            req.text, target_lang=req.target_lang or "greek", source_lang=req.source_lang or "english",
+            style=req.style or req.layout_mode,
+        )
+        return {
+            "status": "refined" if corrections else "verified_clean",
+            "mode": "translation",
+            "original_text": req.text,
+            "refined_text": refined_txt,
+            "issues_detected": [asdict(i) for i in issues],
+            "corrections_applied": corrections,
+            "modifications_count": len(corrections),
+        }
+
+    if not req.job_id:
+        raise HTTPException(400, "Provide either 'text' or 'job_id' for refinement.")
+    _validate_job_id(req.job_id)
+    job = get_job(req.job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{req.job_id}' not found.")
+    if job.status == "running":
+        raise HTTPException(409, "Job is still running; refinement runs automatically when it finishes.")
+
+    audio_suffixes = (".mp3", ".m4b")
+    is_audio = req_mode == "audiobook" or (
+        req_mode == "auto" and (
+            (req.file_path or "").lower().endswith(audio_suffixes)
+            or (not req.file_path and (job.mode == "audiobook" or (job.output_path or "").lower().endswith(audio_suffixes)))
+        )
+    )
+
+    # 2. Audiobook validation (inspection + missing-metadata repair; chunks are gone after generation)
+    if is_audio:
+        target_audio = _resolve_job_output_file(req.job_id, req.file_path, audio_suffixes)
+        if not target_audio:
+            raise HTTPException(404, "Audiobook file not found for refinement.")
+        res = await refine_audiobook_output_async(
+            job_id=req.job_id, output_path=str(target_audio), language=req.target_lang or "greek",
+            book_title=Path(job.file_name or "Audiobook").stem, enabled=True,
+        )
+        update_job(req.job_id, refinement_report=build_refinement_report(res))
+        return {"status": res.status, "mode": "audiobook", "result": asdict(res)}
+
+    # 3. Translation output of a job
+    text_p = _resolve_job_output_file(req.job_id, req.file_path if (req.file_path or "").lower().endswith(".txt") else None, (".txt",))
+    if text_p and text_p.name.endswith("_original.txt"):
+        text_p = None
+    if not text_p:
+        raise HTTPException(404, f"No translation text output found for job '{req.job_id}'.")
+    final_p = job.output_path if job.output_path and Path(job.output_path).exists() else str(text_p)
+    res_trans = await refine_translation_output(
+        job_id=req.job_id,
+        output_path=str(text_p),
+        final_exported_path=final_p,
+        source_lang=req.source_lang or getattr(job, "source_lang", "english"),
+        target_lang=req.target_lang or getattr(job, "target_lang", "greek"),
+        layout_mode=req.layout_mode or getattr(job, "layout_mode", "standard") or "standard",
+        output_format=req.output_format or job.output_format,
+        enabled=True,
+        allow_reexport=_job_output_is_reexportable(job),
+    )
+    update_job(req.job_id, refinement_report=build_refinement_report(res_trans))
+    return {"status": res_trans.status, "mode": "translation", "result": asdict(res_trans)}
 
 
 # ---------------------------------------------------------------------------
@@ -1871,6 +2112,8 @@ async def _execute_queue_item(q_item):
         layout_mode=q_item.layout_mode,
         reading_direction=q_item.reading_direction,
         ai_polish=q_item.ai_polish,
+        final_refinement=None,  # queue items follow the global final_refinement_enabled setting
+        refinement_report=None,
     )
     await _run_translation(
         q_item.job_id,

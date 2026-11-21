@@ -347,6 +347,16 @@
         </span>
       </div>
 
+      <div class="form-group" style="margin-top:10px">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
+          <input type="checkbox" id="tr-final-refinement" class="final-refinement-toggle" checked onchange="setFinalRefinementEnabled(this.checked)" style="width:18px;height:18px;accent-color:var(--emerald)" />
+          <span style="font-size:0.9rem">🔍 <strong>Τελικός Αυτόματος Έλεγχος Ποιότητας</strong> — Final Output Refinement</span>
+        </label>
+        <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
+          Τοπικός έλεγχος &amp; ασφαλείς διορθώσεις στο τέλος κάθε μετάφρασης/ηχητικού βιβλίου (χωρίς κατανάλωση API).
+        </span>
+      </div>
+
       <!-- Gemini Quota Limit Behavior Option -->
       <div class="form-group mode-advanced-only" style="margin-top:12px; padding:12px 14px; background:rgba(255,255,255,0.02); border:1.5px solid var(--border); border-radius:10px">
         <label class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
@@ -665,6 +675,16 @@
           <input type="checkbox" id="ab-ai-polish" style="width:18px;height:18px;accent-color:var(--violet)" />
           <span style="font-size:0.9rem">✨ AI Polish for Spoken Audio (Gemini — expands abbreviations &amp; improves narration flow)</span>
         </label>
+      </div>
+
+      <div class="form-group" style="margin-top:10px">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
+          <input type="checkbox" id="ab-final-refinement" class="final-refinement-toggle" checked onchange="setFinalRefinementEnabled(this.checked)" style="width:18px;height:18px;accent-color:var(--emerald)" />
+          <span style="font-size:0.9rem">🔍 <strong>Τελικός Αυτόματος Έλεγχος Ποιότητας</strong> — Final Output Refinement</span>
+        </label>
+        <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
+          Τοπικός έλεγχος &amp; ασφαλείς διορθώσεις στο τέλος κάθε μετάφρασης/ηχητικού βιβλίου (χωρίς κατανάλωση API).
+        </span>
       </div>
 
       <div class="form-group mode-advanced-only" style="margin-top:10px">
