@@ -138,6 +138,7 @@ def test_import_integrity():
         "backend.queue_manager",
         "backend.output_refiner",
         "backend.book_insights",
+        "backend.translation_prompts",
         "backend.main",
     ]
     for mod_name in modules:

@@ -28,7 +28,6 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Categorized Custom Glossary](#-categorized-custom-glossary)
    - [In-Place Layout & Style Preservation](#in-place-layout--style-preservation)
    - [Automatic Final Quality Check](#-automatic-final-quality-check-final-output-refinement)
-   - [AI Final Copy-Editing (Advanced Mode)](#-ai-final-copy-editing-second-refinement--advanced-mode-only)
 4. [Audiobook Generation](#4-audiobook-generation)
    - [Available Neural Voices & Live Auditions](#available-neural-voices--live-auditions)
    - [Multi-Voice Dramatization](#-multi-voice-dramatization)
@@ -250,6 +249,14 @@ For publications requiring professional editorial tone:
 4. **🧠 Whole-Book Stratified Entity Consistency Dossier:** Scans the entire manuscript across 9 stratified excerpts to extract 35–60 recurring entities with explicit grammatical gender (`ο/η/το`).
 5. **🔄 Rolling Context & Boundary Deduplication:** Feeds preceding sentences into `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` and cleans overlapping boundaries so paragraphs are never duplicated.
 
+#### What AI Polish now pays attention to
+With **AI Polish** on, the translation is written for a demanding reader:
+* **Faithful to the original:** nothing left out, nothing added, no "decorated" wording. The author's voice and sentence rhythm are kept.
+* **Natural Greek:** it avoids the typical signs of a translated text, such as needless "αυτός/αυτή", a "του/της" after every noun, chains of "ο οποίος", and literal idioms and false friends ("makes sense" is not "κάνει νόημα").
+* **Correct typography:** chapter titles in Greek capitalisation ("Κεφάλαιο τρίτο: Το γράμμα…"), Greek punctuation, and «» quotation marks.
+* **Consistent across the whole book:** names, genders, how characters address each other (εσύ/εσείς), and narrative tense, using a register built from the whole book before translation starts.
+* **Translations into English** now get English editing rules.
+
 ### 🔑 Gemini Multi-Key API Pool & Auto-Failover
 * **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
 * **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
@@ -297,18 +304,6 @@ Every translation and every audiobook goes through one more automatic step at th
 **When finished**, a short notification tells you what was corrected. If something serious was found (e.g. audio parts still missing), you'll see a ⚠️ warning so you can check the result.
 
 **Turning it on/off (Advanced Mode):** the check is always on by default. Its checkbox **🔍 Τελικός Αυτόματος Έλεγχος Ποιότητας** is shown only in **⚙️ Advanced Mode** (Translation or Audiobook panel; one setting for both). When it is off, the application works exactly as before. The check runs on your computer and **never uses your Gemini quota**.
-
-### 🤖 AI Final Copy-Editing (second refinement — Advanced Mode only)
-
-In **⚙️ Advanced Mode** the Translation panel offers a second, optional stage: **🤖 AI Τελική Επιμέλεια (Gemini)**. After the local check, Gemini proofreads the finished translation. It fixes grammar, spelling, accents, punctuation, overly literal phrasing and inconsistent names or terms, and it never adds, removes or changes content.
-
-> ⚠️ **It uses extra Gemini tokens.** The whole translated text is sent to Gemini again and returned corrected, so usage is roughly **twice the size of the book in tokens**. When you tick the box, a warning shows an estimate for your document (e.g. a 100-page book ≈ 100,000 tokens in ~20 requests), and this counts toward your daily key limits. If AI Polish is also on, this is a second AI pass.
-
-* Requires a Gemini API key; without one, the step is skipped and you are told.
-* Every corrected part is checked before it is kept: same paragraphs, similar length, page numbers untouched, still Greek. Anything suspicious is discarded and the original text is kept.
-* If the daily limit is reached midway, the parts already corrected are kept and the rest stay as they were. The translation still completes.
-* Not applied to documents that kept their original formatting (Word/EPUB → same format, comics), nor to Smart Batch Queue items. It is never switched on automatically, and switching to Basic Mode turns it off.
-* A notification at the end tells you how many parts were improved.
 
 ---
 
@@ -363,6 +358,13 @@ Enable **✨ AI Polish for Spoken Audio (Gemini)** to optimize scripts for speec
 * Phonetically spells foreign names and acronyms in Greek characters (`Keeton` ➔ `Κίτον`, `DNA` ➔ `Ντι-Εν-Έι`).
 * Fully writes out numbers and years (`2006` ➔ `δύο χιλιάδες έξι`, `50%` ➔ `πενήντα τοις εκατό`).
 * Cleans footnote markers (`[1]`), page headers, and URLs.
+
+**What changed for listeners:**
+* The script is no longer rephrased; only what is needed for correct speech is changed.
+* Numbers are read in the right grammatical case ("ήταν τριάντα οκτώ βαθμοί", "στους σαράντα βαθμούς").
+* Roman numerals, times and ordinals are read correctly ("Κεφάλαιο τέταρτο", "δέκα και μισή", "Λουδοβίκος ο δέκατος τέταρτος").
+* Words written in CAPITALS for emphasis are no longer spelled out letter by letter.
+* In long books, every foreign name is pronounced the same way from start to finish.
 
 ### 🎧 Built-In Pro Audiobook Player
 * **In-Browser Playback:** Listen immediately without third-party media players.

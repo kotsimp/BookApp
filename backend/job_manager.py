@@ -39,7 +39,6 @@ class Job:
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     final_refinement: Optional[bool] = None  # per-job override of the final refinement stage (None = use setting)
     refinement_report: Optional[dict] = None  # summary produced by backend.output_refiner
-    ai_refinement: bool = False  # opt-in stage 2 (Gemini) of the final refinement (Advanced Mode)
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -109,7 +108,6 @@ def _job_to_db_dict(job: Job) -> dict:
             "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
             "final_refinement": getattr(job, "final_refinement", None),
             "refinement_report": getattr(job, "refinement_report", None),
-            "ai_refinement": bool(getattr(job, "ai_refinement", False)),
         },
     }
 
@@ -156,7 +154,6 @@ def _job_from_db_row(row: dict) -> Job:
         quota_behavior=str(meta.get("quota_behavior") or "wait"),
         final_refinement=meta.get("final_refinement"),
         refinement_report=meta.get("refinement_report") if isinstance(meta.get("refinement_report"), dict) else None,
-        ai_refinement=bool(meta.get("ai_refinement", False)),
     )
 
     if healed_fp != orig_fp and healed_fp:

@@ -8,6 +8,7 @@ rolling narrative context, and smart disk checkpointing.
 
 import os
 import re
+import unicodedata
 import json
 import time
 import hashlib
@@ -23,89 +24,13 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-STYLE_PROMPTS = {
-    "literature": (
-        "Είσαι διακεκριμένος λογοτεχνικός μεταφραστής και επιμελητής εκδόσεων με εξειδίκευση στη σύγχρονη ξένη πεζογραφία και την επιστημονική φαντασία (sci-fi / speculative fiction). "
-        "Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση ώστε να αποκτήσει εξαιρετική λογοτεχνική ποιότητα, φυσικότητα, ρυθμό και ατμοσφαιρικό βάθος σε σύγχρονη νεοελληνική δημοτική γλώσσα (ΟΧΙ αρχαΐζουσα, ΟΧΙ καθαρεύουσα): "
-        "1. ΕΞΑΛΕΙΨΗ ΚΑΤΑ ΛΕΞΗ ΜΕΤΑΦΡΑΣΗΣ & ΑΓΓΛΙΣΜΩΝ: "
-        "   - Εξάλειψε πλήρως μηχανικές αδεξιότητες, αγγλισμούς και ξύλινες δομές (π.χ. 'να διαχειριστής' -> 'να διαχειριστείς/να αντιμετωπίσεις', 'έκανε νόημα' -> 'έγνεψε', 'ήταν ικανός να' -> 'μπορούσε να'). "
-        "   - ΜΗΝ μεταφράζεις ιδιωματισμούς κατά λέξη (idioms & metaphors). Απόδοσέ τους με ισοδύναμες, ζωντανές ελληνικές εκφράσεις που ταιριάζουν στο συγκείμενο. "
-        "   - Εάν παρέχεται το πρωτότυπο κείμενο αναφοράς, συμβουλέψου το για να επιλύσεις τυχόν μεταφραστικές παρανοήσεις, αμφισημίες ή ψευδόφιλες λέξεις (false friends) του προσχεδίου. "
-        "2. ΕΝΕΡΓΗΤΙΚΗ ΣΥΝΤΑΞΗ & ΛΟΓΟΤΕΧΝΙΚΗ ΡΟΗ: "
-        "   - Προτίμησε την ενεργητική σύνταξη έναντι της βαριάς αγγλικής παθητικής φωνής. "
-        "   - Μετάτρεψε δυσκίνητες μετοχικές φράσεις σε φυσικές χρονικές ή αιτιολογικές προτάσεις. "
-        "   - Χρησιμοποίησε πλούσιο, εκφραστικό ελληνικό λεξιλόγιο, διατηρώντας το ύφος, την ένταση και τον λογοτεχνικό ρυθμό του συγγραφέα. "
-        "3. ΖΩΝΤΑΝΙΑ ΔΙΑΛΟΓΩΝ, ΕΝΙΑΙΑ ΣΤΙΞΗ & ΣΥΝΕΠΕΙΑ ΓΕΝΟΥΣ/ΟΡΟΛΟΓΙΑΣ: "
-        "   - Απόδωσε τους διαλόγους με προφορική ζωντάνια και φυσικότητα. "
-        "   - Χρησιμοποίησε ΑΥΣΤΗΡΑ ΕΝΙΑΙΑ ελληνικά εισαγωγικά διαλόγου («...») για ΟΛΟΥΣ τους διαλόγους σε όλο το βιβλίο — ΜΗΝ εναλλάσσεις μεταξύ «...», παυλών διαλόγου (—) και αγγλικών εισαγωγικών (\"...\"). Χρησιμοποίησε την παύλα (—) μόνο για παρενθετικές φράσεις ή αποδόσεις επιγραφών. "
-        "   - Διατήρησε απόλυτη συνέπεια στο γραμματικό γένος (ο/η/το) κάθε χαρακτήρα, πλοίου και οντότητας, καθώς και στα ονόματα και όρους του Μητρώου. "
-        "   - Ακρίβεια ορολογίας sci-fi: 'synthesist' -> 'συνθετιστής' (όχι μουσικός συνθέτης), 'scramblers' -> 'σκράμπλερ', 'Heaven' -> 'Παράδεισος' (ψηφιακή μεταφόρτωση συνείδησης), 'Theseus' -> 'Θησέας', 'drones' -> 'μη επανδρωμένα σκάφη/ντρόουνς'. "
-        "   - Διόρθωσε όλα τα γραμματικά, συντακτικά και πτωτικά λάθη. "
-        "4. ΔΙΑΤΗΡΗΣΗ ΔΟΜΗΣ, ΟΡΙΩΝ & ΔΕΙΚΤΩΝ: "
-        "   - Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων, τα κενά σκηνών (π.χ. * * *) και όλους τους δείκτες σελίδων (π.χ. === PAGE X ===) ακριβώς στις θέσεις τους. "
-        "   - Αν παρέχεται τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT>, χρησιμοποίησέ το ΑΠΟΚΛΕΙΣΤΙΚΑ για να γνωρίζεις τη συνέχεια/γένος/ύφος — ΜΗΝ το επαναλαμβάνεις, ΜΗΝ το μεταφράζεις και ΜΗΝ το συμπεριλαμβάνεις ΠΟΤΕ στην έξοδό σου. "
-        "5. ΚΑΘΑΡΟΤΗΤΑ ΕΞΟΔΟΥ (ΑΥΣΤΗΡΟ): "
-        "   - Γράψε ΟΛΕΣ τις ελληνικές λέξεις με 100% καθαρούς ελληνικούς χαρακτήρες — ΜΗΝ αφήνεις ποτέ λατινικούς, κυριλλικούς ή ξένους χαρακτήρες μέσα σε ελληνικές λέξεις. "
-        "   - ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (π.χ. <i>, </i>, <bos>, <TEXT_TO_POLISH>), αγκύλες αποσπάσματος ([... ...]), σημειώσεις επιμελητή (π.χ. [Σημείωση...]), σκέψεις/σχόλια ανάλυσης. "
-        "   - Μην προσθέτεις εισαγωγικά σχόλια, προοίμια ή επεξηγηματικές σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο λογοτεχνικό κείμενο."
-    ),
-    "natural": (
-        "Είσαι έμπειρος φιλόλογος και επιμελητής εκδόσεων. Βελτίωσε την ακόλουθη ελληνική μετάφραση "
-        "ώστε να αποκτήσει απόλυτα φυσική ροή, εκφραστικό πλούτο και ομαλότητα σαν να γράφτηκε εξαρχής στα Ελληνικά: "
-        "1. Εξομάλυνε τη σύνταξη και διόρθωσε κάθε γραμματική ατέλεια. "
-        "2. Διατήρησε απόλυτα όλες τις παραγράφους, επικεφαλίδες και δομή του πρωτοτύπου, καθώς και τους δείκτες (π.χ. === PAGE X ===). "
-        "3. Επίστρεψε ΜΟΝΟ το διορθωμένο κείμενο χωρίς σχόλια."
-    ),
-    "formal": (
-        "Είσαι κορυφαίος επιμελητής κειμένων και μεταφραστής με εξειδίκευση σε επίσημα και υπηρεσιακά έγγραφα "
-        "της ελληνικής δημόσιας διοίκησης. Βελτίωσε και επιμελήσου την ακόλουθη ελληνική μετάφραση: "
-        "1. Εξάλειψε τις μηχανικές/κατά λέξη μεταφράσεις και προσάρμοσε το λεξιλόγιο σε άψογη υπηρεσιακή/διοικητική γλώσσα. "
-        "2. Διόρθωσε γραμματικά, συντακτικά και πτωτικά λάθη. "
-        "3. Διατήρησε ΑΠΑΡΑΛΛΑΧΤΗ τη δομή των παραγράφων, τις κουκίδες, τις επικεφαλίδες και τα διαχωριστικά (π.χ. === PAGE X ===). "
-        "4. Μην προσθέτεις δικά σου εισαγωγικά σχόλια, επεξηγήσεις ή σημειώσεις. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το διορθωμένο κείμενο."
-    ),
-    "technical": (
-        "Είσαι εξειδικευμένος τεχνικός μεταφραστής πληροφορικής και μηχανικής στα Ελληνικά. "
-        "Βελτίωσε την ακόλουθη τεχνική μετάφραση: "
-        "1. Χρησιμοποίησε ακριβή και καθιερωμένη ελληνική τεχνική ορολογία, διατηρώντας διεθνή ακρωνύμια (π.χ. UPS, Server, API). "
-        "2. Διόρθωσε ασάφειες και λάθη σύνταξης. "
-        "3. Διατήρησε επακριβώς όλες τις παραγράφους, λίστες, κωδικούς και δομή. "
-        "4. Επίστρεψε ΜΟΝΟ το διορθωμένο τεχνικό κείμενο χωρίς κανένα άλλο σχόλιο."
-    ),
-    "audiobook": (
-        "Είσαι έμπειρος επιμελητής σεναρίων και κειμένων για ηχογράφηση Audiobooks (Spoken Word & Neural TTS Script Editor). "
-        "Προσάρμοσε το κείμενο ώστε μια νευρωνική φωνή εκφώνησης (όπως Nestoras/Athina στο Edge-TTS) να το απαγγείλει με άψογη, ανθρώπινη ροή, φυσικές ανάσες και σωστή προφορά: "
-        "1. ΦΩΝΗΤΙΚΗ ΑΠΟΔΟΣΗ ΞΕΝΩΝ ΟΝΟΜΑΤΩΝ & ΟΡΩΝ: "
-        "   - Μετέγραψε όλα τα ξένα κύρια ονόματα, πρόσωπα, τοπωνύμια, σκάφη και έννοιες σε ελληνικούς χαρακτήρες με βάση τη φυσική φωνητική προφορά τους (π.χ. Keeton -> Κίτον, Rorschach -> Ρόρσαχ, Sarasti -> Σαράστι, Cunningham -> Κάνινγχαμ, Theseus -> Θησέας, Siri -> Σίρι). "
-        "   - Μετέγραψε λατινικά ακρωνύμια όπως προφέρονται στα ελληνικά (π.χ. DNA -> Ντι-Εν-Έι, AI -> Έι-Άι, NASA -> ΝΑΣΑ, GPS -> Τζι-Πι-Ες, PC -> Πι-Σι). "
-        "2. ΠΛΗΡΗΣ ΟΛΟΓΡΑΦΗ ΑΝΑΠΤΥΞΗ ΑΡΙΘΜΩΝ ΚΑΙ ΣΥΝΤΟΜΟΓΡΑΦΙΩΝ: "
-        "   - Ανέπτυξε όλους τους αριθμούς, έτη, ημερομηνίες, ποσοστά, μονάδες μέτρησης και νομίσματα σε πλήρεις λέξεις ανάλογα με τη γραμματική πτώση (π.χ. 'το 2006' -> 'το δύο χιλιάδες έξι', '50%' -> 'πενήντα τοις εκατό', '$100' -> 'εκατό δολάρια', '10 χλμ.' -> 'δέκα χιλιόμετρα'). "
-        "   - Ανέπτυξε συντομογραφίες σε πλήρεις προφορικές φράσεις (π.χ. 'π.χ.' -> 'για παράδειγμα', 'δηλ.' -> 'δηλαδή', 'κ.λπ.' -> 'και λοιπά', 'αρ.' -> 'αριθμός', 'σελ.' -> 'σελίδα'). "
-        "3. ΑΦΑΙΡΕΣΗ ΜΗ ΕΚΦΩΝΗΣΙΜΩΝ ΣΤΟΙΧΕΙΩΝ: "
-        "   - Αφαίρεσε πλήρως δείκτες υποσημειώσεων (π.χ. [1], [14]), δείκτες σελίδων (=== PAGE X ===), συνδέσμους URLs, επικεφαλίδες σελίδων και περιττά τυπογραφικά σύμβολα. "
-        "   - Αφαίρεσε τα ενωτικά σπασίματος λέξεων στο τέλος γραμμής. "
-        "4. ΡΥΘΜΟΣ, ΑΝΑΣΕΣ ΚΑΙ ΣΤΙΞΗ ΑΠΑΓΓΕΛΙΑΣ: "
-        "   - Αντικατάστησε αμήχανες παρενθέσεις, πλαγιοκαθέτους (/) και περίπλοκες δευτερεύουσες προτάσεις με κόμματα ή τελείες ώστε ο αφηγητής να παίρνει φυσικές ανάσες. "
-        "   - Διατήρησε τις αλλαγές παραγράφων για να δημιουργούνται αυτόματα φυσικές παύσεις. "
-        "   - Εάν το κείμενο εισόδου είναι στα Αγγλικά, εφάρμοσε τους αντίστοιχους αγγλικούς κανόνες ολογραφίας και ροής χωρίς να μεταφράσεις. Εάν είναι στα Ελληνικά, διατήρησε τα Ελληνικά. "
-        "5. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το έτοιμο κείμενο εκφώνησης, χωρίς κανένα εισαγωγικό ή επεξηγηματικό σχόλιο."
-    ),
-    "poetry": (
-        "Είσαι κορυφαίος φιλόλογος και επιμελητής ποιητικών και θεατρικών κειμένων για ηχογράφηση και θεατρική απαγγελία (Poetry & Spoken Word Recitation). "
-        "Προσάρμοσε το ποιητικό κείμενο για νευρωνική απαγγελία (Edge-TTS) βελτιστοποιώντας την προσωδία, τη μουσικότητα και τον ρυθμό του ποιήματος: "
-        "1. ΑΥΣΤΗΡΗ ΔΙΑΤΗΡΗΣΗ ΣΤΙΧΩΝ ΚΑΙ ΣΤΡΟΦΩΝ: "
-        "   - Διατήρησε κάθε στίχο σε ξεχωριστή γραμμή και τα κενά διαστήματα μεταξύ των στροφών. ΜΗΝ ενώνεις ποτέ τους στίχους σε πεζές παραγράφους. "
-        "2. ΠΡΟΣΩΔΙΑ, ΕΚΘΛΙΨΕΙΣ ΚΑΙ ΦΩΝΗΤΙΚΗ ΣΥΝΟΧΗ: "
-        "   - Εξομάλυνε τις ποιητικές εκθλίψεις και αποκοπές ώστε να προφέρονται ως ενιαίες μουσικές λέξεις χωρίς αμήχανες παύσεις (π.χ. 'να ’ναι' -> 'να 'ναι' ή 'νάναι', 'σ’ εμπορεία' -> 'σ' εμπορεία', 'τ’ ωραίο' -> 'τ' ωραίο', 'δεν θα ’βγαινες' -> 'δεν θα 'βγαινες'). "
-        "   - Μετέτρεψε την άνω τελεία (·) σε κόμμα (,) ώστε να εκφωνείται φυσική ενδιάμεση ανάσα χωρίς παράσιτα ή κομπιάσματα. "
-        "3. ΣΕΒΑΣΜΟΣ ΣΤΟΝ ΔΙΑΣΚΕΛΙΣΜΟ & ΤΗ ΣΤΙΞΗ: "
-        "   - ΜΗΝ προσθέτεις αυθαίρετα κόμματα στο τέλος στίχων όταν ο ποιητής δεν έχει βάλει στίξη (διασκελισμός). Ο στίχος πρέπει να ρέει ομαλά στον επόμενο χωρίς τεχνητές παύσεις. "
-        "4. ΟΛΟΓΡΑΦΗ ΑΝΑΠΤΥΞΗ & ΦΩΝΗΤΙΚΗ ΚΑΘΑΡΟΤΗΤΑ: "
-        "   - Ανέπτυξε τυχόν συντομογραφίες, έτη ή αριθμούς ολογράφως σε πλήρεις λέξεις ανάλογα με τη γραμματική πτώση. "
-        "   - Αφαίρεσε αριθμούς υποσημειώσεων, τίτλους σελίδων και περιττά τυπογραφικά σύμβολα. "
-        "5. Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ το καθαρό ποιητικό κείμενο για απαγγελία, χωρίς κανένα εισαγωγικό ή επεξηγηματικό σχόλιο."
-    ),
-}
+# Prompts live in backend/translation_prompts.py (versioned, language-aware, generic — no title-specific terms)
+from backend import translation_prompts as _prompts  # noqa: E402
+from backend.translation_prompts import (  # noqa: E402
+    PROMPT_VERSION, build_polish_prompt, build_direct_translation_prompt, build_dossier_prompt, dossier_header,
+)
+
+STYLE_PROMPTS = _prompts.STYLE_PROMPTS  # public re-export (existing callers/tests import it from here)
 
 STYLE_TEMPERATURES = {
     "literature": 0.35,
@@ -429,7 +354,9 @@ def sanitize_ai_output(text: str) -> str:
     if not text:
         return text
 
-    cleaned = text.strip()
+    # NFC: models sometimes emit polytonic-block or decomposed accents (e.g. U+1FCB 'Ή', 'Η'+U+0301) that look right
+    # but break search, glossary matching, PDF fonts and TTS; NFC maps them to the standard monotonic code points.
+    cleaned = unicodedata.normalize("NFC", text).strip()
     # Strip outer markdown code fence if the model wrapped the whole output
     cleaned = re.sub(r"^```(?:markdown|text|el|greek)?\s*\n?", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
@@ -899,34 +826,24 @@ async def _extract_entity_dossier(
     sample_text: str,
     api_key: str,
     session: Optional[aiohttp.ClientSession] = None,
+    target_lang: str = "greek",
+    mode: str = "translation",
 ) -> str:
     """
-    Extracts a comprehensive whole-book glossary of recurring characters, places, ships,
-    species, drones, and sci-fi/technical terms using stratified sampling across the entire
-    document so entities introduced mid-book maintain uniform transliteration and grammatical gender.
+    Extracts a whole-book register using stratified sampling across the entire document, so entities introduced
+    mid-book keep one rendering and gender. mode='translation' adds a style sheet (narrative tense/person, register,
+    forms of address); mode='pronunciation' builds a fixed phonetic register for audiobook narration.
     """
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         return "- Keeton -> Κίτον (αρσενικό: ο Κίτον)\n- Theseus -> Θησέας (αρσενικό: ο Θησέας)\n- Rorschach -> Ρόρσαχ (ουδέτερο: το Ρόρσαχ)"
 
-    prompt = (
-        "Είσαι έμπειρος επιμελητής εκδόσεων και λογοτεχνικός μεταφραστής. Αναλύοντας τη λίστα συχνών ονομάτων και τα "
-        "δείγματα από ΟΛΟΚΛΗΡΟ το βιβλίο παρακάτω, δημιούργησε ένα πλήρες Μητρώο Ονομάτων & Ορολογίας (Entity Dossier) "
-        "με την ορθή, ΑΠΟΛΥΤΩΣ ΕΝΙΑΙΑ απόδοσή τους στα Ελληνικά. "
-        "ΚΡΙΣΙΜΟΙ ΚΑΝΟΝΕΣ: "
-        "1) Για ΚΑΘΕ χαρακτήρα, σκάφος, είδος ή οντότητα σημείωσε ρητά το ορθό γραμματικό γένος "
-        "(π.χ. αρσενικό: ο ..., θηλυκό: η ..., ουδέτερο: το ...) ώστε να ΜΗΝ αλλάζει ποτέ στην πορεία του βιβλίου. "
-        "2) ΜΗΝ συγχέεις ποτέ διαφορετικούς χαρακτήρες, εξωγήινα είδη, drones/εργαλεία ή ονοματεπώνυμα μεταξύ τους — "
-        "κάθε διακριτή έννοια πρέπει να έχει τη δική της μοναδική, ακριβή ελληνική απόδοση (π.χ. διαφορετικός όρος για drones vs εξωγήινους). "
-        "3) Περιέλαβε κύρια ονόματα χαρακτήρων (με πλήρες ονοματεπώνυμο όπου υπάρχει), σκάφη, τοπωνύμια, "
-        "δίκτυα/τεχνολογικούς όρους, drones/εξοπλισμό και επαναλαμβανόμενους όρους επιστημονικής φαντασίας από όλο το βιβλίο. "
-        "Μορφή κάθε γραμμής: '- Original Name -> Ελληνική Απόδοση (γένος/ρόλος, π.χ. αρσενικό: ο ..., drone, εξωγήινο είδος)'. "
-        "Περιόρισε το μητρώο στους 35-60 πιο κρίσιμους όρους. Μην προσθέτεις εισαγωγικά σχόλια."
-    )
+    prompt = build_dossier_prompt(target_lang=target_lang, mode=mode)
     try:
         sample = _build_stratified_book_sample(sample_text, max_total_chars=32000)
-        dossier = await _call_gemini_api(sample, api_key, prompt, session=session)
+        dossier = await _call_gemini_api(sample, api_key, prompt, session=session, temperature=0.1,
+                                         cache_gate=lambda o: bool(o and len(o.strip()) > 10))
         if dossier and len(dossier.strip()) > 10:
-            logger.info(f"Generated Whole-Book Entity Dossier ({len(dossier)} chars)")
+            logger.info(f"Generated whole-book {mode} dossier ({len(dossier)} chars)")
             return dossier.strip()
     except Exception as ex:
         logger.warning(f"Entity dossier extraction skipped: {ex}")
@@ -1011,7 +928,7 @@ async def polish_text_with_gemini(
             return _postprocess(text)
         raise ValueError("Missing Gemini API Key. Please provide a key in settings or select free models (fallback).")
 
-    base_system_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])
+    base_system_instruction = build_polish_prompt(style, target_lang)
     sem = asyncio.Semaphore(5)
     client_timeout = aiohttp.ClientTimeout(total=90)
 
@@ -1078,20 +995,22 @@ async def polish_text_with_gemini(
     async with aiohttp.ClientSession(timeout=client_timeout, connector=connector) as session:
         # Extract entity consistency dossier for long documents / literature if not already cached
         entity_dossier = checkpoint_data.get("entity_dossier", "")
-        if style == "literature" and not entity_dossier and (len(page_sections) > 10 or len(text) > 18000):
+        # Literature: names + style sheet. Greek audiobook/poetry scripts: fixed pronunciation register, so a foreign
+        # name is spoken identically in every batch.
+        dossier_mode = "pronunciation" if style in ("audiobook", "poetry") else "translation"
+        wants_dossier = style == "literature" or (dossier_mode == "pronunciation" and is_greek_target
+                                                  and bool(re.search(r"[A-Za-z]{3,}", text)))
+        if wants_dossier and not entity_dossier and (len(page_sections) > 10 or len(text) > 18000):
             sample_src = original_text or text
-            entity_dossier = await _extract_entity_dossier(sample_src, key, session=session)
+            entity_dossier = await _extract_entity_dossier(sample_src, key, session=session,
+                                                           target_lang=target_lang, mode=dossier_mode)
             if entity_dossier:
                 checkpoint_data["entity_dossier"] = entity_dossier
                 _save_checkpoint()
 
         system_instruction = base_system_instruction
         if entity_dossier:
-            system_instruction += (
-                "\n\n--- ΜΗΤΡΩΟ ΟΝΟΜΑΤΩΝ & ΟΡΟΛΟΓΙΑΣ (ENTITY DOSSIER) ---\n"
-                f"{entity_dossier}\n"
-                "Διατήρησε αυστηρή συνέπεια στην ονομασία και φωνητική απόδοση των παραπάνω όρων σε όλο το κείμενο."
-            )
+            system_instruction += dossier_header(dossier_mode, target_lang) + f"{entity_dossier}\n"
 
         # Inject contextually-relevant user glossary rules (style-aware: excludes IT/DevOps terms for literature)
         from backend.glossary import load_glossary, apply_glossary
@@ -2101,29 +2020,24 @@ async def translate_and_polish_direct_with_gemini(
     except Exception:
         pass
 
-    # Build direct translation+polish system instruction
-    src_label = "Αγγλικά" if source_lang.lower().startswith("en") else "Ελληνικά"
-    tgt_label = "Σύγχρονα Ελληνικά (ζωντανή νεοελληνική δημοτική γλώσσα)" if target_lang.lower().startswith("gr") or target_lang.lower() == "el" else "Αγγλικά"
-    base_style_prompt = STYLE_PROMPTS.get(style, STYLE_PROMPTS["literature"])
-
-    direct_prompt = (
-        f"Είσαι κορυφαίος επαγγελματίας μεταφραστής και επιμελητής εκδόσεων από {src_label} σε {tgt_label}.\n"
-        f"Μετάφρασε ΑΠΕΥΘΕΙΑΣ το ακόλουθο κείμενο από {src_label} σε άψογα, φυσικά και καλαίσθητα {tgt_label} "
-        f"(σε ένα ενιαίο βήμα μετάφρασης + επιμέλειας), τηρώντας αυστηρά τις εξής αρχές:\n"
-        f"{base_style_prompt}\n"
-        f"ΚΡΙΣΙΜΟ: Μετάφρασε ΠΛΗΡΩΣ όλες τις παραγράφους και προτάσεις — ΜΗΝ αφήνεις κανένα τμήμα κειμένου στα Αγγλικά. "
-        f"Διατήρησε ΑΠΑΡΑΛΛΑΧΤΟΥΣ όλους τους δείκτες σελίδων (=== PAGE X ===) ακριβώς στις θέσεις τους. "
-        f"ΜΗΝ αφήνεις ποτέ ετικέτες HTML/XML (<i>, </i>, <bos>), σημειώσεις επιμελητή ([Σημείωση...]), σκέψεις ανάλυσης "
-        f"ή ξένα γράμματα (λατινικά/κυριλλικά/εβραϊκά) μέσα σε ελληνικές λέξεις. "
-        f"Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ τη μετάφραση χωρίς κανένα άλλο σχόλιο ή σημείωση."
-    )
+    # Dedicated translate-from-source prompt (previously the Greek *polish* prompt was wrapped inside a translation
+    # task, giving the model contradictory instructions; English targets also received Greek-only rules).
+    direct_prompt = build_direct_translation_prompt(source_lang, target_lang, style)
 
     # Disk checkpoint support for instant resume
     checkpoint_file = out_dir / ".direct_ai_checkpoint.json"
-    checkpoint_data: dict[str, Any] = {"batches": {}, "entity_dossier": ""}
+    # Signature: a checkpoint left by an interrupted run is reused only for the same source, languages, style and
+    # prompt version (otherwise restarting with another target language/style silently mixed old batches in).
+    direct_sig = hashlib.sha256(
+        f"{PROMPT_VERSION}::{style}::{source_lang}::{target_lang}::{len(full_original)}::{full_original[:2000]}".encode("utf-8")
+    ).hexdigest()[:16]
+    checkpoint_data: dict[str, Any] = {"sig": direct_sig, "batches": {}, "entity_dossier": ""}
     if checkpoint_file.is_file():
         try:
             loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            if loaded.get("sig") not in (None, direct_sig):
+                logger.info(f"[{job_id}] Discarding stale direct-translation checkpoint (different source/settings).")
+                loaded = {}
             if isinstance(loaded.get("batches"), dict):
                 checkpoint_data["batches"] = loaded["batches"]
             if isinstance(loaded.get("entity_dossier"), str):
@@ -2194,17 +2108,15 @@ async def translate_and_polish_direct_with_gemini(
         entity_dossier = checkpoint_data.get("entity_dossier", "")
         if not entity_dossier and len(full_original) > 18000:
             update_job(job_id, current_step="Extracting character & terminology dossier...", progress=max(6, init_pct))
-            entity_dossier = await _extract_entity_dossier(full_original, api_key, session=session)
+            entity_dossier = await _extract_entity_dossier(full_original, api_key, session=session,
+                                                           target_lang=target_lang, mode="translation")
             if entity_dossier:
                 checkpoint_data["entity_dossier"] = entity_dossier
                 _save_cp()
 
         system_instruction = direct_prompt
         if entity_dossier:
-            system_instruction += (
-                "\n\n--- ΜΗΤΡΩΟ ΟΝΟΜΑΤΩΝ & ΟΡΟΛΟΓΙΑΣ (ENTITY DOSSIER) ---\n"
-                f"{entity_dossier}\n"
-            )
+            system_instruction += dossier_header("translation", target_lang) + f"{entity_dossier}\n"
 
         # Inject matching glossary terms (style-aware: excludes IT/DevOps terms for literature)
         glossary_items = load_glossary(style=style)

@@ -16,9 +16,9 @@ Design principles
 * No-op on clean output: if inspection finds nothing actionable, the text is returned unchanged.
 * Format-aware: format-preserving outputs (in-place DOCX/EPUB, comics) are inspected only; they are
   never regenerated from plain text, which would destroy their original styling and artwork.
-* Zero API cost by default: stage 1 is fully local. An optional stage 2 (AI refinement with Gemini,
-  Advanced Mode only, explicitly opted into per job because it consumes extra tokens) is provided by
-  ai_refine_translation_output() at the end of this module.
+* Zero API cost: the stage is fully local. AI fluency improvement is the job of the existing,
+  opt-in "AI Polish" stage, which works from the source text; a second model pass here would only
+  double API consumption.
 * Toggle: setting ``final_refinement_enabled`` (default True), env var ``FINAL_REFINEMENT_ENABLED``,
   or a per-request ``final_refinement`` override. When disabled the pipeline behaves exactly as before.
 """
@@ -26,7 +26,6 @@ Design principles
 import os
 import re
 import time
-import asyncio
 import shutil
 import logging
 import tempfile
@@ -196,6 +195,22 @@ _MONOSYLLABIC_ACCENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Capitalised words whose accent on the initial vowel was dropped ('Ηταν'): a known LLM/OCR failure. The unaccented
+# forms are not valid Greek words, so restoring the accent is unambiguous. Mixed case only (ALL-CAPS stay unaccented).
+_MISSING_INITIAL_ACCENT = {
+    "Ηταν": "Ήταν", "Ημουν": "Ήμουν", "Ησουν": "Ήσουν", "Ημασταν": "Ήμασταν", "Ησασταν": "Ήσασταν", "Ηρθε": "Ήρθε",
+    "Ηρθαν": "Ήρθαν", "Ηξερε": "Ήξερε", "Ηξερα": "Ήξερα", "Ηθελε": "Ήθελε", "Ηθελα": "Ήθελα", "Ηδη": "Ήδη",
+    "Οταν": "Όταν", "Ομως": "Όμως", "Ολα": "Όλα", "Ολοι": "Όλοι", "Ολες": "Όλες", "Οτι": "Ότι", "Οπως": "Όπως",
+    "Οπου": "Όπου", "Ετσι": "Έτσι", "Εχει": "Έχει", "Εχω": "Έχω", "Εχεις": "Έχεις", "Εχουμε": "Έχουμε",
+    "Εχουν": "Έχουν", "Ειχε": "Είχε", "Ειχα": "Είχα", "Ειχαν": "Είχαν", "Ειναι": "Είναι", "Ειμαι": "Είμαι",
+    "Ειπε": "Είπε", "Ειπα": "Είπα", "Εγινε": "Έγινε", "Εμεινε": "Έμεινε", "Ενιωσε": "Ένιωσε", "Εφυγε": "Έφυγε",
+    "Εβαλε": "Έβαλε", "Ενας": "Ένας", "Ενα": "Ένα", "Ισως": "Ίσως", "Ακουσε": "Άκουσε", "Αρχισε": "Άρχισε",
+    "Αλλος": "Άλλος", "Αλλη": "Άλλη", "Αλλο": "Άλλο", "Αλλοι": "Άλλοι", "Υστερα": "Ύστερα", "Ωσπου": "Ώσπου",
+}
+_MISSING_INITIAL_ACCENT_PATTERN = re.compile(
+    rf"(?<![{_GR}\w])(" + "|".join(sorted(_MISSING_INITIAL_ACCENT, key=len, reverse=True)) + rf")(?![{_GR}\w])"
+)
+
 _PAGE_MARKER_REGEX = re.compile(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", re.IGNORECASE)
 _PAGE_MARKER_LINE = re.compile(r"^\s*(?:={3,}\s*PAGE\s+\d+\s*={3,}|={3,}|PAGE\s+\d+)\s*$", re.IGNORECASE)
 
@@ -282,6 +297,9 @@ def inspect_text_quality(
                                           _line_of(text, m.start()), True))
         for m in _MONOSYLLABIC_ACCENT_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Monosyllable must not be accented: '{m.group(0)}'", m.group(0),
+                                          "warning", _line_of(text, m.start()), True))
+        for m in _MISSING_INITIAL_ACCENT_PATTERN.finditer(text):
+            issues.append(RefinementIssue("grammar", f"Missing accent on capitalised word: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
         for m in re.finditer(rf"(?<![\w])[{_GR}]+[A-Za-z]+[{_GR}]*(?![\w])", text):
             issues.append(RefinementIssue("grammar", f"Latin characters inside Greek word: '{m.group(0)}'", m.group(0),
@@ -382,6 +400,8 @@ def refine_text_content(
         _step("Removed accents from monosyllables",
               lambda s: _MONOSYLLABIC_ACCENT_PATTERN.sub(
                   lambda m: _preserve_case(m.group(0), _MONOSYLLABLE_FIX[m.group(0).lower()]), s))
+        _step("Restored missing accents on capitalised words",
+              lambda s: _MISSING_INITIAL_ACCENT_PATTERN.sub(lambda m: _MISSING_INITIAL_ACCENT[m.group(0)], s))
 
         def _calques(s: str) -> str:
             for pattern, replacement, _ in _SAFE_CALQUE_FIXES:
@@ -910,246 +930,3 @@ def build_refinement_report(result: Any) -> Dict[str, Any]:
         "missing_sections": list(getattr(result, "missing_chunk_indices", []) or []),
         "duration_ms": round(float(getattr(result, "duration_ms", 0.0) or 0.0), 1),
     }
-
-
-# ---------------------------------------------------------------------------
-# Stage 2 (optional, Advanced Mode): AI refinement with Gemini
-# ---------------------------------------------------------------------------
-#
-# Runs AFTER the deterministic stage, only when explicitly requested (per job / per request) and a Gemini key is
-# available. It consumes extra API tokens (≈ the size of the document in input AND output), which the UI warns about.
-# Safety: the text is processed in paragraph-aligned chunks; page markers are never sent to the model; every chunk
-# is checked (same paragraph count, length within ±15%, no new page markers, same script/language) and silently
-# kept as the original if the check fails. Quota/auth errors stop the stage but keep the chunks already refined.
-
-AI_REFINE_CHUNK_CHARS = 9000
-AI_REFINE_CONCURRENCY = 2
-AI_REFINE_VERSION = "1.0"
-
-_AI_REFINE_LANG_NAMES = {
-    "greek": "Modern Greek (monotonic orthography)", "el": "Modern Greek (monotonic orthography)",
-    "english": "English", "en": "English", "french": "French", "fr": "French", "german": "German",
-    "de": "German", "spanish": "Spanish", "es": "Spanish", "italian": "Italian", "it": "Italian",
-}
-
-
-def _ai_refine_prompt(target_lang: str, layout_mode: str) -> str:
-    lang_name = _AI_REFINE_LANG_NAMES.get(_norm_lang(target_lang), target_lang or "the text's language")
-    verse = ("This is POETRY/VERSE: keep every line break and stanza exactly; never merge or split lines.\n"
-             if _norm_lang(layout_mode) in ("poetry", "verse") else "")
-    return (
-        f"You are the final copy-editor of a finished book translation written in {lang_name}. "
-        "Make ONLY necessary corrections: grammar, spelling, accentuation, punctuation, agreement, awkward or overly "
-        "literal (translationese) phrasing, and inconsistent rendering of the same name or term.\n"
-        "STRICT RULES:\n"
-        "1. Never add, remove, summarise, explain or reorder content; never change the meaning, facts, tone or style.\n"
-        "2. Keep EXACTLY the same paragraphs: same number of paragraphs, separated by one blank line, in the same order.\n"
-        "3. If a paragraph is already correct, return it unchanged. Prefer minimal edits.\n"
-        "4. Keep dialogue punctuation, quotation marks, numbers, names and Markdown markers as they are unless wrong.\n"
-        f"{verse}"
-        "5. Output only the corrected text, with no comments, notes or headings of your own."
-    )
-
-
-def _split_for_ai(text: str, max_chars: int = AI_REFINE_CHUNK_CHARS) -> List[Tuple[str, bool]]:
-    """Splits text into [(segment, refinable)] keeping page markers and blank-line separators verbatim."""
-    segments: List[Tuple[str, bool]] = []
-    pos = 0
-    for m in _PAGE_MARKER_REGEX.finditer(text):
-        segments.extend(_split_body(text[pos:m.start()], max_chars))
-        segments.append((m.group(0), False))
-        pos = m.end()
-    segments.extend(_split_body(text[pos:], max_chars))
-    return segments
-
-
-def _split_body(body: str, max_chars: int) -> List[Tuple[str, bool]]:
-    if not body:
-        return []
-    out: List[Tuple[str, bool]] = []
-    parts = re.split(r"(\n[ \t]*\n)", body)          # [para, sep, para, sep, ...]
-    buf = ""
-    for i, part in enumerate(parts):
-        is_sep = i % 2 == 1
-        if not is_sep and buf and len(buf) + len(part) > max_chars:
-            out.append((buf, True))
-            buf = ""
-        buf += part
-    if buf:
-        out.append((buf, True))
-    # Separate leading/trailing whitespace from each refinable chunk so it is preserved exactly
-    final: List[Tuple[str, bool]] = []
-    for seg, ok in out:
-        lead = seg[: len(seg) - len(seg.lstrip())]
-        trail = seg[len(seg.rstrip()):]
-        core = seg.strip()
-        if lead:
-            final.append((lead, False))
-        if core:
-            final.append((core, ok and bool(re.search(r"[^\W\d_]{2,}", core))))
-        if trail:
-            final.append((trail, False))
-    return final
-
-
-def estimate_ai_refinement_cost(text: str) -> Dict[str, int]:
-    """Approximate extra Gemini usage (requests and tokens, input + output) of the AI refinement stage."""
-    segs = [s for s, ok in _split_for_ai(text or "") if ok]
-    chars = sum(len(s) for s in segs)
-    # ~3 chars/token for Greek, ~4 for English: use 3 (conservative); input + output + prompt overhead
-    tokens = int(chars / 3 * 2 + len(segs) * 350)
-    return {"requests": len(segs), "estimated_tokens": tokens, "characters": chars}
-
-
-def _chunk_is_safe(original: str, refined: str, target_lang: str) -> Tuple[bool, str]:
-    if not refined or not refined.strip():
-        return False, "empty"
-    if _PAGE_MARKER_REGEX.search(refined) or "```" in refined:
-        return False, "markup injected"
-    paras_o = [p for p in re.split(r"\n[ \t]*\n", original) if p.strip()]
-    paras_r = [p for p in re.split(r"\n[ \t]*\n", refined) if p.strip()]
-    if len(paras_o) != len(paras_r):
-        return False, f"paragraphs {len(paras_o)}->{len(paras_r)}"
-    if len(original) >= 40 and not (0.85 <= len(refined) / len(original) <= 1.15):
-        return False, f"length ratio {len(refined) / len(original):.2f}"
-    if _is_greek(_norm_lang(target_lang)):
-        def share(t):
-            letters = [c for c in t if c.isalpha()]
-            return sum(1 for c in letters if "Ͱ" <= c <= "Ͽ" or "ἀ" <= c <= "῿") / max(len(letters), 1)
-        if share(refined) < share(original) - 0.05:
-            return False, "script drift"
-    return True, ""
-
-
-async def ai_refine_text(
-    text: str,
-    target_lang: str,
-    api_key: str,
-    layout_mode: str = "standard",
-    progress: Optional[Callable[[int, int], None]] = None,
-    is_cancelled: Optional[Callable[[], bool]] = None,
-    session=None,
-) -> Tuple[str, Dict[str, Any]]:
-    """Returns (refined_text, stats). Never raises for AI failures: unrefined chunks keep their original text."""
-    from backend.ai_polisher import _call_gemini_api, DailyQuotaExhaustedError
-    stats: Dict[str, Any] = {"chunks_total": 0, "chunks_refined": 0, "chunks_unchanged": 0, "chunks_rejected": 0,
-                             "chunks_failed": 0, "stopped_reason": None, "rejections": []}
-    segments = _split_for_ai(text)
-    work = [i for i, (_, ok) in enumerate(segments) if ok]
-    stats["chunks_total"] = len(work)
-    if not work:
-        return text, stats
-    prompt = _ai_refine_prompt(target_lang, layout_mode)
-    results = {i: segments[i][0] for i in range(len(segments))}
-    sem = asyncio.Semaphore(AI_REFINE_CONCURRENCY)
-    stop = asyncio.Event()
-    done = 0
-
-    async def _one(i: int):
-        nonlocal done
-        original = segments[i][0]
-        async with sem:
-            if stop.is_set() or (is_cancelled and is_cancelled()):
-                return
-            try:
-                out = await _call_gemini_api(original, api_key, prompt, session=session, temperature=0.15,
-                                             cache_gate=lambda o: bool(o and o.strip()))
-            except (DailyQuotaExhaustedError, PermissionError) as e:
-                stats["stopped_reason"] = "quota_exhausted" if isinstance(e, DailyQuotaExhaustedError) else "auth_failed"
-                stats["chunks_failed"] += 1
-                stop.set()
-                return
-            except Exception as e:
-                stats["chunks_failed"] += 1
-                logger.warning(f"AI refinement chunk failed ({e}); original kept.")
-                return
-        out = out.strip()
-        ok, why = _chunk_is_safe(original, out, target_lang)
-        if not ok:
-            stats["chunks_rejected"] += 1
-            if len(stats["rejections"]) < 10:
-                stats["rejections"].append(why)
-        elif out == original:
-            stats["chunks_unchanged"] += 1
-        else:
-            results[i] = out
-            stats["chunks_refined"] += 1
-        done += 1
-        if progress:
-            progress(done, len(work))
-
-    await asyncio.gather(*(_one(i) for i in work))
-    if is_cancelled and is_cancelled():
-        stats["stopped_reason"] = stats["stopped_reason"] or "cancelled"
-    return "".join(results[i] for i in range(len(segments))), stats
-
-
-async def ai_refine_translation_output(
-    job_id: Optional[str],
-    output_path: str,
-    final_exported_path: Optional[str],
-    target_lang: str,
-    api_key: Optional[str],
-    layout_mode: str = "standard",
-    output_format: Optional[str] = None,
-    allow_reexport: bool = True,
-    progress: Optional[Callable[[int, int], None]] = None,
-    is_cancelled: Optional[Callable[[], bool]] = None,
-) -> Dict[str, Any]:
-    """
-    Optional AI refinement of a finished translation (Advanced Mode). Returns a JSON-safe report.
-    Files are only replaced atomically after every check passed; any failure leaves the output untouched.
-    """
-    start = time.time()
-    report: Dict[str, Any] = {"version": AI_REFINE_VERSION, "status": "skipped", "reason": None}
-    final_p = Path(final_exported_path) if final_exported_path else None
-    text_src = Path(output_path) if output_path else None
-    if not (api_key or "").strip():
-        report["reason"] = "no_api_key"
-        return report
-    if text_src is None or not text_src.is_file():
-        report["reason"] = "no_text_output"
-        return report
-    fmt = (output_format or (final_p.suffix.lstrip(".") if final_p else "txt") or "txt").lower()
-    fmt = "docx" if fmt == "doc" else fmt
-    is_rich = fmt in ("pdf", "docx", "epub") and final_p is not None and final_p != text_src
-    if is_rich and not allow_reexport:
-        report["reason"] = "format_preserved_output"
-        return report
-    try:
-        original = text_src.read_text(encoding="utf-8")
-    except Exception as e:
-        report.update(status="error", reason=f"read_failed: {e}")
-        return report
-    if not original.strip():
-        report["reason"] = "empty_output"
-        return report
-
-    import aiohttp
-    async with aiohttp.ClientSession() as session:
-        refined, stats = await ai_refine_text(original, target_lang, api_key, layout_mode, progress, is_cancelled, session)
-    report.update(stats)
-    report["estimated_tokens"] = estimate_ai_refinement_cost(original)["estimated_tokens"]
-
-    if is_cancelled and is_cancelled():
-        report.update(status="cancelled")
-        return report
-    if refined != original:
-        # Re-apply the deterministic stage to the AI output (cheap, idempotent) — guards still apply
-        refined = refine_text_content(refined, target_lang=target_lang, style=layout_mode)[0] or refined
-        if _PAGE_MARKER_REGEX.findall(refined) != _PAGE_MARKER_REGEX.findall(original):
-            report.update(status="error", reason="page_markers_changed")
-            return report
-    if refined == original:
-        report["status"] = "partial" if stats["stopped_reason"] else "verified_clean"
-        report["duration_ms"] = round((time.time() - start) * 1000.0, 1)
-        return report
-    failure = _commit_refined_text(job_id, text_src, final_p, original, refined, fmt, is_rich, layout_mode)
-    if failure is not None:
-        report.update(status="error", reason=f"commit_{failure}")
-        return report
-    report["status"] = "partial" if stats["stopped_reason"] else "refined"
-    report["duration_ms"] = round((time.time() - start) * 1000.0, 1)
-    logger.info(f"[{job_id}] AI refinement: {stats['chunks_refined']}/{stats['chunks_total']} chunks improved, "
-                f"{stats['chunks_rejected']} rejected by safety checks, {stats['chunks_failed']} failed.")
-    return report
