@@ -263,8 +263,8 @@ async def export_audiobook_m4b(
         except Exception as e:
             logger.warning(f"ffmpeg conversion failed: {e}. Falling back to tagged copy.")
 
-    shutil.copyfile(mp3_path, m4b_path)
-    tag_audiobook_file(m4b_path, title=title, author=author, cover_image_path=cover_image_path)
+    await asyncio.to_thread(shutil.copyfile, mp3_path, m4b_path)
+    await asyncio.to_thread(tag_audiobook_file, m4b_path, title=title, author=author, cover_image_path=cover_image_path)
     return m4b_path
 
 
@@ -545,7 +545,8 @@ async def generate_audiobook(
             )
         else:
             await _concatenate_mp3s(chunk_files, output_path)
-            tag_audiobook_file(
+            await asyncio.to_thread(
+                tag_audiobook_file,
                 output_path,
                 title=book_title,
                 author="BookApp",
@@ -589,7 +590,8 @@ async def generate_audiobook(
                                                    author="BookApp", cover_image_path=cover_img)
                     else:
                         await _concatenate_mp3s(files, dest)
-                        tag_audiobook_file(dest, title=book_title, author="BookApp", cover_image_path=cover_img)
+                        await asyncio.to_thread(tag_audiobook_file, dest, title=book_title, author="BookApp",
+                                                cover_image_path=cover_img)
 
                 audio_refine_res = await refine_audiobook_output_async(
                     job_id=job_id,
@@ -734,11 +736,15 @@ async def _concatenate_mp3s(chunk_files: list[str], output_path: str):
     if not valid_files:
         raise RuntimeError("No valid audio chunks to concatenate.")
 
-    # Streamed binary concatenation works for CBR MP3s (edge-tts output)
-    with open(output_path, "wb") as out_f:
-        for chunk_file in valid_files:
-            with open(chunk_file, "rb") as in_f:
-                shutil.copyfileobj(in_f, out_f, length=65536)
+    # Streamed binary concatenation works for CBR MP3s (edge-tts output). Runs in a worker thread: a full audiobook
+    # can be hundreds of MB, and copying it on the event loop would freeze the server (SSE progress, other requests).
+    def _concat_sync() -> None:
+        with open(output_path, "wb") as out_f:
+            for chunk_file in valid_files:
+                with open(chunk_file, "rb") as in_f:
+                    shutil.copyfileobj(in_f, out_f, length=1024 * 1024)
+
+    await asyncio.to_thread(_concat_sync)
 
 
 def get_available_voices() -> dict:

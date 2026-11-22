@@ -100,14 +100,3 @@ def delete_setting(key: str) -> None:
         os.environ.pop(key.upper(), None)
 
 
-def get_gemini_api_keys() -> list[str]:
-    """Returns the list of up to 4 configured Gemini API keys."""
-    from backend.gemini_key_pool import GeminiKeyPool
-    return GeminiKeyPool.get_keys()
-
-
-def save_gemini_api_keys(keys: list[str]) -> list[str]:
-    """Saves up to 4 configured Gemini API keys."""
-    from backend.gemini_key_pool import GeminiKeyPool
-    return GeminiKeyPool.set_keys(keys)
-

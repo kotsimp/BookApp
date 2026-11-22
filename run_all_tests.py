@@ -235,8 +235,8 @@ def run_suite():
     print(f"  Passed           : {len(passed)} ✅")
     print(f"  Failed           : {len(failed)} {'❌' if failed else ''}")
     print(f"  Total Duration   : {total_dur:.2f}s")
-    print(f"  User Settings    : Protected & Restored 🛡️")
-    print(f"  Session History  : Cleared & Clean 🧹")
+    print("  User Settings    : Protected & Restored 🛡️")
+    print("  Session History  : Cleared & Clean 🧹")
     print("=" * 72)
 
     if failed:

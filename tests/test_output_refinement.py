@@ -839,7 +839,7 @@ class TestGeminiCallImprovements(unittest.TestCase):
         asyncio.run(ap._call_gemini_api("Α" * 24000 + str(uuid.uuid4()), "REAL_KEY_T1", "Sys", session=long_, bypass_cache=True))
         t_short = short.posts[0]["timeout"].total
         t_long = long_.posts[0]["timeout"].total
-        self.assertTrue(30.0 <= t_short < 31.0, t_short)   # was a fixed 25 s before
+        self.assertTrue(45.0 <= t_short < 46.0, t_short)   # was a fixed 25 s before
         self.assertGreater(t_long, 120.0)
         self.assertLessEqual(t_long, 180.0)
 

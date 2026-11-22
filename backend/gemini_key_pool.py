@@ -296,7 +296,6 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
         # Classify Daily vs Transient:
         delay = result["retry_delay_sec"]
         qid = (result["quota_id"] or "").lower()
-        qmetric = (result["quota_metric"] or "").lower()
 
         # Explicit daily indicators
         has_daily_qid = "requestsperday" in qid or "daily" in qid or "perday" in qid
@@ -516,15 +515,6 @@ class GeminiKeyPool:
         now = time.time()
         with _pool_lock:
             return [m for m in candidate_models if now >= _MODEL_COOLDOWNS.get((k, m), 0.0)]
-
-    @staticmethod
-    def mark_all_exhausted(cooldown_seconds: float = 3600.0) -> None:
-        """Marks all currently configured keys in the pool as exhausted."""
-        now = time.time()
-        target = now + max(0.05, float(cooldown_seconds))
-        with _pool_lock:
-            for k in GeminiKeyPool.get_keys():
-                _KEY_COOLDOWNS[k] = max(_KEY_COOLDOWNS.get(k, 0.0), target)
 
     @staticmethod
     def reset_quota(key: Optional[str] = None) -> None:

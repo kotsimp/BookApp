@@ -18,8 +18,6 @@ import json
 import uuid
 import logging
 import asyncio
-import urllib.request
-import urllib.error
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List, Tuple
 
@@ -487,6 +485,7 @@ async def _ai_polish_comic_balloons(
         return [b["draft"] for b in balloons]
 
     import urllib.request
+    import urllib.error
     if is_greek:
         prompt = (
             "Είσαι έμπειρος επιμελητής και μεταφραστής εκδόσεων Graphic Novels, Comics και Manga. "
@@ -660,6 +659,7 @@ async def _translate_page_vector(
 
     # 1b. AI Polish comic dialogue with Gemini if API key available
     if api_key and translated_balloons:
+        from backend.ai_polisher import DailyQuotaExhaustedError
         try:
             balloons_data = [{"source": c["text"], "draft": translated_balloons[i]} for i, c in enumerate(clusters)]
             polished_texts = await _ai_polish_comic_balloons(balloons_data, api_key, target_lang=target_lang, quota_behavior=quota_behavior)

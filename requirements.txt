@@ -11,3 +11,4 @@ beautifulsoup4>=4.15.0
 deep-translator>=1.11.4
 edge-tts>=7.3.1
 mutagen>=1.48.1
+Pillow>=10.0.0

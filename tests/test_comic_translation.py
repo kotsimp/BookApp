@@ -66,11 +66,6 @@ def api_post_json(path, data):
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
-def api_delete(path):
-    req = urllib.request.Request(f"{API}{path}", method="DELETE")
-    with urllib.request.urlopen(req) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
-
 
 def api_post_file(path, filepath, filename):
     boundary = "----TestBoundaryComic12345"
@@ -85,11 +80,6 @@ def api_post_file(path, filepath, filename):
         data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
-    with urllib.request.urlopen(req) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
-
-def api_delete(path):
-    req = urllib.request.Request(f"{API}{path}", method="DELETE")
     with urllib.request.urlopen(req) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 

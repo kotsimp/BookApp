@@ -26,6 +26,7 @@ Design principles
 import os
 import re
 import time
+import asyncio
 import shutil
 import logging
 import tempfile
@@ -207,6 +208,12 @@ _MISSING_INITIAL_ACCENT = {
     "Εβαλε": "Έβαλε", "Ενας": "Ένας", "Ενα": "Ένα", "Ισως": "Ίσως", "Ακουσε": "Άκουσε", "Αρχισε": "Άρχισε",
     "Αλλος": "Άλλος", "Αλλη": "Άλλη", "Αλλο": "Άλλο", "Αλλοι": "Άλλοι", "Υστερα": "Ύστερα", "Ωσπου": "Ώσπου",
 }
+# Final -ν of the article/pronoun 'τη(ν)' and 'στη(ν)': kept before vowels and κ π τ ξ ψ μπ ντ γκ τσ τζ (modern rule).
+_ARTICLE_FINAL_NU_PATTERN = re.compile(
+    r"(?<![\w])(τη|στη|Τη|Στη|ΤΗ|ΣΤΗ)([ \t]+)"
+    r"(?=(?:[κπτξψΚΠΤΞΨ]|μπ|ντ|γκ|τσ|τζ|Μπ|Ντ|Γκ|Τσ|Τζ|[αεηιουωάέήίόύώΑΕΗΙΟΥΩΆΈΉΊΌΎΏ]))"
+)
+
 _MISSING_INITIAL_ACCENT_PATTERN = re.compile(
     rf"(?<![{_GR}\w])(" + "|".join(sorted(_MISSING_INITIAL_ACCENT, key=len, reverse=True)) + rf")(?![{_GR}\w])"
 )
@@ -298,6 +305,9 @@ def inspect_text_quality(
         for m in _MONOSYLLABIC_ACCENT_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Monosyllable must not be accented: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
+        for m in _ARTICLE_FINAL_NU_PATTERN.finditer(text):
+            issues.append(RefinementIssue("grammar", f"Missing final -ν on article: '{m.group(0).strip()}'",
+                                          m.group(0), "warning", _line_of(text, m.start()), True))
         for m in _MISSING_INITIAL_ACCENT_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Missing accent on capitalised word: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
@@ -417,6 +427,9 @@ def refine_text_content(
             return s
         _step("Removed duplicated function words", _stutters)
         _step("Applied final-nu (τελικό -ν) rules", apply_final_nu_rules)
+        _step("Applied final -ν to the article τη(ν)/στη(ν)",
+              lambda s: _ARTICLE_FINAL_NU_PATTERN.sub(
+                  lambda m: m.group(1) + ("Ν" if m.group(1).isupper() else "ν") + m.group(2), s))
 
     elif _is_english(tgt):
         def _en_stutters(s: str) -> str:
@@ -632,7 +645,9 @@ async def refine_translation_output(
     remaining = inspect_text_quality(refined, target_lang, source_lang, layout_mode)
     score_after = _quality_score(remaining)
 
-    failure = _commit_refined_text(job_id, text_src, final_p, original, refined, fmt, is_rich, layout_mode)
+    # Re-export (PDF/DOCX/EPUB) can take seconds on long books: keep the event loop free
+    failure = await asyncio.to_thread(_commit_refined_text, job_id, text_src, final_p, original, refined, fmt,
+                                      is_rich, layout_mode)
     if failure is not None:
         return _result("error", original, issues_detected=issues, issues_remaining=issues,
                        quality_score_before=score_before, quality_score_after=score_before,

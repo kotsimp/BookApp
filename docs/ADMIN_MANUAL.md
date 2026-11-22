@@ -89,8 +89,15 @@ The application implements an asynchronous, event-driven API architecture:
   * **`build_direct_translation_prompt(source, target, style)`:** a dedicated translate-from-source prompt with a genre layer. It replaces the former polish-prompt wrapper.
   * **`build_dossier_prompt(target, mode)`:** `translation` returns the name/term register plus a **style sheet** (genre/tone, narrative person and tense, register, εσύ/εσείς per character pair, recurring phrases), target-aware. `pronunciation` returns a fixed phonetic register, used by `polish_text_with_gemini` for Greek `audiobook`/`poetry` scripts longer than 18k characters that contain Latin-script words. `dossier_header()` gives the matching injection headers.
 * **Single-pass translation checkpoint:** `.direct_ai_checkpoint.json` now stores `sig = sha256(PROMPT_VERSION, style, languages, source length, first 2,000 chars)`. A checkpoint with a different signature is discarded, so a run interrupted and restarted with another language or style no longer mixes stale batches in. Unsigned legacy checkpoints are still resumed.
-* **Output hygiene:** `sanitize_ai_output()` applies Unicode NFC (polytonic-block or decomposed accents become monotonic code points). Stage 1 of the output refiner restores accents dropped from about 50 high-frequency capitalised words (`Ηταν` → `Ήταν`, `Οταν` → `Όταν`). The unaccented forms aren't valid words, and ALL-CAPS text is left alone.
-* **Shared Gemini call (`ai_polisher._call_gemini_api`):** size-aware per-request timeout `30 + len(content)/200` seconds (clamped 30–180; previously a fixed 25 s that pushed long batches onto Lite models), rate-limiter token estimate `≈ (prompt + content chars) / 2` (clamped 500–60,000; previously a constant 1,500), and an optional `cache_gate(output) -> bool` predicate. Without a gate, only outputs passing `detect_greek_output_issues` are cached (unchanged); Book Insights and the dossier extraction pass a non-empty gate so English and short outputs are cached too.
+* **Output hygiene:** `sanitize_ai_output()` applies Unicode NFC (polytonic-block or decomposed accents become monotonic code points). Stage 1 of the output refiner restores accents dropped from about 50 high-frequency capitalised words (`Ηταν` → `Ήταν`, `Οταν` → `Όταν`) and applies final-ν to the article/pronoun `τη(ν)`/`στη(ν)` before vowels and κ π τ ξ ψ μπ ντ γκ τσ τζ. The unaccented forms aren't valid words, and ALL-CAPS text is left alone.
+* **Maximum-quality revision (`ai_polisher.revise_translation_against_source`, `translation_prompts.build_revision_prompt`):** optional second pass for AI translations.
+  * **Enabling:** `TranslateRequest.max_quality`, stored as `Job.max_quality`. Queue items always use `false`; the UI sends it only from Advanced Mode, after a cost warning.
+  * **When it runs:** in `main._run_translation`, inside the AI-translation branch (`ai_polish` and a key), after `translate_and_polish_direct_with_gemini` and **before export**, via `_run_max_quality_revision()`. Otherwise `revision_report = {"status": "skipped", "reason": "requires_ai_polish_and_key"}`.
+  * **How:** it reuses `polish_text_with_gemini` (page-aligned source anchoring with `<stem>_original.txt`, dossier, checkpoints, per-batch quality gates, bisection) through the new `system_prompt_override` and `temperature_override` (0.15) parameters, with the reviser prompt.
+  * **Models:** `_FULL_MODELS_ONLY` (a `contextvars.ContextVar`) restricts `_call_gemini_api` to non-Lite, non-Gemma Flash/Pro models, and adds a `:full` suffix to the cache key. If no full model is available, a `DailyQuotaExhaustedError` is raised and recorded as `reason="quota_exhausted"`.
+  * **Acceptance:** identical page markers and a length ratio of 0.8–1.25; whitespace-only differences count as `verified_clean`; the file is replaced atomically via a `.revision-tmp` file.
+  * **Report:** `revision_report = {status: revised|verified_clean|skipped|error, reason, changed_lines, similarity, duration_s}`, persisted in job metadata and exposed via `GET /api/status/{job_id}` and SSE.
+* **Shared Gemini call (`ai_polisher._call_gemini_api`):** size-aware per-request timeout `45 + len(content)/120` seconds (clamped 45–180; previously a fixed 25 s that pushed long batches onto Lite models), rate-limiter token estimate `≈ (prompt + content chars) / 2` (clamped 500–60,000; previously a constant 1,500), and an optional `cache_gate(output) -> bool` predicate. Without a gate, only outputs passing `detect_greek_output_issues` are cached (unchanged); Book Insights and the dossier extraction pass a non-empty gate so English and short outputs are cached too.
 * **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously across different Google accounts (providing up to 6,000 free requests/day). Features sliding-window rate limiting (`GeminiRateLimiter` tracking RPM/TPM and smoothing request pacing), explicit Retry-After support, intelligent error payload classification (`parse_gemini_error`), per-model quota cooldown isolation (`_MODEL_COOLDOWNS` preventing low-quota models like `gemini-3.8-flash` with 20 RPD from blocking 1,500 RPD models on the same key), seamless key rotation upon HTTP 429 daily exhaustion, transient burst backoff (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when cooldowns expire or new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
 * **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
 * **Test Session Isolation & Disk Hygiene Guard (`backend/job_manager.py`, `backend/database.py`, `run_all_tests.py`):** Multi-layered protection separating test execution from user state. Broadened test pattern detection (`test_*`, `reg_*`, `mock_*`, `sample_*`, `direct_text*`, `book*`, `temp_*`, `stress_*`, `bench_*`) combined with pre-test filesystem/database snapshotting ensures 100% of temporary directories, orphaned artifacts, and test jobs are purged upon test completion without touching real user documents.
@@ -115,6 +122,14 @@ The application implements an asynchronous, event-driven API architecture:
   * `translate.googleapis.com:443` (HTTPS) for translation services.
   * `*.speech.microsoft.com:443` (WSS / HTTPS) for Microsoft Edge neural voice synthesis.
   * `generativelanguage.googleapis.com:443` (HTTPS) when using Google Gemini API keys.
+
+### Configuration & Security Notes
+* **Environment variables:**
+  * `GEMINI_API_KEY`: optional; seeds the key pool.
+  * `FINAL_REFINEMENT_ENABLED=true|false`: overrides the Final Output Refinement setting.
+  * `BOOKAPP_CORS_ORIGINS="https://a.example,https://b.example"`: extra origins allowed to call the API cross-origin. Normally unnecessary: the UI is served by the same server (same origin), including behind Nginx, on a LAN or in Docker.
+* **CORS policy:** only same-origin requests and local development origins (`http(s)://localhost`, `127.0.0.1` and `[::1]`, any port) receive CORS permission. Other websites open in the user's browser cannot read API responses, such as `/api/settings`, which contains the Gemini keys. They also cannot send JSON or DELETE requests to the app.
+* **Network exposure:** the API has no user authentication; it's designed as a single-user local app. `run.py` and `start_bookapp.bat` bind to `127.0.0.1`. The Docker image binds to `0.0.0.0`, so on a LAN anyone who can reach port 8000 can use the app and read the configured keys. Expose it only on trusted networks, or put it behind a reverse proxy with authentication (e.g. Nginx `auth_basic`).
 
 ---
 
@@ -143,6 +158,7 @@ cd BookApp
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
+Dependencies: FastAPI, Uvicorn, python-multipart, aiofiles, aiohttp, Pydantic, PyMuPDF, python-docx, EbookLib, BeautifulSoup4, deep-translator, edge-tts, mutagen, Pillow (comic page rendering). FFmpeg is optional (true chaptered M4B audio); without it, M4B export falls back to a tagged MP3 stream.
 
 ### Step 4: Verify Installation
 ```bash
@@ -280,7 +296,7 @@ BookApp/
 
 ### REST API Administration Endpoints
 The backend provides **54 REST endpoints** for complete administrative control:
-* `POST /api/translate`: Initiates document translation. Supports `quota_behavior: "wait" | "fallback"`.
+* `POST /api/translate`: Initiates document translation. Supports `quota_behavior: "wait" | "fallback"`, `final_refinement` (local quality stage override) and `max_quality` (second AI revision against the original; requires `ai_polish` and a Gemini key).
 * `POST /api/audiobook`: Initiates neural audiobook synthesis.
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
 * `DELETE /api/jobs/{job_id}`: Deletes a specific job from memory, database, queue, and purges its upload and output directories.
@@ -327,10 +343,10 @@ The repository includes a comprehensive master test runner with **100% endpoint 
 > **User Output Protection & Zero-Junk Guarantee During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore real user directories and SQLite records. All test sessions, temporary artifacts, and scratch directories created during tests are guaranteed 100% purged upon completion, ensuring zero junk files or test history in the user interface.
 
 ```bash
-# Execute all 45 test suites (Full Master Suite):
+# Execute all 46 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (40 local static, unit, contract, UI, and queue suites):
+# Fast execution (41 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
@@ -388,9 +404,11 @@ The master runner automatically executes all test suites:
     * Audio for all types with spoken text == final text; audio failure leaving no file; audio requiring generated text.
     * Duplicate and concurrent requests; result caching; map-reduce for long books.
     * File-endpoint traversal; XSS-safe Markdown rendering (Node); unchanged DocTranslate/Audiobook job state and downloads.
-45. `test_translation_prompts.py`: AI translation/polish/audiobook prompt quality (13 tests). Covers: generic prompts with no title-specific terms; the direct prompt is a translate-from-source prompt carrying the fidelity and fault checklists; language-aware polish (English targets); audiobook no-paraphrase and spoken-form rules; poetry verse preservation; dossier style sheet and pronunciation modes, and their use in the pipeline; the Greek audiobook pronunciation register; stale checkpoints discarded and matching ones resumed; NFC normalisation; restored capital accents.
+45. `test_translation_prompts.py`: AI translation/polish/audiobook prompt quality and maximum-quality revision (21 tests). Revision tests cover: the reviser prompt (with no examples taken from the evaluation passage); fixes applied under the full-models-only policy, with the policy reset afterwards; guards for marker changes, length, quota and auth that keep the first pass; skips and the clean case; Lite/Gemma models excluded by the policy; pipeline wiring (revision runs before export and only when requested and eligible); a revision crash never failing the job; and the article final-ν rule. The prompt tests cover: generic prompts with no title-specific terms; the direct prompt is a translate-from-source prompt carrying the fidelity and fault checklists; language-aware polish (English targets); audiobook no-paraphrase and spoken-form rules; poetry verse preservation; dossier style sheet and pronunciation modes, and their use in the pipeline; the Greek audiobook pronunciation register; stale checkpoints discarded and matching ones resumed; NFC normalisation; restored capital accents.
 
-All test suites consistently pass with **`42/42 PASS (37/37 in --fast mode · 45/45 FastAPI endpoints verified)`**.
+46. `test_audit_regressions.py`: regression guards from the November 2026 codebase audit (7 tests): a quota-paused queue reports `paused_for_quota` so it can auto-resume; saving new keys resets the quota circuit breaker; CORS rejects foreign origins and accepts local development origins; every third-party import is declared in `requirements.txt`; no undefined names in the backend (pyflakes, when installed).
+
+All test suites pass: **`46/46 PASS (41/41 in --fast mode · 54/54 FastAPI routes covered)`**.
 
 ---
 

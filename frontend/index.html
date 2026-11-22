@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.9.0" />
+  <link rel="stylesheet" href="style.css?v=2.9.2" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -59,16 +59,16 @@
       <span class="tab-icon">💡</span>
       <span class="tab-label">Book Insights</span>
     </button>
-    <button class="tab-btn" id="btn-glossary" onclick="openGlossaryModal()" style="margin-left:auto">
+    <button class="tab-btn tab-btn-tool" id="btn-glossary" onclick="openGlossaryModal()" title="Γλωσσάρι (Glossary)" style="margin-left:auto">
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
     </button>
-    <button class="tab-btn" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
+    <button class="tab-btn tab-btn-tool" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
       <span class="tab-icon">🔑</span>
       <span class="tab-label">Gemini API Key</span>
       <span id="nav-gemini-quota-badge" style="display:none; font-size:0.72rem; padding:2px 7px; border-radius:10px; font-weight:600; margin-left:6px"></span>
     </button>
-    <button class="tab-btn" id="btn-nav-refresh" onclick="refreshPageApp()" title="Ανανέωση Σελίδας (Refresh)">
+    <button class="tab-btn tab-btn-tool tab-btn-icon-only" id="btn-nav-refresh" onclick="refreshPageApp()" title="Ανανέωση Σελίδας (Refresh)" aria-label="Ανανέωση σελίδας">
       <span class="tab-icon" id="nav-refresh-icon">🔄</span>
       <span class="tab-label">Refresh</span>
     </button>
@@ -342,13 +342,24 @@
 
       <div class="form-group mode-advanced-only" style="margin-top:14px">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
-          <input type="checkbox" id="tr-ai-polish" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <input type="checkbox" id="tr-ai-polish" onchange="onAiPolishToggle()" style="width:18px;height:18px;accent-color:var(--violet)" />
           <span style="font-size:0.9rem">✨ <strong>AI Polish (Gemini)</strong> — Επιμέλεια λογοτεχνικής ροής & διαλόγων μπαλονιών</span>
           <span id="tr-ai-polish-quota-tag" style="display:none; color:var(--amber); font-size:0.78rem; font-weight:600; padding:2px 8px; border-radius:6px; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4)">⚠️ Όριο Quota</span>
         </label>
         <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
           Στα Graphic Novels / Comics βελτιστοποιεί τις ατάκες ώστε να χωρούν στα μπαλόνια με φυσικό, ζωντανό προφορικό λόγο.
         </span>
+      </div>
+
+      <div class="form-group mode-advanced-only" style="margin-top:10px">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-wrap:wrap">
+          <input type="checkbox" id="tr-max-quality" onchange="onMaxQualityToggle()" style="width:18px;height:18px;accent-color:var(--violet)" />
+          <span style="font-size:0.9rem">🏆 <strong>Μέγιστη ποιότητα</strong> — 2ο πέρασμα AI: αναθεώρηση της μετάφρασης με το πρωτότυπο</span>
+        </label>
+        <span style="font-size:0.75rem; color:var(--text-muted); margin-left:28px; display:block; margin-top:2px">
+          Όπως ο δεύτερος επιμελητής σε εκδοτικό οίκο: συγκρίνει κάθε πρόταση με το πρωτότυπο και διορθώνει λάθη νοήματος, παραλείψεις, συμφωνίες και λεξιλόγιο. Απαιτεί AI Polish.
+        </span>
+        <div id="tr-max-quality-warning" role="alert" style="display:none; margin:8px 0 0 28px; padding:10px 12px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.8rem; line-height:1.45"></div>
       </div>
 
       <div class="form-group mode-advanced-only" style="margin-top:10px">

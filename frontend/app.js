@@ -111,6 +111,11 @@ function applyAppMode(mode) {
   const abStart = document.getElementById('ab-start-btn');
 
   if (isBasic) {
+    // The token-intensive maximum-quality revision exists only in Advanced Mode
+    const mq = document.getElementById('tr-max-quality');
+    if (mq) mq.checked = false;
+    const mqWarn = document.getElementById('tr-max-quality-warning');
+    if (mqWarn) mqWarn.style.display = 'none';
     // Ensure AI Polish is checked by default for both translation and audiobook
     const trAi = document.getElementById('tr-ai-polish');
     if (trAi) trAi.checked = true;
@@ -391,6 +396,8 @@ async function uploadFile(prefix, file) {
       return;
     }
     state[prefix].jobId = data.job_id;
+    state[prefix].estimatedPages = Number(data.estimated_pages || 0);
+    if (prefix === 'tr' && typeof onMaxQualityToggle === 'function') onMaxQualityToggle();
 
     const pages = data.estimated_pages > 0 ? `~${data.estimated_pages} pages · ` : '';
     let durationEst = '';
@@ -1059,6 +1066,7 @@ async function startTranslation() {
         ai_polish: aiPolish,
         api_key: apiKey || null,
         quota_behavior: quotaBehavior,
+        max_quality: isMaxQualityRequested(),
       }),
     });
     if (!res.ok) {
@@ -1261,6 +1269,7 @@ function connectSSE(prefix, jobId) {
     }
     updateProgress(prefix, data);
     notifyRefinementReport(jobId, data);
+    notifyRevisionReport(jobId, data);
 
     if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
       sse.close();
@@ -1304,6 +1313,62 @@ async function setFinalRefinementEnabled(enabled) {
   }
 }
 
+function isMaxQualityRequested() {
+  const cb = document.getElementById('tr-max-quality');
+  return currentAppMode === 'advanced' && Boolean(cb && cb.checked);
+}
+
+function onAiPolishToggle() {
+  const ai = document.getElementById('tr-ai-polish');
+  const mq = document.getElementById('tr-max-quality');
+  if (ai && mq && !ai.checked && mq.checked) {
+    mq.checked = false;
+    onMaxQualityToggle();
+  }
+}
+
+function onMaxQualityToggle() {
+  const mq = document.getElementById('tr-max-quality');
+  const warn = document.getElementById('tr-max-quality-warning');
+  if (!mq || !warn) return;
+  if (!mq.checked) {
+    warn.style.display = 'none';
+    return;
+  }
+  const ai = document.getElementById('tr-ai-polish');
+  if (ai && !ai.checked) ai.checked = true;   // the revision pass revises the AI translation
+  const pages = Number(state.tr.estimatedPages || 0);
+  // ~300 words/page; revision reads source (~1.3 tok/word) + translation (~1.6) and writes the translation (~1.6)
+  const estTxt = pages
+    ? ` Για αυτό το έγγραφο: περίπου <strong>${Math.round(pages * 300 * 4.5).toLocaleString('el-GR')} επιπλέον tokens</strong>.`
+    : '';
+  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  warn.innerHTML = '⚠️ <strong>Επιπλέον κατανάλωση Gemini API:</strong> το πρωτότυπο και η μετάφραση αποστέλλονται ξανά για αναθεώρηση. ' +
+    'Η κατανάλωση tokens είναι περίπου <strong>1,5 φορά</strong> αυτή της AI μετάφρασης και ο χρόνος περίπου διπλάσιος.' + estTxt +
+    ' Μετράει στο ημερήσιο όριο των κλειδιών σας. Χρησιμοποιούνται μόνο πλήρη μοντέλα Gemini· αν δεν είναι διαθέσιμα, κρατιέται η μετάφραση του 1ου περάσματος.' +
+    (hasKey ? '' : ' <br>❗ Δεν έχει οριστεί Gemini API Key — απαιτείται.');
+  warn.style.display = '';
+}
+
+const _shownRevisionReports = new Set();
+
+function notifyRevisionReport(jobId, data) {
+  const rep = data && data.revision_report;
+  if (!rep || data.status !== 'done' || !jobId || _shownRevisionReports.has(jobId)) return;
+  _shownRevisionReports.add(jobId);
+  if (rep.status === 'revised') {
+    toast(`🏆 Αναθεώρηση με το πρωτότυπο: διορθώθηκαν ${rep.changed_lines || 0} γραμμές.`, 'success');
+  } else if (rep.status === 'verified_clean') {
+    toast('🏆 Αναθεώρηση με το πρωτότυπο: δεν χρειάστηκαν διορθώσεις.', 'info');
+  } else if (rep.status === 'error' && rep.reason === 'quota_exhausted') {
+    toast('🏆 Η αναθεώρηση παραλείφθηκε (όριο Gemini ή μη διαθέσιμο πλήρες μοντέλο) — κρατήθηκε η μετάφραση του 1ου περάσματος.', 'warning');
+  } else if (rep.status === 'error') {
+    toast('🏆 Η αναθεώρηση δεν ολοκληρώθηκε — κρατήθηκε η μετάφραση του 1ου περάσματος.', 'warning');
+  } else if (rep.status === 'skipped' && rep.reason === 'requires_ai_polish_and_key') {
+    toast('🏆 Η αναθεώρηση απαιτεί AI Polish και Gemini API Key.', 'info');
+  }
+}
+
 function notifyRefinementReport(jobId, data) {
   const rep = data && data.refinement_report;
   if (!rep || data.status !== 'done' || !jobId || _shownRefinementReports.has(jobId)) return;
@@ -1337,6 +1402,7 @@ function pollProgress(prefix, jobId) {
       const data = await res.json();
       updateProgress(prefix, data);
       notifyRefinementReport(jobId, data);
+      notifyRevisionReport(jobId, data);
       if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
         stopJobTracking(prefix);
       }

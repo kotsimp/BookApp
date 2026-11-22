@@ -257,6 +257,14 @@ With **AI Polish** on, the translation is written for a demanding reader:
 * **Consistent across the whole book:** names, genders, how characters address each other (εσύ/εσείς), and narrative tense, using a register built from the whole book before translation starts.
 * **Translations into English** now get English editing rules.
 
+#### 🏆 Maximum quality (Advanced Mode)
+Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After the AI translation, a second AI "reviser" compares every sentence with the original, as a second editor at a publishing house would. It corrects mistakes of meaning, anything left out or added, grammatical agreement, inexact words and literally translated idioms. Anything already correct stays as it is.
+* ⚠️ **It costs more:** about **1.5×** the Gemini tokens of the AI translation, and roughly **twice the time**. A warning with an estimate for your document appears when you tick the box.
+* It needs AI Polish and a Gemini key; ticking it switches AI Polish on automatically.
+* It always uses the full Gemini models. If those are unavailable (for example, their daily limit is used up), the revision is skipped and you keep the normal AI translation. The translation never fails because of this step.
+* A notification at the end tells you how many lines were corrected.
+* It isn't applied to Smart Batch Queue items, and switching to Basic Mode turns it off.
+
 ### 🔑 Gemini Multi-Key API Pool & Auto-Failover
 * **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
 * **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
@@ -463,7 +471,7 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 * Drop **up to 20 files** into the Upload Card. Configure your Translation Settings below and click **▶️ Start Batch Translation**. The queue runs serially with parallel internal workers, per-item retry, pause/resume, individual download buttons, and a master **📦 Download All (ZIP)** button once all jobs finish.
 
 #### ❓ What do the "🔄 Refresh" and "🔑 Gemini API Key" buttons do?
-* **🔄 Refresh:** Instantly refreshes page state, session history, and server settings.
+* **🔄 Refresh** (icon at the right end of the tab bar): Instantly refreshes page state, session history, and server settings.
 * **🔑 Gemini API Key:** Opens the Multi-Key Pool modal with individual slot status and auto-save capabilities.
 
 #### ❓ Can I translate older Word (.doc) files?

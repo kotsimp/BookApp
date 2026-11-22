@@ -39,6 +39,8 @@ class Job:
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     final_refinement: Optional[bool] = None  # per-job override of the final refinement stage (None = use setting)
     refinement_report: Optional[dict] = None  # summary produced by backend.output_refiner
+    max_quality: bool = False  # Advanced Mode: second AI pass revising the translation against the original
+    revision_report: Optional[dict] = None  # result of the maximum-quality revision pass
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -108,6 +110,8 @@ def _job_to_db_dict(job: Job) -> dict:
             "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
             "final_refinement": getattr(job, "final_refinement", None),
             "refinement_report": getattr(job, "refinement_report", None),
+            "max_quality": bool(getattr(job, "max_quality", False)),
+            "revision_report": getattr(job, "revision_report", None),
         },
     }
 
@@ -154,6 +158,8 @@ def _job_from_db_row(row: dict) -> Job:
         quota_behavior=str(meta.get("quota_behavior") or "wait"),
         final_refinement=meta.get("final_refinement"),
         refinement_report=meta.get("refinement_report") if isinstance(meta.get("refinement_report"), dict) else None,
+        max_quality=bool(meta.get("max_quality", False)),
+        revision_report=meta.get("revision_report") if isinstance(meta.get("revision_report"), dict) else None,
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -404,6 +410,7 @@ def _notify_subscribers(job: Job):
         "quota_behavior": getattr(job, "quota_behavior", "wait"),
         "final_refinement": getattr(job, "final_refinement", None),
         "refinement_report": getattr(job, "refinement_report", None),
+        "revision_report": getattr(job, "revision_report", None),
     }
     try:
         running_loop = asyncio.get_running_loop()
@@ -524,11 +531,6 @@ def is_test_job_identifier(job_id: Optional[str], file_name: Optional[str] = Non
             return True
 
     return False
-
-
-def is_test_job_filename(file_name: Optional[str]) -> bool:
-    """Returns True if the filename matches test-generated job naming patterns."""
-    return is_test_job_identifier(None, file_name)
 
 
 def cleanup_test_jobs() -> list[str]:

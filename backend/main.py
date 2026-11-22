@@ -5,6 +5,7 @@ Main FastAPI application for the Document Translator & Audiobook Generator.
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -76,9 +77,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS: the UI is served by this same server (same origin), so cross-origin access is only needed for local
+# development tools. A wildcard would let ANY website open in the user's browser read /api/settings (incl. the
+# Gemini API keys) or send JSON/DELETE requests to the local app. Extra origins can be allowed explicitly via
+# BOOKAPP_CORS_ORIGINS="https://a.example,https://b.example".
+_EXTRA_CORS_ORIGINS = [o.strip() for o in os.environ.get("BOOKAPP_CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_EXTRA_CORS_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -119,6 +126,7 @@ class TranslateRequest(BaseModel):
     api_key: Optional[str] = None
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     final_refinement: Optional[bool] = None
+    max_quality: bool = False  # Advanced Mode: 2nd Gemini pass revising the AI translation against the original
 
 
 class AudiobookRequest(BaseModel):
@@ -369,7 +377,7 @@ async def upload_file(file: UploadFile = File(...)):
     # Extract and cache cover image from original input if present
     try:
         from backend.exporter import extract_cover_image
-        cov_bytes = extract_cover_image(str(final_path))
+        cov_bytes = await asyncio.to_thread(extract_cover_image, str(final_path))
         if cov_bytes:
             out_d = _job_output_dir(job.job_id)
             cov_p = out_d / "cover_image.jpg"
@@ -378,16 +386,18 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as cov_err:
         logger.warning(f"Could not extract cover image for {file.filename}: {cov_err}")
 
-    # Count pages, detect language, and auto-detect Graphic Novel / Scanned Comic
+    # Count pages, detect language, and auto-detect Graphic Novel / Scanned Comic.
+    # These parse the whole document (CPU/disk bound): run them in a worker thread so a large upload never blocks
+    # the event loop (which would freeze SSE progress of running translations/audiobooks).
     try:
-        page_count = count_pages(str(final_path), file_type)
+        page_count = await asyncio.to_thread(count_pages, str(final_path), file_type)
     except Exception:
         page_count = 0
 
-    detected_language = _detect_document_language(str(final_path), file_type)
+    detected_language = await asyncio.to_thread(_detect_document_language, str(final_path), file_type)
 
     from backend.parsers import detect_is_graphic_novel
-    comic_info = detect_is_graphic_novel(str(final_path), file_type, file.filename)
+    comic_info = await asyncio.to_thread(detect_is_graphic_novel, str(final_path), file_type, file.filename)
 
     # Persist page count and auto-detected comic layout in SQLite metadata
     update_job(
@@ -476,6 +486,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         quota_behavior=quota_behavior,
         final_refinement=req.final_refinement,
         refinement_report=None,
+        max_quality=bool(req.max_quality),
+        revision_report=None,
     )
 
     background_tasks.add_task(
@@ -492,6 +504,27 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
+
+
+async def _run_max_quality_revision(job_id, file_path, output_path, api_key, target_lang, style, quota_behavior):
+    """Second AI pass (Advanced Mode): revises the finished AI translation against the original. Never fatal."""
+    from backend.ai_polisher import revise_translation_against_source
+    original_path = Path(output_path).parent / f"{Path(file_path).stem}_original.txt"
+    update_job(job_id, current_step="🏆 Αναθεώρηση της μετάφρασης με το πρωτότυπο (2ο πέρασμα AI)…", progress=94)
+
+    def _prog(done, total):
+        update_job(job_id, current_step=f"🏆 Αναθεώρηση με το πρωτότυπο: τμήμα {done}/{max(total, 1)}…")
+
+    try:
+        report = await revise_translation_against_source(
+            job_id, output_path, str(original_path), api_key, target_lang=target_lang, style=style,
+            quota_behavior=quota_behavior, progress_callback=_prog,
+        )
+    except Exception as e:  # defensive: the revision must never fail the translation
+        logger.warning(f"[{job_id}] Maximum-quality revision crashed ({e}); first-pass translation kept.", exc_info=True)
+        report = {"status": "error", "reason": "ai_failed"}
+    update_job(job_id, revision_report=report)
+    return report
 
 
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path, ai_polish=False, api_key=None, quota_behavior="wait"):
@@ -594,9 +627,14 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             )
             if is_job_cancelled(job_id):
                 return
+            if getattr(job, "max_quality", False):
+                await _run_max_quality_revision(job_id, file_path, output_path, resolved_key, target_lang,
+                                                style_for_layout, quota_behavior)
+                if is_job_cancelled(job_id):
+                    return
             txt_content = Path(output_path).read_text(encoding="utf-8")
             update_job(job_id, current_step=f"Exporting AI-polished {fmt.upper()}...", progress=95)
-            final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
+            final_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=layout)
 
         # 2. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
         elif file_type == "docx" and fmt in ("docx", "doc"):
@@ -667,10 +705,13 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 txt_content = format_greek_typography(apply_glossary(txt_content, "greek", style="literature" if layout == "literature" else "formal"))
                 Path(output_path).write_text(txt_content, encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
-            final_path = export_text(txt_content, out_dir, fmt, base_name, layout=layout)
+            final_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=layout)
 
         if is_job_cancelled(job_id):
             return
+
+        if getattr(job, "max_quality", False) and not (ai_polish and resolved_key) and not is_comic_flow:
+            update_job(job_id, revision_report={"status": "skipped", "reason": "requires_ai_polish_and_key"})
 
         # Automatic Final Output Refinement & Quality-Control stage (independent, non-fatal, local-only)
         try:
@@ -878,6 +919,7 @@ async def progress_stream(job_id: str):
                 "quota_behavior": getattr(job, "quota_behavior", "wait"),
                 "final_refinement": getattr(job, "final_refinement", None),
                 "refinement_report": getattr(job, "refinement_report", None),
+                "revision_report": getattr(job, "revision_report", None),
             }
             yield f"data: {json.dumps(state)}\n\n"
 
@@ -963,6 +1005,8 @@ async def job_status(job_id: str):
         "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
         "final_refinement": getattr(job, "final_refinement", None),
         "refinement_report": getattr(job, "refinement_report", None),
+        "max_quality": bool(getattr(job, "max_quality", False)),
+        "revision_report": getattr(job, "revision_report", None),
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
         "gemini_quota_reset_timestamp": quota_info.get("reset_timestamp", 0.0),
@@ -1111,7 +1155,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                     txt_content = txt_file.read_text(encoding="utf-8")
                     base_name = txt_file.stem
                     try:
-                        out_path = export_text(txt_content, out_dir, fmt, base_name, layout=active_layout)
+                        out_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=active_layout)
                     except ValueError as ve:
                         raise HTTPException(400, str(ve))
                     if job:
@@ -1212,7 +1256,7 @@ async def upload_cover_image(job_id: str, file: UploadFile = File(...)):
         layout = (getattr(job, "layout_mode", "literature") if job else "literature") or "literature"
         for fmt_ext in (".pdf", ".epub", ".docx"):
             try:
-                export_text(txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=jpg_bytes)
+                await asyncio.to_thread(export_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=jpg_bytes)
             except Exception:
                 pass
 
@@ -1243,7 +1287,7 @@ async def delete_cover_image(job_id: str):
             for fmt_ext in (".pdf", ".epub", ".docx"):
                 if (out_dir / f"{base_name}{fmt_ext}").exists():
                     try:
-                        export_text(txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=None)
+                        await asyncio.to_thread(export_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=None)
                     except Exception:
                         pass
     return {"status": "deleted", "job_id": job_id}
@@ -1430,7 +1474,7 @@ async def get_job_text(job_id: str):
         try:
             from backend.parsers import parse_document
             src_type = Path(job.file_path).suffix.lstrip(".").lower() or job.file_type
-            pages = list(parse_document(job.file_path, src_type))
+            pages = await asyncio.to_thread(lambda: list(parse_document(job.file_path, src_type)))
             original_text = "\n\n".join(f"=== PAGE {p['page']} ===\n{p['text']}" for p in pages)
         except Exception:
             pass
@@ -1475,7 +1519,7 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     if fmt not in {"txt", "docx", "doc", "pdf", "epub"}:
         fmt = "docx"
     layout = (getattr(job, "layout_mode", "standard") if job else "standard") or "standard"
-    export_path = export_text(req.translated_text, out_dir, fmt, base_name, layout=layout)
+    export_path = await asyncio.to_thread(export_text, req.translated_text, out_dir, fmt, base_name, layout=layout)
     if job:
         update_job(job_id, output_path=str(export_path), output_format=fmt)
 
@@ -1483,7 +1527,7 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     for f in list(out_dir.iterdir()):
         if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"] and f.name != export_path.name:
             try:
-                export_text(req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name, layout=layout)
+                await asyncio.to_thread(export_text, req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name, layout=layout)
             except Exception:
                 pass
 
@@ -1525,7 +1569,7 @@ async def get_app_settings():
 @app.post("/api/settings")
 async def update_app_settings(req: SettingsRequest):
     from backend.settings_manager import save_setting
-    from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
+    from backend.ai_polisher import reset_model_cache
     from backend.comic_translator import reset_vision_model_cache
     from backend.gemini_key_pool import GeminiKeyPool
 
@@ -1567,7 +1611,7 @@ async def update_gemini_pool_keys(payload: dict):
     if not isinstance(keys, list):
         raise HTTPException(400, "'keys' must be a list of API key strings.")
     from backend.gemini_key_pool import GeminiKeyPool
-    from backend.ai_polisher import reset_model_cache, reset_gemini_quota_exhaustion
+    from backend.ai_polisher import reset_model_cache
     from backend.comic_translator import reset_vision_model_cache
     saved = GeminiKeyPool.set_keys(keys)
     GeminiKeyPool.reset_quota()
@@ -1658,8 +1702,7 @@ async def polish_translation(req: PolishRequest):
             text_to_polish = txt_files[0].read_text(encoding="utf-8")
         elif job and job.file_path and Path(job.file_path).exists():
             # DIRECT STANDALONE DOCUMENT POLISH: Extract text from original uploaded file
-            from backend.parsers import parse_document
-            pages = list(parse_document(job.file_path, job.file_type))
+            pages = await asyncio.to_thread(lambda: list(parse_document(job.file_path, job.file_type)))
             sections = []
             for p in pages:
                 p_num = p.get("page", 1)
@@ -1687,8 +1730,7 @@ async def polish_translation(req: PolishRequest):
                 pass
         if not original_text and job and job.file_path and Path(job.file_path).exists():
             try:
-                from backend.parsers import parse_document
-                pages = list(parse_document(job.file_path, job.file_type))
+                pages = await asyncio.to_thread(lambda: list(parse_document(job.file_path, job.file_type)))
                 sections = []
                 for p in pages:
                     p_num = p.get("page", 1)
@@ -1794,14 +1836,14 @@ async def polish_translation(req: PolishRequest):
     if fmt not in {"txt", "docx", "doc", "pdf", "epub"}:
         fmt = "docx"
     layout = (req.layout_mode or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
-    export_path = export_text(polished, out_dir, fmt, base_name, layout=layout)
+    export_path = await asyncio.to_thread(export_text, polished, out_dir, fmt, base_name, layout=layout)
 
     # Refresh other standard formats on-demand (without redundantly re-exporting fmt)
     for other_fmt in ("pdf", "epub", "docx"):
         if other_fmt == fmt:
             continue
         try:
-            export_text(polished, out_dir, other_fmt, base_name, layout=layout)
+            await asyncio.to_thread(export_text, polished, out_dir, other_fmt, base_name, layout=layout)
         except Exception:
             pass
 
@@ -2314,6 +2356,8 @@ async def _execute_queue_item(q_item):
         ai_polish=q_item.ai_polish,
         final_refinement=None,  # queue items follow the global final_refinement_enabled setting
         refinement_report=None,
+        max_quality=False,      # the token-intensive revision pass is never applied implicitly to batches
+        revision_report=None,
     )
     await _run_translation(
         q_item.job_id,

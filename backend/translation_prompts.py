@@ -314,3 +314,40 @@ def dossier_header(mode: str = "translation", target_lang: str = "greek") -> str
                 "Τήρησε αυστηρά τις αποδόσεις, τα γένη, τις προσφωνήσεις και τις επιλογές ύφους που ακολουθούν.\n")
     return ("\n\n--- NAME & TERM REGISTER (ENTITY DOSSIER) AND STYLE SHEET ---\n"
             "Follow these renderings, genders, forms of address and style choices strictly.\n")
+
+
+# ---------------------------------------------------------------------------
+# Maximum-quality revision (second, independent reviser — "TEP": translate, edit, proofread)
+# ---------------------------------------------------------------------------
+
+def build_revision_prompt(target_lang: str = "greek") -> str:
+    """
+    System prompt for the optional second pass that revises a finished AI translation against the original.
+    Unlike plain polishing, the reviser checks fidelity sentence by sentence and only corrects real errors.
+    """
+    if is_greek(target_lang):
+        return (
+            "Είσαι ο δεύτερος, ανεξάρτητος αναθεωρητής (reviser) μιας μετάφρασης για απαιτητικό αναγνώστη. Σου δίνεται "
+            "το Πρωτότυπο Κείμενο Αναφοράς (<SOURCE_REFERENCE>) και η ελληνική μετάφραση (<DRAFT_TO_POLISH>). Σύγκρινε "
+            "ΠΡΟΤΑΣΗ ΠΡΟΣ ΠΡΟΤΑΣΗ τη μετάφραση με το πρωτότυπο και διόρθωσε ΜΟΝΟ πραγματικά σφάλματα:\n"
+            "1. ΛΑΘΗ ΝΟΗΜΑΤΟΣ: παρανοήσεις, λάθος υποκείμενο/αντικείμενο, λάθος χρόνος ή άρνηση, ψευδόφιλες λέξεις.\n"
+            "2. ΠΑΡΑΛΕΙΨΕΙΣ Ή ΠΡΟΣΘΗΚΕΣ: ό,τι λείπει από τη μετάφραση προστίθεται· ό,τι δεν υπάρχει στο πρωτότυπο "
+            "(επεξηγήσεις, εικόνες, λεπτομέρειες) αφαιρείται.\n"
+            "3. ΓΡΑΜΜΑΤΙΚΗ ΣΥΜΦΩΝΙΑ: γένος, αριθμός, πτώση (π.χ. «το μεγάλη απόφαση» -> «τη μεγάλη απόφαση»), συμφωνία επιθέτων και μετοχών.\n"
+            "4. ΛΕΞΙΛΟΓΙΟ & ΙΔΙΩΜΑΤΙΣΜΟΙ: ανακριβής λέξη, κατά λέξη ιδιωματισμός ή φράση που δεν λέει αυτό που λέει το "
+            "πρωτότυπο (π.χ. 'it was raining cats and dogs' = «έβρεχε καρεκλοπόδαρα», όχι κατά λέξη).\n"
+            "5. ΟΡΘΟΓΡΑΦΙΑ, ΤΟΝΙΣΜΟΣ, ΣΤΙΞΗ.\n"
+            "6. ΣΥΝΕΠΕΙΑ: ονόματα, γένη, προσφωνήσεις (εσύ/εσείς), αφηγηματικός χρόνος σε όλο το κείμενο.\n"
+            "ΚΑΝΟΝΑΣ ΑΝΑΘΕΩΡΗΤΗ: ό,τι είναι σωστό, πιστό και φυσικό μένει ΑΝΕΠΑΦΟ. ΜΗΝ ξαναγράφεις για λόγους προτίμησης "
+            "ύφους και ΜΗΝ αλλάζεις τη διατύπωση όταν δεν υπάρχει σφάλμα.\n"
+            f"{GREEK_QUALITY_RULES}{_DIALOGUE_RULE_EL}{_STRUCTURE_RULES_EL}{_PURITY_RULES_EL}"
+        )
+    return (
+        "You are the second, independent reviser of a translation for a demanding reader. You receive the original "
+        "(<SOURCE_REFERENCE>) and the translation (<DRAFT_TO_POLISH>). Compare them SENTENCE BY SENTENCE and correct ONLY "
+        "real errors: 1. meaning errors (misreadings, wrong subject/object, tense or negation, false friends); 2. omissions "
+        "or additions relative to the original; 3. grammar and agreement; 4. inaccurate words or literally rendered idioms; "
+        "5. spelling and punctuation; 6. consistency of names, terms, forms of address and tense.\n"
+        "REVISER RULE: whatever is correct, faithful and natural stays UNTOUCHED; never rewrite for stylistic preference.\n"
+        f"{ENGLISH_QUALITY_RULES}{_STRUCTURE_RULES_EN}{_PURITY_RULES_EN}"
+    )

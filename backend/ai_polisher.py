@@ -15,6 +15,7 @@ import hashlib
 import logging
 import asyncio
 import threading
+import contextvars
 from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -31,6 +32,15 @@ from backend.translation_prompts import (  # noqa: E402
 )
 
 STYLE_PROMPTS = _prompts.STYLE_PROMPTS  # public re-export (existing callers/tests import it from here)
+
+# Context-scoped model policy: when True, _call_gemini_api only uses full (non-Lite, non-Gemma) models. Used by the
+# maximum-quality revision pass, where a weaker fallback model can introduce errors instead of removing them.
+_FULL_MODELS_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("gemini_full_models_only", default=False)
+
+
+def _is_full_model(name: str) -> bool:
+    n = (name or "").lower()
+    return "lite" not in n and not n.startswith("gemma") and ("flash" in n or "pro" in n)
 
 STYLE_TEMPERATURES = {
     "literature": 0.35,
@@ -902,9 +912,13 @@ async def polish_text_with_gemini(
     progress_callback: Optional[Callable[[int, int], Any]] = None,
     target_lang: str = "greek",
     quota_behavior: str = "wait",
+    system_prompt_override: Optional[str] = None,
+    temperature_override: Optional[float] = None,
 ) -> str:
     """
     Polishes and proofreads translated text using Google's Gemini API.
+    ``system_prompt_override`` / ``temperature_override`` let callers reuse the whole batching, source-anchoring,
+    dossier, checkpoint and quality-gate machinery with a different task (e.g. the maximum-quality revision pass).
     Supports multi-page smart batching, bilingual source-anchored verification,
     character consistency dossier, rolling narrative context, and disk checkpointing.
     """
@@ -928,7 +942,7 @@ async def polish_text_with_gemini(
             return _postprocess(text)
         raise ValueError("Missing Gemini API Key. Please provide a key in settings or select free models (fallback).")
 
-    base_system_instruction = build_polish_prompt(style, target_lang)
+    base_system_instruction = system_prompt_override or build_polish_prompt(style, target_lang)
     sem = asyncio.Semaphore(5)
     client_timeout = aiohttp.ClientTimeout(total=90)
 
@@ -1013,7 +1027,7 @@ async def polish_text_with_gemini(
             system_instruction += dossier_header(dossier_mode, target_lang) + f"{entity_dossier}\n"
 
         # Inject contextually-relevant user glossary rules (style-aware: excludes IT/DevOps terms for literature)
-        from backend.glossary import load_glossary, apply_glossary
+        from backend.glossary import load_glossary
         glossary_items = load_glossary(style=style)
         if glossary_items:
             full_context_lower = (text + "\n" + (original_text or "")).lower()
@@ -1038,7 +1052,7 @@ async def polish_text_with_gemini(
                 f"{glossary_lines}\n"
             )
 
-        target_temp = STYLE_TEMPERATURES.get(style, 0.25)
+        target_temp = temperature_override if temperature_override is not None else STYLE_TEMPERATURES.get(style, 0.25)
 
         if len(page_sections) > 1:
             # Pair page markers with their content
@@ -1628,7 +1642,8 @@ async def _call_gemini_api(
     if not bypass_cache:
         try:
             from backend.database import compute_cache_key, db_get_cached_translation
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4", extra=f"{prompt_hash}:{temperature}")
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4",
+                                          extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
             cached_result = db_get_cached_translation(cache_key)
             if cached_result is not None:
                 logger.info("Retrieved AI polished chunk directly from SQLite cache.")
@@ -1638,7 +1653,8 @@ async def _call_gemini_api(
     else:
         try:
             from backend.database import compute_cache_key
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4", extra=f"{prompt_hash}:{temperature}")
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4",
+                                          extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
         except Exception:
             pass
 
@@ -1648,7 +1664,7 @@ async def _call_gemini_api(
     # full Flash models and silently fall back to weaker Lite models; a fixed 1.5k-token estimate under-counted TPM.
     payload_chars = len(system_prompt or "") + len(content_text or "")
     est_tokens = max(500, min(60_000, payload_chars // 2))          # ~input + comparable output
-    req_timeout_s = float(max(30.0, min(180.0, 30.0 + len(content_text or "") / 200.0)))
+    req_timeout_s = float(max(45.0, min(180.0, 45.0 + len(content_text or "") / 120.0)))
 
     base_payload = {
         "contents": [
@@ -1710,6 +1726,9 @@ async def _call_gemini_api(
                 filtered = [m for m in candidates if m not in exclude_models]
                 if filtered:
                     candidates = filtered
+
+            if _FULL_MODELS_ONLY.get():
+                candidates = [m for m in candidates if _is_full_model(m)]
 
             # Filter out candidate models that are currently cooling down for this specific key
             candidates = GeminiKeyPool.get_active_models_for_key(active_key, candidates)
@@ -2162,13 +2181,11 @@ async def translate_and_polish_direct_with_gemini(
                 if len(b_items) > 1 and depth < 3:
                     mid = len(b_items) // 2
                     logger.warning(f"[{job_id}] Direct AI batch hit {reason_label}; splitting {len(b_items)} pages into {mid}+{len(b_items)-mid}...")
-                    left_ok, right_ok = False, False
                     left_err: Optional[Exception] = None
                     right_err: Optional[Exception] = None
                     left_res, right_res = "", ""
                     try:
                         left_res = await _translate_items_reliably(b_items[:mid], prev_tail, depth + 1)
-                        left_ok = True
                     except (PermissionError, DailyQuotaExhaustedError):
                         raise
                     except Exception as ex_l:
@@ -2182,7 +2199,6 @@ async def translate_and_polish_direct_with_gemini(
                     right_tail = _extract_clean_tail_context(b_items[mid - 1][1]) if b_items[mid - 1][1] else ""
                     try:
                         right_res = await _translate_items_reliably(b_items[mid:], right_tail, depth + 1)
-                        right_ok = True
                     except (PermissionError, DailyQuotaExhaustedError):
                         raise
                     except Exception as ex_r:
@@ -2206,13 +2222,11 @@ async def translate_and_polish_direct_with_gemini(
                     if halves:
                         l_txt, r_txt = halves
                         logger.warning(f"[{job_id}] Direct AI single page {only_pn} hit {reason_label}; bisecting by paragraphs (depth={depth + 1})...")
-                        left_ok, right_ok = False, False
                         left_err = None
                         right_err = None
                         left_res, right_res = "", ""
                         try:
                             left_res = await _translate_items_reliably([(only_pn, l_txt)], prev_tail, depth + 1)
-                            left_ok = True
                         except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_l:
@@ -2222,7 +2236,6 @@ async def translate_and_polish_direct_with_gemini(
                             left_res = f"=== PAGE {only_pn} ===\n{tr_l}" if only_pn is not None else tr_l
                         try:
                             right_res = await _translate_items_reliably([(None, r_txt)], _extract_clean_tail_context(l_txt), depth + 1)
-                            right_ok = True
                         except (PermissionError, DailyQuotaExhaustedError):
                             raise
                         except Exception as ex_r:
@@ -2429,3 +2442,111 @@ async def translate_and_polish_direct_with_gemini(
     update_job(job_id, progress=95, current_step="Finalizing AI translated document...", output_path=output_path)
     logger.info(f"[{job_id}] Single-Pass Direct AI Translation complete -> {output_path}")
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Maximum-quality revision pass (opt-in, Advanced Mode)
+# ---------------------------------------------------------------------------
+
+REVISION_TEMPERATURE = 0.15
+
+
+async def revise_translation_against_source(
+    job_id: Optional[str],
+    translated_path: str,
+    original_path: str,
+    api_key: str,
+    target_lang: str = "greek",
+    style: str = "literature",
+    quota_behavior: str = "wait",
+    progress_callback: Optional[Callable[[int, int], Any]] = None,
+) -> dict[str, Any]:
+    """
+    Second, independent revision of a finished AI translation against the original (translate -> revise).
+    Reuses polish_text_with_gemini (page-aligned <SOURCE_REFERENCE>/<DRAFT_TO_POLISH> batches, dossier, checkpoints,
+    per-batch quality gates) with the reviser prompt. The translation file is replaced atomically only if the revised
+    text keeps every page marker and a plausible length; any failure keeps the first-pass translation untouched.
+    Returns a JSON-safe report.
+    """
+    from backend.translation_prompts import build_revision_prompt
+    started = time.time()
+    report: dict[str, Any] = {"status": "skipped", "reason": None}
+    tp_ = Path(translated_path)
+    op_ = Path(original_path)
+    if not (api_key or "").strip():
+        report["reason"] = "no_api_key"
+        return report
+    if not tp_.is_file() or not op_.is_file():
+        report["reason"] = "missing_files"
+        return report
+    draft = tp_.read_text(encoding="utf-8")
+    original = op_.read_text(encoding="utf-8")
+    if not draft.strip() or not original.strip():
+        report["reason"] = "empty_text"
+        return report
+
+    policy_token = _FULL_MODELS_ONLY.set(True)   # never revise with a weaker fallback model
+    try:
+        revised = await polish_text_with_gemini(
+            draft,
+            api_key=api_key,
+            style=style,
+            original_text=original,
+            job_id=f"{job_id}_revision" if job_id else None,
+            use_source_anchoring=True,
+            progress_callback=progress_callback,
+            target_lang=target_lang,
+            quota_behavior=quota_behavior,
+            system_prompt_override=build_revision_prompt(target_lang),
+            temperature_override=REVISION_TEMPERATURE,
+        )
+    except DailyQuotaExhaustedError as e:
+        # Includes "no full model available": all full models cooling down on every key
+        report.update(status="error", reason="quota_exhausted", detail=str(e)[:200])
+        return report
+    except PermissionError as e:
+        report.update(status="error", reason="auth_failed", detail=str(e)[:200])
+        return report
+    except Exception as e:
+        logger.warning(f"[{job_id}] Revision pass failed ({e}); keeping the first-pass translation.")
+        report.update(status="error", reason="ai_failed", detail=str(e)[:200])
+        return report
+    finally:
+        _FULL_MODELS_ONLY.reset(policy_token)
+
+    marker_re = re.compile(r"={3,}\s*PAGE\s+(\d+)\s*={3,}")
+    if not revised or not revised.strip():
+        report.update(status="error", reason="empty_revision")
+        return report
+    if marker_re.findall(revised) != marker_re.findall(draft):
+        report.update(status="error", reason="page_markers_changed")
+        return report
+    ratio = len(revised) / max(len(draft), 1)
+    if not (0.8 <= ratio <= 1.25):
+        report.update(status="error", reason=f"length_ratio_{ratio:.2f}")
+        return report
+    if " ".join(revised.split()) == " ".join(draft.split()):   # whitespace-only differences are not revisions
+        report.update(status="verified_clean", duration_s=round(time.time() - started, 1))
+        return report
+
+    tmp = tp_.with_name(f".{tp_.name}.revision-tmp")
+    try:
+        tmp.write_text(revised, encoding="utf-8")
+        os.replace(tmp, tp_)
+    except Exception as e:
+        logger.error(f"[{job_id}] Could not save revised translation ({e}); first-pass translation kept.")
+        report.update(status="error", reason="write_failed")
+        return report
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    import difflib
+    changed = sum(1 for a, b in zip(draft.split("\n"), revised.split("\n")) if a != b)
+    report.update(status="revised", changed_lines=changed,
+                  similarity=round(difflib.SequenceMatcher(None, draft[:20000], revised[:20000]).quick_ratio(), 3),
+                  duration_s=round(time.time() - started, 1))
+    logger.info(f"[{job_id}] Maximum-quality revision applied ({changed} lines changed).")
+    return report

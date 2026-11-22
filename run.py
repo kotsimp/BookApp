@@ -26,12 +26,6 @@ def get_python():
     return VENV_DIR / "bin" / "python"
 
 
-def get_pip():
-    if sys.platform == "win32":
-        return VENV_DIR / "Scripts" / "pip.exe"
-    return VENV_DIR / "bin" / "pip"
-
-
 def get_uvicorn():
     if sys.platform == "win32":
         return VENV_DIR / "Scripts" / "uvicorn.exe"

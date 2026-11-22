@@ -327,9 +327,6 @@ async def translate_document(
     Writes output as a UTF-8 text file with page markers.
     Returns the output path.
     """
-    src_code = _resolve_lang_code(source_lang, "en")
-    tgt_code = _resolve_lang_code(target_lang, "el")
-    fallback_translator = GoogleTranslator(source=src_code, target=tgt_code)
 
     update_job(job_id,
                status="running",
@@ -392,7 +389,6 @@ async def translate_document(
                             chunk,
                             source_lang,
                             target_lang,
-                            deep_trans=fallback_translator,
                             session=session,
                         )
                         translated_chunks.append(translated)

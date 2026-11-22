@@ -8,6 +8,8 @@
 :root {
   color-scheme: dark;
   --bg-base:        #07091a;
+  --bg-option:      #12141d;
+  --text-option:    #f0f2ff;
   --bg-card:        rgba(255, 255, 255, 0.04);
   --bg-card-hover:  rgba(255, 255, 255, 0.07);
   --bg-input:       rgba(255, 255, 255, 0.06);
@@ -42,6 +44,8 @@
 [data-theme="light"] {
   color-scheme: light;
   --bg-base:        #f8fafc;
+  --bg-option:      #ffffff;
+  --text-option:    #0f172a;
   --bg-card:        #ffffff;
   --bg-card-hover:  #f1f5f9;
   --bg-input:       #f1f5f9;
@@ -212,7 +216,8 @@ body::after {
 /* ---- Tab Navigation ---- */
 .tab-nav {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;          /* never let buttons overflow the bar (e.g. when the quota badge appears) */
+  gap: 6px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -221,22 +226,32 @@ body::after {
 }
 
 .tab-btn {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: 8px;
+  padding: 12px 14px;
+  white-space: nowrap;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font-family: 'Inter', sans-serif;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   transition: var(--transition);
 }
+
+/* Compact tool buttons (Glossary, API key, Refresh) next to the main tabs */
+.tab-btn.tab-btn-tool {
+  flex: 0 0 auto;
+  padding: 12px 12px;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+.tab-btn.tab-btn-icon-only .tab-label { display: none; }
 
 .tab-btn:hover {
   color: var(--text-primary);
@@ -429,9 +444,16 @@ body::after {
   box-shadow: 0 0 0 3px var(--violet-glow);
 }
 
+/* Native option lists: opaque, theme-aware colours (a hard-coded dark background made options unreadable in the
+   light theme, where the text colour is dark). Applies to every <select> in the app. */
+select option,
+select optgroup,
 .form-select option {
-  background: #12141d;
-  color: var(--text-primary);
+  background-color: var(--bg-option);
+  color: var(--text-option);
+}
+select option:disabled {
+  color: var(--text-muted);
 }
 
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -934,8 +956,8 @@ body::after {
   border-color: var(--violet);
 }
 .form-select-sm option {
-  background: #12141d;
-  color: var(--text-primary);
+  background-color: var(--bg-option);
+  color: var(--text-option);
 }
 .editor-dirty-badge {
   display: none;

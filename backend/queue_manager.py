@@ -342,7 +342,7 @@ async def _process_queue_loop(
     Each item runs in its own isolated child Task so cancelling a single running item
     never terminates the queue processor loop — it cleanly moves on to the next item.
     """
-    global _queue_paused, _queue_task
+    global _queue_paused, _queue_paused_for_quota, _queue_task
     logger.info("Smart Batch Queue processor started.")
     try:
         while not _queue_paused:
