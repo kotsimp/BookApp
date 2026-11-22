@@ -14,6 +14,10 @@ Tests:
    generate_audiobook cleans up tts_tmp_* on non-cancellation errors and passes target_lang to AI polish;
    export_audiobook_m4b passes cover image to ffmpeg with timeout.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

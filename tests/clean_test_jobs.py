@@ -2,6 +2,10 @@
 clean_test_jobs.py - Helper utility to clean all test-generated jobs from BookApp.
 Can be executed directly or imported by test suites.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 import sys
 from pathlib import Path
 

@@ -7,6 +7,10 @@ Explicitly guards against every real production bug ever encountered:
 4. Invalid Gemini API Key on a scanned comic must fail fast (<10s) with a clear error instead of spinning for 15+ minutes.
 5. Full test hygiene: cleans up every job it creates so Session History stays clean.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

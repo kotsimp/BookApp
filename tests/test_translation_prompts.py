@@ -15,6 +15,10 @@ Verifies:
 7. sanitize_ai_output() normalises Unicode (NFC) so polytonic/decomposed accents become monotonic code points.
 8. The final local refinement restores accents dropped from capitalised words ('Ηταν' -> 'Ήταν').
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

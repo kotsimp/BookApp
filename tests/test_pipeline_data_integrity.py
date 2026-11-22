@@ -16,6 +16,10 @@ Tests:
 6. Genre Detector: None-safe inputs, TOC/bullets/PAGE headers not misclassified as poetry, 'ip' matched,
    strong literary prose not hijacked by single formal/tech word.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

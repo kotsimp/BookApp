@@ -26,6 +26,7 @@ async function parseApiError(res, fallbackMsg = 'Request failed') {
 // The browser never keeps keys (no localStorage); it only knows whether a key exists and its masked form
 // (e.g. "AIzaSy...4f2D"). Masked values sent back on save are mapped to the stored keys by the server.
 const geminiKeyState = { hasKey: false, masked: [] };
+let m4bAvailable = true;  // reported by GET /api/settings
 
 function hasGeminiKey() {
   return Boolean(geminiKeyState.hasKey);
@@ -39,6 +40,7 @@ function getClientApiKey() {
 function applyGeminiKeyState(sData) {
   if (!sData) return;
   geminiKeyState.hasKey = Boolean(sData.has_gemini_key);
+  m4bAvailable = sData.m4b_available !== false;
   geminiKeyState.masked = Array.isArray(sData.gemini_api_keys) ? sData.gemini_api_keys.filter(Boolean) : [];
 }
 
@@ -419,7 +421,7 @@ function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
     if (hintEl) {
       hintEl.style.display = 'flex';
       const detail = reason ? ` (${reason})` : '';
-      hintEl.innerHTML = `<span>🎨 <strong>Graphic Novel / Comic Auto-Detected${detail}:</strong> Ενεργοποιήθηκαν αποκλειστικά οι επιλογές Graphic Novel (<strong>PDF, CBZ, CBR, EPUB</strong> &amp; LTR/RTL). Οι επιλογές κειμένου/βιβλίου απενεργοποιήθηκαν αυτόματα.</span>`;
+      hintEl.innerHTML = `<span>🎨 <strong>Graphic Novel / Comic Auto-Detected${escHtml(detail)}:</strong> Ενεργοποιήθηκαν αποκλειστικά οι επιλογές Graphic Novel (<strong>PDF, CBZ, CBR, EPUB</strong> &amp; LTR/RTL). Οι επιλογές κειμένου/βιβλίου απενεργοποιήθηκαν αυτόματα.</span>`;
     }
   } else {
     // Unlock all standard book/document options
@@ -876,7 +878,12 @@ async function handleCoverUpload(e) {
     toast('Uploading book cover image...', 'info');
     const res = await fetch(`${API}/cover/${jobId}`, { method: 'POST', body: formData });
     if (!res.ok) throw new Error(await parseApiError(res, 'Cover upload failed'));
-    toast('✅ Book cover updated successfully! Included in PDF, EPUB & DOCX.', 'success');
+    const kept = (await res.json().catch(() => ({})))?.preserved_files || [];
+    if (kept.length) {
+      toast(`✅ Το εξώφυλλο αποθηκεύτηκε. Δεν μπαίνει στο ${kept.join(', ')}, ώστε να διατηρηθεί η μορφοποίησή του.`, 'info');
+    } else {
+      toast('✅ Book cover updated successfully! Included in PDF, EPUB & DOCX.', 'success');
+    }
     await checkCoverImage(jobId);
   } catch (err) {
     toast(`Failed to upload cover: ${err.message}`, 'error');
@@ -1270,11 +1277,12 @@ async function startAudiobook() {
   state.ab.startTime = Date.now();
 
   try {
+    const hasKey = hasGeminiKey();  // not apiKey: keys live on the server, so that is always null
     const isMultiVoice = document.getElementById('ab-multi-voice')?.checked || false;
     const dialogueVoice = isMultiVoice ? (document.getElementById('ab-dialogue-voice-select')?.value || null) : null;
     const quotaBehaviorEl = document.querySelector('input[name="ab-quota-behavior"]:checked');
-    let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (apiKey ? 'wait' : 'fallback');
-    if (!apiKey && quotaBehavior === 'wait') {
+    let quotaBehavior = quotaBehaviorEl ? quotaBehaviorEl.value : (hasKey ? 'wait' : 'fallback');
+    if (!hasKey && quotaBehavior === 'wait') {
       quotaBehavior = 'fallback';
     }
 
@@ -1996,7 +2004,7 @@ function setStatusBadge(prefix, status) {
   const badge = document.getElementById(`${prefix}-status-badge`);
   badge.className = `status-badge status-${status}`;
   const labels = { idle: 'Idle', running: 'Running', done: 'Complete', error: 'Error', cancelled: 'Cancelled' };
-  badge.innerHTML = `<span class="status-dot"></span> ${labels[status] || status}`;
+  badge.innerHTML = `<span class="status-dot"></span> ${escHtml(labels[status] || status)}`;
 }
 
 async function downloadOutput(prefix, overrideFmt = null) {
@@ -2019,6 +2027,10 @@ async function downloadOutput(prefix, overrideFmt = null) {
 }
 
 function downloadOutputM4b() {
+  if (!m4bAvailable) {
+    toast('Η εξαγωγή M4B χρειάζεται το FFmpeg στον υπολογιστή του BookApp (pip install -r requirements.txt). Το MP3 είναι διαθέσιμο.', 'error');
+    return;
+  }
   downloadOutput('ab', 'm4b');
 }
 
@@ -2162,16 +2174,8 @@ function renderHistory(jobs) {
   const grid = document.getElementById('history-grid');
   const clearBtn = document.getElementById('clear-history-btn');
 
-  const testPrefixes = ['test_', 'reg_', 'mock_', 'sample_', 'q_iso_', 'cover_check', 'sse_test', 'sse_thread', 'cancel_guard', 'scanned_only', 'book_', 'book', 'path_', 'direct_text', 'temp_', 'stress_', 'bench_'];
-  const testExact = ['sample.pdf', 'sample.txt', 'book.pdf', 'book.txt', 'active.pdf', 'direct_text.txt', 'direct_text'];
-  const displayJobs = (jobs || []).filter(j => {
-    const fn = (j.file_name || '').toLowerCase().trim();
-    const jid = (j.job_id || '').toLowerCase().trim();
-    if (!fn && !jid) return false;
-    if (testExact.includes(fn)) return false;
-    if (testPrefixes.some(p => fn.startsWith(p) || (jid && jid.startsWith(p)))) return false;
-    return true;
-  });
+  // No filtering by file name here: "Bookkeeping.pdf" or "test_results.docx" are ordinary documents.
+  const displayJobs = (jobs || []).filter(j => j.file_name || j.job_id);
 
   if (!displayJobs || displayJobs.length === 0) {
     grid.innerHTML = '<p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>';
@@ -2190,9 +2194,9 @@ function renderHistory(jobs) {
       <div class="history-info">
         <div class="history-name">${escHtml(j.file_name)}</div>
         <div class="history-meta">
-          ${j.mode ? j.mode.charAt(0).toUpperCase() + j.mode.slice(1) : 'Uploaded'} ·
-          ${statusIcon[j.status] || ''} ${j.status}
-          ${j.progress > 0 && j.status !== 'done' ? `· ${j.progress}%` : ''}
+          ${j.mode ? escHtml(j.mode.charAt(0).toUpperCase() + j.mode.slice(1)) : 'Uploaded'} ·
+          ${statusIcon[j.status] || ''} ${escHtml(j.status)}
+          ${j.progress > 0 && j.status !== 'done' ? `· ${Number(j.progress) || 0}%` : ''}
         </div>
       </div>
       ${j.has_output ? `<span style="color:var(--emerald);font-size:0.8rem;font-weight:600">⬇️ Ready</span>` : ''}
@@ -2542,9 +2546,14 @@ async function saveEditorText() {
       body: JSON.stringify({ translated_text: text }),
     });
 
-    if (!res.ok) throw new Error('Failed to save corrections');
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to save corrections'));
+    const saved = await res.json().catch(() => ({}));
     clearEditorDirty();
-    toast('✅ Corrections saved and export files updated!', 'success');
+    if (saved?.artwork_unchanged) {
+      toast('💾 Αποθηκεύτηκε μόνο το κείμενο: στα Graphic Novels οι εικόνες και τα μπαλόνια δεν αλλάζουν από τον Editor.', 'info');
+    } else {
+      toast('✅ Corrections saved and export files updated!', 'success');
+    }
 
     // Also update download button URL
     const fmt = (document.getElementById('tr-output-format')?.value || 'txt').toLowerCase();
@@ -3487,7 +3496,7 @@ async function runAiPolish() {
             const pct = Math.max(5, Math.min(98, data.percent));
             barEl.style.width = `${pct}%`;
             pctEl.textContent = `${pct}%`;
-            stepEl.innerHTML = `<span class="status-dot"></span> ${data.step || 'Refining text...'}`;
+            stepEl.innerHTML = `<span class="status-dot"></span> ${escHtml(data.step || 'Refining text...')}`;
             if (pagesEl) pagesEl.textContent = `Part ${data.current} of ${data.total}`;
             if (trTabLabel) trTabLabel.textContent = `Translate Document · ✨ ${pct}%`;
           }
@@ -4211,8 +4220,12 @@ function renderBatchQueue(q) {
   };
 
   list.innerHTML = q.items.map((it) => {
+    // Everything from the server is escaped: queue items can be created by any client that reaches the API
+    const fmtLabel = escHtml(String(it.output_format ?? '').toUpperCase());
+    const statusClass = escHtml(it.status);
+    const pct = Number(it.progress) || 0;
     const modeTag = it.is_comic
-      ? `🎨 Comic (${(it.reading_direction || 'ltr').toUpperCase()})`
+      ? `🎨 Comic (${escHtml(String(it.reading_direction || 'ltr').toUpperCase())})`
       : (it.layout_mode === 'literature' ? '📚 Literature' : '📄 Standard');
     const isWaitMode = (it.quota_behavior || 'wait') === 'wait';
     const aiTag = it.ai_polish
@@ -4221,19 +4234,19 @@ function renderBatchQueue(q) {
           : ' · ✨ AI Polish')
       : '';
     const dlLink = it.has_output
-      ? `<a class="btn-sm btn-outline" href="${API}/download/${it.job_id}?format=${it.output_format}&layout=${it.layout_mode}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${it.output_format.toUpperCase()}</a>`
+      ? `<a class="btn-sm btn-outline" href="${escHtml(`${API}/download/${encodeURIComponent(it.job_id)}?format=${encodeURIComponent(it.output_format)}&layout=${encodeURIComponent(it.layout_mode)}`)}" style="text-decoration:none; color:var(--emerald); border-color:rgba(16,185,129,0.4)">⬇️ ${fmtLabel}</a>`
       : '';
     const retryBtn = (it.status === 'error' || it.status === 'cancelled' || it.status === 'waiting_quota')
       ? `<button type="button" class="btn-sm btn-outline" data-job-id="${escHtml(it.job_id)}" onclick="retryQueueItem(this.dataset.jobId)" title="${it.status === 'waiting_quota' ? 'Άμεση δοκιμή εκ νέου' : 'Επανάληψη μετάφρασης'}" style="color:var(--amber); border-color:rgba(245,158,11,0.45)">${it.status === 'waiting_quota' ? '⚡ Retry Now' : '🔄 Retry'}</button>`
       : '';
     const progressBar = (it.status === 'running' || it.status === 'done')
-      ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : it.progress}%"></div></div>`
+      ? `<div class="queue-progress-track"><div class="queue-progress-fill" style="width:${it.status === 'done' ? 100 : pct}%"></div></div>`
       : '';
     const errLine = (it.error && it.status !== 'running' && it.status !== 'done')
       ? `<div style="font-size:0.75rem; color:var(--rose)">${escHtml(it.error)}</div>`
       : '';
     return `
-      <div class="queue-item ${it.status}">
+      <div class="queue-item ${statusClass}">
         <div class="queue-item-top">
           <div class="queue-item-info">
             <span style="font-size:1.2rem">${it.is_comic ? '🎨' : '📄'}</span>
@@ -4241,13 +4254,13 @@ function renderBatchQueue(q) {
               <div class="queue-item-name" title="${escHtml(it.file_name)}">${escHtml(it.file_name)}</div>
               <div class="queue-item-meta">
                 <span>${modeTag}${aiTag}</span>
-                <span>→ ${it.output_format.toUpperCase()}</span>
+                <span>→ ${fmtLabel}</span>
                 <span>${escHtml(it.current_step || '')}</span>
               </div>
             </div>
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
-            <span class="queue-badge ${it.status}">${statusLabels[it.status] || it.status}${it.status === 'running' ? ` ${it.progress}%` : ''}</span>
+            <span class="queue-badge ${statusClass}">${statusLabels[it.status] || statusClass}${it.status === 'running' ? ` ${pct}%` : ''}</span>
             ${dlLink}
             ${retryBtn}
             <button type="button" class="btn-icon" data-job-id="${escHtml(it.job_id)}" onclick="removeQueueItem(this.dataset.jobId)" title="Αφαίρεση από την ουρά">✕</button>

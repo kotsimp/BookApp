@@ -8,7 +8,7 @@ import time
 import shutil
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,24 @@ def _safe_dir_size(path: Path) -> int:
     return total
 
 
+# Files that make an output folder somebody's work (such folders are restored into Session History)
+_USER_FILE_SUFFIXES = {".pdf", ".docx", ".doc", ".epub", ".cbz", ".cbr", ".txt", ".mp3", ".m4b"}
+
+
+def _holds_user_files(path: Path) -> bool:
+    return any(f.is_file() and f.suffix.lower() in _USER_FILE_SUFFIXES for f in path.rglob("*"))
+
+
+def _known_job_ids() -> Optional[set]:
+    """Job ids in the database, or None when it cannot be read (then no job folder is removed)."""
+    try:
+        from backend.database import db_get_all_job_ids
+        return db_get_all_job_ids()
+    except Exception as e:
+        logger.warning(f"Job list unavailable ({e}); job folders are left untouched.")
+        return None
+
+
 def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[str, Any]:
     """
     Cleans up obsolete temporary files:
@@ -53,15 +71,16 @@ def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[s
     2. Orphaned files in temp/extracted_pages/, chunks/, uploads/, previews/
     3. Intermediate text/image files older than max_age_hours.
 
-    Leaves active/running/queued jobs and final outputs (< 7 days) intact.
+    Never removes a job that is in Session History, or an output folder holding user files, whatever its age.
     """
     if max_age_hours is None or max_age_hours < 1:
         raise ValueError("max_age_hours must be at least 1 hour.")
 
     now = time.time()
     cutoff_temp = now - (max_age_hours * 3600)
-    cutoff_outputs = now - (7 * 24 * 3600)  # 7 days retention for outputs
+    cutoff_outputs = now - (7 * 24 * 3600)  # grace period for empty orphan output folders
     active_ids = _active_job_ids()
+    known_ids = _known_job_ids()
 
     files_deleted = 0
     bytes_freed = 0
@@ -85,6 +104,10 @@ def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[s
         for item in list(target_dir.iterdir()):
             if item.name in active_ids or (sub == "uploads" and item.name == "tmp"):
                 continue
+            if sub == "uploads" and item.is_dir():
+                # only true orphans: no job record and no outputs
+                if known_ids is None or item.name in known_ids or (TEMP_DIR / "outputs" / item.name).is_dir():
+                    continue
             try:
                 mtime = item.stat().st_mtime
                 if mtime < cutoff_temp:
@@ -131,13 +154,13 @@ def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[s
             except Exception as e:
                 errors.append(f"{item.name}: {e}")
 
-    # 3. Clean old outputs (> 7 days), skipping active jobs
+    # 3. Clean orphan output folders (> 7 days) that hold no user files
     outputs_dir = TEMP_DIR / "outputs"
-    if outputs_dir.exists():
+    if outputs_dir.exists() and known_ids is not None:
         for job_dir in list(outputs_dir.iterdir()):
-            if job_dir.is_dir() and job_dir.name not in active_ids:
+            if job_dir.is_dir() and job_dir.name not in active_ids and job_dir.name not in known_ids:
                 try:
-                    if job_dir.stat().st_mtime < cutoff_outputs:
+                    if job_dir.stat().st_mtime < cutoff_outputs and not _holds_user_files(job_dir):
                         size = _safe_dir_size(job_dir)
                         if not dry_run:
                             shutil.rmtree(job_dir, ignore_errors=True)

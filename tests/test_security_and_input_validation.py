@@ -10,6 +10,10 @@ Tests:
    negative max_chars (400), admin cleanup max_age_hours<=0 (400), case-insensitive same-lang (400),
    invalid TTS prosody rate/pitch (400).
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

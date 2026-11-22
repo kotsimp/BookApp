@@ -7,6 +7,10 @@ Tests:
 4. JobManager integration with SQLite across mock memory restarts.
 5. Temp storage cleanup routine.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

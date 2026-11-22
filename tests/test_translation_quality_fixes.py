@@ -2,6 +2,10 @@
 test_translation_quality_fixes.py - Comprehensive regression tests for translation,
 orthography, grammar, glossary, exporter, and comic balloon rendering quality fixes.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 import tempfile

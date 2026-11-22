@@ -12,6 +12,10 @@ tests/test_smart_batch_queue.py - Comprehensive Suite #29 covering:
    - DELETE /api/queue/{job_id}
    - DELETE /api/queue
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

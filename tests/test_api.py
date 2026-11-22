@@ -1,4 +1,8 @@
 # Test 6: API endpoints via HTTP
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 print("=== Test 6: API Endpoints ===")
 import sys
 from pathlib import Path

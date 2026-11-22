@@ -13,6 +13,10 @@ audio summary & synopsis (audio == final text), audio failure, duplicate/concurr
 result caching, map-reduce for long books, file-endpoint path safety, and non-interference with
 DocTranslate/Audiobook job state.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

@@ -1,4 +1,8 @@
 # Test 3: Translation engine (GTX direct + fallback)
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 print("=== Test 3: Translator Engine ===")
 import sys
 import unittest.mock as mock

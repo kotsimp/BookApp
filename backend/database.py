@@ -13,7 +13,7 @@ import sqlite3
 import threading
 import logging
 from pathlib import Path
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -214,17 +214,8 @@ def db_clear_all_jobs() -> int:
 
 
 def db_delete_test_jobs() -> List[str]:
-    """Deletes all test-generated jobs from the SQLite jobs table and returns their job IDs."""
-    test_prefixes = (
-        "test_", "reg_", "mock_", "sample_", "q_iso_",
-        "cover_check", "sse_test", "sse_thread", "cancel_guard",
-        "scanned_only", "book_", "book", "path_", "direct_text",
-        "temp_", "stress_", "bench_"
-    )
-    exact_matches = (
-        "sample.pdf", "sample.txt", "book.pdf", "book.txt", "active.pdf",
-        "direct_text.txt", "direct_text"
-    )
+    """Deletes test-generated jobs (test sandbox only) from the SQLite jobs table and returns their job IDs."""
+    from backend.job_manager import is_test_job_identifier
     deleted_ids: List[str] = []
 
     with _db_lock:
@@ -235,13 +226,7 @@ def db_delete_test_jobs() -> List[str]:
             cursor.execute("SELECT job_id, file_name FROM jobs")
             rows = cursor.fetchall()
             for r in rows:
-                fname = (r["file_name"] or "").strip().lower()
-                jid = (r["job_id"] or "").strip().lower()
-                if (
-                    any(fname.startswith(p) for p in test_prefixes)
-                    or fname in exact_matches
-                    or any(jid.startswith(p) for p in test_prefixes)
-                ):
+                if is_test_job_identifier(r["job_id"], r["file_name"]):
                     deleted_ids.append(r["job_id"])
 
             if deleted_ids:
@@ -273,18 +258,12 @@ def db_reset_orphaned_running_jobs() -> int:
             conn.close()
 
 
-def db_cleanup_old_jobs(max_age_seconds: int = 86400 * 7) -> int:
-    """Deletes job records older than max_age_seconds (default 7 days)."""
+def db_get_all_job_ids() -> Set[str]:
+    """All persisted job ids. Raises on database errors, so cleanup never mistakes 'unknown' for 'no jobs'."""
     with _db_lock:
         conn = _get_connection()
         try:
-            cutoff = time.time() - max_age_seconds
-            with conn:
-                res = conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
-                return res.rowcount
-        except Exception as e:
-            logger.warning(f"Error cleaning old jobs from DB: {e}")
-            return 0
+            return {r[0] for r in conn.execute("SELECT job_id FROM jobs").fetchall()}
         finally:
             conn.close()
 

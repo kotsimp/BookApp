@@ -4,6 +4,10 @@ tests/test_scanned_comic_and_autodetect.py - End-to-End Verification Suite for:
 2. Scanned Image-Only Graphic Novel PDF translation via Gemini Vision (opaque balloon erasure + Greek typesetting).
 3. Novel EPUB / PDF translation with AI Polish enabled (verifying full Greek output, never left untranslated in English).
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

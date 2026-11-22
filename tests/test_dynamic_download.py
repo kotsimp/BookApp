@@ -1,3 +1,7 @@
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 import sys
 import os
 from pathlib import Path
@@ -111,12 +115,13 @@ try:
     ab_out_dir = OUTPUT_DIR / ab_job.job_id
     ab_out_dir.mkdir(parents=True, exist_ok=True)
     mock_mp3 = ab_out_dir / "test_audio.mp3"
-    mock_mp3.write_bytes(b'ID3\x03\x00\x00\x00\x00\x00\x00' + b'\xff\xfb\x90\x00' * 50)
+    mock_mp3.write_bytes((b'\xff\xfb\x90\x64' + b'\x00' * 413) * 50)  # decodable silent MP3 frames
     update_job(ab_job.job_id, status="done", output_format="mp3")
     try:
         with urllib.request.urlopen(f'{API}/download/{ab_job.job_id}?format=m4b') as r:
             data = r.read()
             assert r.status == 200 and len(data) > 0
+            assert data[4:8] == b'ftyp', 'M4B must be a real MP4 container'
             assert 'audio/mp4' in r.headers.get('Content-Type', '')
             print('Dynamic M4B download:', r.headers.get('Content-Type'), len(data))
     finally:

@@ -693,7 +693,7 @@ async def refine_translation_output(
                        quality_score_before=score_before, quality_score_after=score_before,
                        refined_char_count=len(original))
 
-    if is_rich and not allow_reexport:
+    if not allow_reexport:
         # Format-preserved document: do not touch either file (keeps txt and document in sync).
         logger.info(f"[{job_id}] Final refinement: {len(corrections)} fixable issue group(s) found in a "
                     f"format-preserved {fmt.upper()}; reported only, files left untouched.")
@@ -781,7 +781,7 @@ def inspect_audiobook_quality(
     elif ext in ("m4b", "m4a", "mp4"):
         valid_header = b"ftyp" in head[:12]
         if not valid_header and _looks_mp3(head):
-            # tts_engine.export_audiobook_m4b falls back to a tagged MP3 copy when ffmpeg is unavailable
+            # files written by older versions, which saved a tagged MP3 copy when ffmpeg was unavailable
             valid_header = True
             decode_as = "mp3"
             issues.append(RefinementIssue("audio_header", "M4B file contains an MP3 stream (ffmpeg unavailable); playable but has no chapters.",

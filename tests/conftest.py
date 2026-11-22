@@ -3,6 +3,10 @@ conftest.py - Pytest fixtures ensuring automatic test job isolation and cleanup.
 Purges all test-generated jobs from in-memory cache, SQLite database, and disk directories
 before and after test sessions and test cases so Session History remains pristine.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 from backend.job_manager import cleanup_test_jobs
 

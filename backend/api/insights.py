@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend.api.common import OUTPUT_DIR, MIME_MAP, _validate_job_id, _job_output_dir
+from backend.api.common import OUTPUT_DIR, MIME_MAP, _validate_job_id, _job_output_dir, _validate_language
 from backend.job_manager import get_job
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ async def insights_export(req: InsightsExportRequest):
     from backend.book_insights import load_insight, export_insight, InsightsError
     _insights_job(req.job_id)
     insight_type = _insights_resolve_type(req.insight_type)
-    rec = load_insight(_job_output_dir(req.job_id), insight_type, (req.language or "").lower())
+    rec = load_insight(_job_output_dir(req.job_id), insight_type, _validate_language(req.language))
     if not rec:
         raise _insights_http_error(InsightsError("not_generated", http_status=404))
     try:
@@ -195,7 +195,7 @@ async def insights_audio(req: InsightsAudioRequest):
     from backend.book_insights import load_insight, synthesize_insight_audio, start_task, InsightsError
     _insights_job(req.job_id)
     insight_type = _insights_resolve_type(req.insight_type)
-    lang = (req.language or "").lower()
+    lang = _validate_language(req.language)
     out_dir = _job_output_dir(req.job_id)
     rec = load_insight(out_dir, insight_type, lang)
     if not rec:

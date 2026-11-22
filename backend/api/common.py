@@ -2,6 +2,7 @@
 backend/api/common.py - Paths, MIME types and job-id helpers shared by backend.main and the API routers.
 """
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +30,31 @@ MIME_MAP = {
     ".cbz": "application/vnd.comicbook+zip",
     ".cbr": "application/vnd.comicbook-rar",
 }
+
+
+OUTPUT_FORMATS = {"txt", "docx", "doc", "pdf", "epub", "cbz", "cbr"}
+LAYOUT_MODES = {"standard", "literature", "poetry", "comic", "graphic_novel"}
+READING_DIRECTIONS = {"ltr", "rtl"}
+QUOTA_BEHAVIORS = {"wait", "fallback"}
+_LANGUAGE_RE = re.compile(r"[a-z][a-z-]{0,19}")
+
+
+def _validate_language(value: Optional[str], field: str = "language") -> str:
+    """Languages become part of output file names, so only plain words are accepted."""
+    lang = (value or "").strip().lower()
+    if not _LANGUAGE_RE.fullmatch(lang):
+        raise HTTPException(400, f"Invalid {field}.")
+    return lang
+
+
+def _validate_choice(value: Optional[str], allowed: set, field: str) -> Optional[str]:
+    """Normalised value from `allowed`; None when not provided."""
+    v = (value or "").strip().lower()
+    if not v:
+        return None
+    if v not in allowed:
+        raise HTTPException(400, f"Unsupported {field}.")
+    return v
 
 
 def _validate_job_id(job_id: Optional[str]) -> str:

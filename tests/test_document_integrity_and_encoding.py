@@ -7,6 +7,10 @@ Tests:
 4. Accurate page count estimation across supported formats.
 5. Cover extraction resilience across valid and malformed files.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

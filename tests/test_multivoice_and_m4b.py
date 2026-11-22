@@ -4,8 +4,12 @@ Tests:
 1. Multi-voice speaker tag parsing ([Nestoras]: ..., [Athina]: ...).
 2. Automatic dialogue alternation (narrator vs characters).
 3. ID3v2 & cover art metadata tagging via mutagen.
-4. M4B container export and fallback tagging.
+4. Real M4B (MP4/AAC) container export.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")
@@ -108,13 +112,13 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
 
         print("   ID3v2 & cover tagging: OK")
 
-    def test_m4b_export_fallback(self):
-        print("-> 4. Testing M4B Container Export & Fallback Tagging...")
+    def test_m4b_export_is_real_mp4(self):
+        print("-> 4. Testing M4B Container Export...")
         import asyncio
         tmp_dir = Path("temp/test_m4b_tmp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
         sample_mp3 = tmp_dir / "source.mp3"
-        sample_mp3.write_bytes(b"\xFF\xFB\x90\x64" + b"\x00" * 1500)
+        sample_mp3.write_bytes((b"\xFF\xFB\x90\x64" + b"\x00" * 413) * 50)  # decodable silent MP3 frames
         target_m4b = tmp_dir / "book.m4b"
 
         res = asyncio.run(export_audiobook_m4b(
@@ -124,8 +128,8 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
             author="Author Name",
         ))
         self.assertTrue(Path(res).exists())
-        self.assertGreater(Path(res).stat().st_size, 0)
-        print("   M4B export & fallback tagging: OK")
+        self.assertEqual(Path(res).read_bytes()[4:8], b"ftyp")
+        print("   M4B export: OK")
 
     def test_m4b_on_demand_download_endpoint(self):
         print("-> 5. Testing On-Demand M4B Download Endpoint...")
@@ -138,7 +142,7 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
         out_dir = OUTPUT_DIR / job.job_id
         out_dir.mkdir(parents=True, exist_ok=True)
         sample_mp3 = out_dir / "test_audio.mp3"
-        sample_mp3.write_bytes(b"\xFF\xFB\x90\x64" + b"\x00" * 1500)
+        sample_mp3.write_bytes((b"\xFF\xFB\x90\x64" + b"\x00" * 413) * 50)  # decodable silent MP3 frames
         update_job(job.job_id, status="done", output_format="mp3")
 
         mock_scope = {

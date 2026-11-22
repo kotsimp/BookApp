@@ -10,6 +10,10 @@ Verifies automated remediation of:
 6. Erroneously translated URLs restoration and URL path protection.
 7. Seamless integration in format_greek_typography, sanitize_ai_output, and export_text pipelines.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 import unittest

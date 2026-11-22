@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from backend.api.common import (  # noqa: E402
     BASE_DIR, TEMP_DIR, UPLOAD_DIR, OUTPUT_DIR, MIME_MAP, _validate_job_id, _job_output_dir,
+    OUTPUT_FORMATS, LAYOUT_MODES, READING_DIRECTIONS, QUOTA_BEHAVIORS, _validate_choice, _validate_language,
 )
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
@@ -30,8 +31,12 @@ from backend.job_manager import (
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
-from backend.tts_engine import generate_audiobook, get_available_voices, export_audiobook_m4b
+from backend.tts_engine import (
+    generate_audiobook, get_available_voices, export_audiobook_m4b, find_ffmpeg, is_mp4_file,
+    M4BExportError, M4BUnavailableError,
+)
 from backend.exporter import export_text
+from backend import format_sync
 from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
 from backend.ai_polisher import POLISH_STATUS
 # ---------------------------------------------------------------------------
@@ -430,6 +435,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     tgt_lang = (req.target_lang or "").strip().lower()
     if not src_lang or not tgt_lang or src_lang == tgt_lang:
         raise HTTPException(400, "Source and target languages must be different.")
+    _validate_language(src_lang, "source_lang")
+    _validate_language(tgt_lang, "target_lang")
 
     output_dir = _job_output_dir(req.job_id)
     stem = Path(job.file_name).stem
@@ -446,7 +453,7 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
             output_format = "pdf"
     if output_format not in {"txt", "docx", "doc", "pdf", "epub", "cbz", "cbr"}:
         raise HTTPException(400, f"Unsupported output format '{output_format}'.")
-    layout_mode = (getattr(req, "layout_mode", "standard") or "standard").strip().lower()
+    layout_mode = _validate_choice(req.layout_mode, LAYOUT_MODES, "layout_mode") or "standard"
     reading_direction = (getattr(req, "reading_direction", "ltr") or "ltr").strip().lower()
     if reading_direction not in {"ltr", "rtl"}:
         reading_direction = "ltr"
@@ -722,6 +729,9 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
+        # Remember how this file was made: later edits and exports must never regenerate a format-preserved one
+        format_sync.mark_output(final_path, preserved=not refine_reexportable)
+
         if getattr(job, "max_quality", False) and not is_comic_flow:
             if not (ai_polish and resolved_key):
                 update_job(job_id, revision_report={"status": "skipped", "reason": "requires_ai_polish_and_key"})
@@ -807,7 +817,7 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
     if req.pitch is not None and req.pitch != "" and not re.match(r"^[+-]?\d{1,3}Hz$", req.pitch.strip()):
         raise HTTPException(400, f"Invalid prosody pitch '{req.pitch}'. Expected format like '-2Hz' or '+0Hz'.")
 
-    lang_norm = (req.language or "greek").strip().lower()
+    lang_norm = _validate_language(req.language or "greek")
     output_dir = _job_output_dir(req.job_id)
     stem = Path(job.file_name).stem
     output_path = str(output_dir / f"{stem}_audiobook_{lang_norm}.mp3")
@@ -1043,6 +1053,14 @@ async def job_status(job_id: str):
 
 
 
+def _export_from_text(text: str, out_dir: Path, fmt: str, base_name: str, **options) -> Path:
+    """export_text for the edit/cover/download paths: records the result as generated, so it can be re-exported later."""
+    path = export_text(text, out_dir, fmt, base_name, **options)
+    if Path(path).suffix.lower() in (".docx", ".epub"):
+        format_sync.mark_output(path, preserved=False)
+    return path
+
+
 @app.api_route("/api/download/{job_id}", methods=["GET", "HEAD"])
 async def download_output(request: Request, job_id: str, format: Optional[str] = None, layout: Optional[str] = None):
     """
@@ -1056,6 +1074,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
     job = get_job(job_id)
     out_dir = OUTPUT_DIR / job_id
     out_path = None
+    layout = _validate_choice(layout, LAYOUT_MODES, "layout")
     active_layout = (layout or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
     layout_changed = bool(layout and job and layout.lower() != (getattr(job, "layout_mode", "standard") or "standard").lower())
 
@@ -1085,12 +1104,20 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
         if not is_comic_job and fmt in ("cbz", "cbr"):
             raise HTTPException(400, f"Format '{fmt.upper()}' is only supported for Graphic Novels / Comics.")
 
-        # 1. Check if a file in the requested format already exists (unless layout changed for text documents)
-        if out_dir.exists() and (not layout_changed or fmt in ("mp3", "m4b")):
+        # 1. Check if a file in the requested format already exists (unless layout changed for text documents).
+        #    A format-preserved file is always served as is: another layout would mean rebuilding it from plain text.
+        if out_dir.exists():
+            keep = await asyncio.to_thread(format_sync.protected_files, job, out_dir) if (layout_changed or fmt == "doc") else set()
+            if fmt == "doc" and any(f.suffix.lower() == ".docx" for f in keep):
+                fmt = "docx"
             matching = [
                 f for f in out_dir.iterdir()
                 if f.is_file() and f.suffix.lower() == f".{fmt}" and not f.name.endswith("_original.txt")
+                and (not layout_changed or fmt in ("mp3", "m4b") or f in keep)
             ]
+            if fmt == "m4b":
+                # older versions saved MP3 data under the .m4b name when ffmpeg was missing: convert those again
+                matching = [f for f in matching if is_mp4_file(f)]
             if matching:
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
@@ -1155,14 +1182,19 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                             chapters = json.loads(ch_file.read_text(encoding="utf-8")) or None
                         except Exception:
                             chapters = None
-                    await export_audiobook_m4b(
-                        str(src_mp3),
-                        str(target_m4b),
-                        title=job.file_name if job else "Audiobook",
-                        author="BookApp",
-                        cover_image_path=cov_img,
-                        chapters=chapters,
-                    )
+                    try:
+                        await export_audiobook_m4b(
+                            str(src_mp3),
+                            str(target_m4b),
+                            title=job.file_name if job else "Audiobook",
+                            author="BookApp",
+                            cover_image_path=cov_img,
+                            chapters=chapters,
+                        )
+                    except M4BUnavailableError as e:
+                        raise HTTPException(501, str(e))
+                    except M4BExportError as e:
+                        raise HTTPException(500, str(e))
                     out_path = target_m4b
                     if job:
                         update_job(job_id, output_path=str(out_path), output_format="m4b")
@@ -1178,7 +1210,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                     txt_content = txt_file.read_text(encoding="utf-8")
                     base_name = txt_file.stem
                     try:
-                        out_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=active_layout)
+                        out_path = await asyncio.to_thread(_export_from_text, txt_content, out_dir, fmt, base_name, layout=active_layout)
                     except ValueError as ve:
                         raise HTTPException(400, str(ve))
                     if job:
@@ -1191,7 +1223,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
     if not out_path:
         if job and job.output_path:
             p = Path(job.output_path)
-            if p.exists():
+            if p.exists() and (p.suffix.lower() != ".m4b" or is_mp4_file(p)):
                 out_path = p
 
         if not out_path and out_dir.exists():
@@ -1199,6 +1231,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                 f for f in out_dir.iterdir()
                 if f.is_file() and f.suffix.lower() in [".docx", ".pdf", ".epub", ".mp3", ".m4b", ".cbz", ".cbr", ".txt"]
                 and not f.name.endswith("_original.txt")
+                and (f.suffix.lower() != ".m4b" or is_mp4_file(f))
             ]
             if files:
                 preferred = [f for f in files if f.suffix.lower() in [".cbz", ".cbr", ".pdf", ".epub", ".docx", ".mp3", ".m4b"]]
@@ -1270,20 +1303,23 @@ async def upload_cover_image(job_id: str, file: UploadFile = File(...)):
 
     # Invalidate older exported PDF/EPUB/DOCX so re-download reflects new cover
     job = get_job(job_id)
+    preserved = await asyncio.to_thread(format_sync.protected_files, job, out_dir)
     txt_files = list(out_dir.glob("*_translated_*.txt")) or [
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
-    if txt_files:
+    if txt_files and not format_sync.is_comic_output(job, out_dir):
         txt_content = txt_files[0].read_text(encoding="utf-8")
         base_name = txt_files[0].stem
         layout = (getattr(job, "layout_mode", "literature") if job else "literature") or "literature"
         for fmt_ext in (".pdf", ".epub", ".docx"):
+            if out_dir / f"{base_name}{fmt_ext}" in preserved:
+                continue
             try:
-                await asyncio.to_thread(export_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=jpg_bytes)
+                await asyncio.to_thread(_export_from_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=jpg_bytes)
             except Exception:
                 pass
 
-    return {"status": "ok", "job_id": job_id, "size": len(jpg_bytes)}
+    return {"status": "ok", "job_id": job_id, "size": len(jpg_bytes), "preserved_files": sorted(f.name for f in preserved)}
 
 
 @app.delete("/api/cover/{job_id}")
@@ -1303,14 +1339,16 @@ async def delete_cover_image(job_id: str):
         txt_files = list(out_dir.glob("*_translated_*.txt")) or [
             f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
         ]
-        if txt_files:
+        if txt_files and not format_sync.is_comic_output(job, out_dir):
+            preserved = await asyncio.to_thread(format_sync.protected_files, job, out_dir)
             txt_content = txt_files[0].read_text(encoding="utf-8")
             base_name = txt_files[0].stem
             layout = (getattr(job, "layout_mode", "standard") if job else "standard") or "standard"
             for fmt_ext in (".pdf", ".epub", ".docx"):
-                if (out_dir / f"{base_name}{fmt_ext}").exists():
+                target = out_dir / f"{base_name}{fmt_ext}"
+                if target.exists() and target not in preserved:
                     try:
-                        await asyncio.to_thread(export_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=None)
+                        await asyncio.to_thread(_export_from_text, txt_content, out_dir, fmt_ext.lstrip("."), base_name, layout=layout, cover_image=None)
                     except Exception:
                         pass
     return {"status": "deleted", "job_id": job_id}
@@ -1514,6 +1552,30 @@ async def get_job_text(job_id: str):
     }
 
 
+async def _save_preserving_format(job, txt_file: Path, text: str) -> tuple[set, list]:
+    """Saves edited text, carrying the edit into format-preserved documents. Returns (preserved files, updated names)."""
+    preserved = await asyncio.to_thread(format_sync.protected_files, job, txt_file.parent)
+    if format_sync.is_comic_output(job, txt_file.parent):
+        txt_file.write_text(text, encoding="utf-8")  # balloons are part of the artwork: only the text copy changes
+        return preserved, []
+    try:
+        updated = await asyncio.to_thread(format_sync.sync_text, txt_file, text, preserved)
+    except format_sync.FormatSyncError as e:
+        logger.warning(f"[{txt_file.parent.name}] Edit not applied to format-preserved document: {e}")
+        raise HTTPException(409, (
+            "Οι αλλαγές δεν μπόρεσαν να εφαρμοστούν στο έγγραφο χωρίς απώλεια μορφοποίησης, γι' αυτό δεν άλλαξε κανένα "
+            "αρχείο. Αν το έγγραφο είναι ανοιχτό σε άλλο πρόγραμμα, κλείστε το και δοκιμάστε ξανά. Αλλιώς κατεβάστε το "
+            "και διορθώστε το απευθείας."
+        ))
+    return preserved, updated
+
+
+def _translation_text_path(job, out_dir: Path, fallback_stem: str) -> Path:
+    stem = Path(job.file_name).stem if job else fallback_stem
+    tgt_lang = re.sub(r"[^a-z-]", "", ((getattr(job, "target_lang", "") if job else "") or "").lower()) or "greek"
+    return out_dir / f"{stem}_translated_{tgt_lang}.txt"
+
+
 @app.put("/api/jobs/{job_id}/text")
 async def update_job_text(job_id: str, req: UpdateTextRequest):
     """Save user edits to the translated text and re-export current outputs."""
@@ -1526,35 +1588,40 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     txt_files = list(out_dir.glob("*_translated_*.txt")) or [
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
-    if not txt_files:
-        stem = Path(job.file_name).stem if job else job_id
-        tgt_lang = (getattr(job, "target_lang", "greek") if job else "greek") or "greek"
-        txt_file = out_dir / f"{stem}_translated_{tgt_lang}.txt"
-    else:
-        txt_file = txt_files[0]
+    txt_file = txt_files[0] if txt_files else _translation_text_path(job, out_dir, job_id)
 
-    # Save edited text
-    txt_file.write_text(req.translated_text, encoding="utf-8")
+    # Save edited text (and patch format-preserved documents in place)
+    preserved, updated = await _save_preserving_format(job, txt_file, req.translated_text)
     base_name = txt_file.stem
+
+    if format_sync.is_comic_output(job, out_dir):
+        return {"status": "saved", "job_id": job_id, "output_path": str(txt_file), "artwork_unchanged": True}
 
     # Re-export active format if job has a text-exportable format
     fmt = ((job.output_format if job else "docx") or "docx").lower().lstrip(".")
     if fmt not in {"txt", "docx", "doc", "pdf", "epub"}:
         fmt = "docx"
+    if fmt == "doc" and out_dir / f"{base_name}.docx" in preserved:
+        fmt = "docx"
     layout = (getattr(job, "layout_mode", "standard") if job else "standard") or "standard"
-    export_path = await asyncio.to_thread(export_text, req.translated_text, out_dir, fmt, base_name, layout=layout)
+    export_path = out_dir / f"{base_name}.{fmt}"
+    if export_path not in preserved:
+        export_path = await asyncio.to_thread(_export_from_text, req.translated_text, out_dir, fmt, base_name, layout=layout)
     if job:
         update_job(job_id, output_path=str(export_path), output_format=fmt)
 
     # Invalidate older non-txt exported files so download endpoint serves the new edited version
     for f in list(out_dir.iterdir()):
-        if f.is_file() and f.suffix.lower() in [".pdf", ".epub", ".docx"] and f.name != export_path.name:
+        ext = f.suffix.lower()
+        if f.is_file() and ext in [".pdf", ".epub", ".docx"] and f.name != export_path.name:
+            if f in preserved or out_dir / f"{base_name}{ext}" in preserved:
+                continue
             try:
-                await asyncio.to_thread(export_text, req.translated_text, out_dir, f.suffix.lower().lstrip("."), base_name, layout=layout)
+                await asyncio.to_thread(_export_from_text, req.translated_text, out_dir, ext.lstrip("."), base_name, layout=layout)
             except Exception:
                 pass
 
-    return {"status": "saved", "job_id": job_id, "output_path": str(export_path)}
+    return {"status": "saved", "job_id": job_id, "output_path": str(export_path), "updated_in_place": updated}
 
 
 class SettingsRequest(BaseModel):
@@ -1588,6 +1655,7 @@ async def get_app_settings():
         "pool": pool_status,
         "default_quota_behavior": quota_behavior,
         "final_refinement_enabled": refinement_on,
+        "m4b_available": bool(find_ffmpeg()),
         "has_gemini_key": has_key,
         "default_engine": "gemini" if has_key else "free",
     }
@@ -1699,6 +1767,7 @@ async def get_polish_status(job_id: str):
 @app.post("/api/polish")
 async def polish_translation(req: PolishRequest):
     """Polish and proofread document or text directly using Gemini API (with or without prior translation)."""
+    req.layout_mode = _validate_choice(req.layout_mode, LAYOUT_MODES, "layout_mode")
     if not req.job_id:
         job = create_job("", "direct_text.txt", "txt")
         out_dir = OUTPUT_DIR / job.job_id
@@ -1844,7 +1913,6 @@ async def polish_translation(req: PolishRequest):
         raise HTTPException(500, f"AI Polishing failed: {str(e)}")
 
     # Update or create output files on disk
-    stem = Path(job.file_name).stem if job else "polished_document"
     tgt_lang = (getattr(job, "target_lang", "greek") if job else "greek") or "greek"
 
     # Automatic Final Output Refinement Stage for Polish
@@ -1861,23 +1929,32 @@ async def polish_translation(req: PolishRequest):
     except Exception as ref_ex:
         logger.warning(f"Refinement during standalone polish warning: {ref_ex}")
 
-    txt_file = out_dir / f"{stem}_translated_{tgt_lang}.txt"
-    txt_file.write_text(polished, encoding="utf-8")
+    txt_file = _translation_text_path(job, out_dir, "polished_document")
+    preserved, _updated = await _save_preserving_format(job, txt_file, polished)
     base_name = txt_file.stem
     fmt = ((job.output_format if job else "docx") or "docx").lower().lstrip(".")
-    if fmt not in {"txt", "docx", "doc", "pdf", "epub"}:
-        fmt = "docx"
     layout = (req.layout_mode or (getattr(job, "layout_mode", "standard") if job else "standard") or "standard").lower()
-    export_path = await asyncio.to_thread(export_text, polished, out_dir, fmt, base_name, layout=layout)
+    if format_sync.is_comic_output(job, out_dir):
+        # artwork outputs stay exactly as they are
+        export_path = Path(job.output_path) if job and job.output_path else txt_file
+        layout = "comic"
+    else:
+        if fmt not in {"txt", "docx", "doc", "pdf", "epub"}:
+            fmt = "docx"
+        if fmt == "doc" and out_dir / f"{base_name}.docx" in preserved:
+            fmt = "docx"
+        export_path = out_dir / f"{base_name}.{fmt}"
+        if export_path not in preserved:
+            export_path = await asyncio.to_thread(_export_from_text, polished, out_dir, fmt, base_name, layout=layout)
 
-    # Refresh other standard formats on-demand (without redundantly re-exporting fmt)
-    for other_fmt in ("pdf", "epub", "docx"):
-        if other_fmt == fmt:
-            continue
-        try:
-            await asyncio.to_thread(export_text, polished, out_dir, other_fmt, base_name, layout=layout)
-        except Exception:
-            pass
+        # Refresh other standard formats on-demand (without redundantly re-exporting fmt)
+        for other_fmt in ("pdf", "epub", "docx"):
+            if other_fmt == fmt or out_dir / f"{base_name}.{other_fmt}" in preserved:
+                continue
+            try:
+                await asyncio.to_thread(_export_from_text, polished, out_dir, other_fmt, base_name, layout=layout)
+            except Exception:
+                pass
 
     if job:
         update_job(
@@ -2065,6 +2142,12 @@ async def get_batch_queue():
 async def add_batch_queue_item(req: QueueAddRequest):
     """Adds an uploaded job to the Smart Batch Queue. Auto-starts if auto_start is enabled."""
     from backend.queue_manager import add_to_queue, get_queue_state, start_queue
+    req.source_lang = _validate_language(req.source_lang or "english", "source_lang")
+    req.target_lang = _validate_language(req.target_lang or "greek", "target_lang")
+    req.output_format = _validate_choice(req.output_format.strip().lstrip("."), OUTPUT_FORMATS, "output_format") or "pdf"
+    req.layout_mode = _validate_choice(req.layout_mode, LAYOUT_MODES, "layout_mode") or "standard"
+    req.reading_direction = _validate_choice(req.reading_direction, READING_DIRECTIONS, "reading_direction") or "ltr"
+    req.quota_behavior = _validate_choice(req.quota_behavior, QUOTA_BEHAVIORS, "quota_behavior") or ""
     try:
         add_to_queue(
             job_id=req.job_id,
@@ -2117,6 +2200,14 @@ async def start_batch_queue(req: Optional[QueueStartRequest] = None):
     """
     from backend.queue_manager import start_queue, apply_settings_to_queued_items
     if req is not None:
+        if req.source_lang:
+            req.source_lang = _validate_language(req.source_lang, "source_lang")
+        if req.target_lang:
+            req.target_lang = _validate_language(req.target_lang, "target_lang")
+        req.output_format = _validate_choice((req.output_format or "").strip().lstrip("."), OUTPUT_FORMATS, "output_format")
+        req.layout_mode = _validate_choice(req.layout_mode, LAYOUT_MODES, "layout_mode")
+        req.reading_direction = _validate_choice(req.reading_direction, READING_DIRECTIONS, "reading_direction")
+        req.quota_behavior = _validate_choice(req.quota_behavior, QUOTA_BEHAVIORS, "quota_behavior")
         try:
             apply_settings_to_queued_items(
                 source_lang=req.source_lang,

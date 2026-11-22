@@ -6,6 +6,10 @@ open; one-time code -> HttpOnly cookie -> access; code reuse and expiry rejected
 device list and revocation (revoked cookie stops working); only token hashes stored; loopback trust on/off.
 Uses an in-process server on a private port; user settings are snapshotted and restored.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

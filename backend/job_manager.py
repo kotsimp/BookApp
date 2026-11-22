@@ -2,6 +2,7 @@
 Job Manager - tracks in-memory job state for all translation and audiobook tasks.
 """
 
+import os
 import uuid
 import time
 import json
@@ -442,7 +443,7 @@ def list_jobs() -> list[Job]:
     # Check SQLite database first
     try:
         from backend.database import db_list_jobs
-        db_rows = db_list_jobs(limit=100)
+        db_rows = db_list_jobs(limit=-1)  # no limit: history is kept until the user deletes it
         for r in db_rows:
             jid = r["job_id"]
             if jid not in _jobs:
@@ -466,9 +467,10 @@ def list_jobs() -> list[Job]:
 
 
 def cleanup_old_jobs(max_age_seconds: int = 86400):
-    """Remove stale non-running in-memory jobs, old DB records, and temp upload/output directories."""
-    import shutil
-
+    """
+    Startup housekeeping. Never deletes a job: records, uploads and outputs stay until the user deletes them.
+    Evicts stale jobs from memory (SQLite reloads them), resets orphaned running jobs and removes scratch files.
+    """
     now = time.time()
     active_ids = {
         jid for jid, j in list(_jobs.items())
@@ -482,10 +484,9 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
         _jobs.pop(jid, None)
 
     try:
-        from backend.database import db_cleanup_old_jobs, db_reset_orphaned_running_jobs
+        from backend.database import db_reset_orphaned_running_jobs
         if not _active_tasks:
             db_reset_orphaned_running_jobs()
-        db_cleanup_old_jobs(max_age_seconds)
     except Exception:
         pass
 
@@ -495,24 +496,19 @@ def cleanup_old_jobs(max_age_seconds: int = 86400):
     except Exception:
         pass
 
-    base_temp = Path(__file__).resolve().parent.parent / "temp"
-    output_max_age = max(max_age_seconds, 7 * 86400)
-    for sub, age_limit in (("uploads", max_age_seconds), ("outputs", output_max_age)):
-        root = base_temp / sub
-        if not root.exists():
-            continue
-        for entry in root.iterdir():
-            if not entry.is_dir() or entry.name == "tmp" or entry.name in active_ids:
-                continue
-            try:
-                if now - entry.stat().st_mtime > age_limit:
-                    shutil.rmtree(str(entry), ignore_errors=True)
-            except Exception:
-                pass
+
+def is_test_mode() -> bool:
+    """True only inside the sandbox created by run_all_tests.py (throw-away database and temp folders)."""
+    return os.environ.get("BOOKAPP_TEST_MODE") == "1"
 
 
 def is_test_job_identifier(job_id: Optional[str], file_name: Optional[str] = None) -> bool:
-    """Returns True if the job ID or filename matches test-generated job naming patterns."""
+    """
+    Returns True if the job ID or filename matches test-generated job naming patterns, in the test sandbox only.
+    Outside it nothing is a test job: "Bookkeeping.pdf" or "test_results.docx" are ordinary user documents.
+    """
+    if not is_test_mode():
+        return False
     test_prefixes = (
         "test_", "reg_", "mock_", "sample_", "q_iso_",
         "cover_check", "sse_test", "sse_thread", "cancel_guard",
@@ -538,7 +534,9 @@ def is_test_job_identifier(job_id: Optional[str], file_name: Optional[str] = Non
 
 
 def cleanup_test_jobs() -> list[str]:
-    """Purges all test-generated jobs from in-memory cache, SQLite database, and disk directories."""
+    """Purges test-generated jobs from memory, SQLite and disk. Does nothing outside the test sandbox."""
+    if not is_test_mode():
+        return []
     import shutil
 
     deleted_ids: list[str] = []

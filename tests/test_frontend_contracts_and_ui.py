@@ -17,6 +17,10 @@ Layer B (Real Node.js VM Runtime DOM & State Behavior Tests):
 11. refreshHistory() handles HTTP 500 JSON error without throwing TypeError: jobs.map is not a function.
 12. connectSSE() tolerates malformed JSON event payloads without throwing.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

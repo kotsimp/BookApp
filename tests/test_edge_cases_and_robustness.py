@@ -8,6 +8,10 @@ Tests:
 5. Job and Settings management with edge cases (cancellation toggling, non-existent jobs, empty values).
 6. Cover extraction resilience on invalid / corrupted files.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

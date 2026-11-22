@@ -88,19 +88,15 @@ def _resolve_job_output_file(job_id: str, file_path: Optional[str], suffixes: tu
     return cands[0] if cands else None
 
 
-def _job_output_is_reexportable(job) -> bool:
-    """False for outputs produced by format-preserving flows (comics, in-place DOCX/EPUB)."""
+def _job_output_is_reexportable(job, text_path: Path) -> bool:
+    """False when the job has format-preserved outputs (comics, in-place DOCX/EPUB, with or without AI)."""
     if not job:
         return False
-    fmt = (getattr(job, "output_format", "") or "").lower()
-    ftype = (getattr(job, "file_type", "") or "").lower()
-    if (getattr(job, "layout_mode", "") or "").lower() in ("comic", "graphic_novel") or fmt in ("cbz", "cbr"):
+    from backend.format_sync import is_comic_output, protected_files
+    out_dir = text_path.parent
+    if is_comic_output(job, out_dir):
         return False
-    if not getattr(job, "ai_polish", False) and (
-        (ftype == "docx" and fmt in ("docx", "doc")) or (ftype == "epub" and fmt == "epub")
-    ):
-        return False
-    return True
+    return not any(f.stem == text_path.stem for f in protected_files(job, out_dir))
 
 
 @router.post("/api/refine")
@@ -187,7 +183,7 @@ async def refine_output_endpoint(req: RefinementRequest):
         layout_mode=req.layout_mode or getattr(job, "layout_mode", "standard") or "standard",
         output_format=req.output_format or job.output_format,
         enabled=True,
-        allow_reexport=_job_output_is_reexportable(job),
+        allow_reexport=_job_output_is_reexportable(job, text_p),
     )
     update_job(req.job_id, refinement_report=build_refinement_report(res_trans))
     return {"status": res_trans.status, "mode": "translation", "result": asdict(res_trans)}

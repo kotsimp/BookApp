@@ -7,6 +7,10 @@ Tests:
 4. Punctuation spacing and Greek question mark (;).
 5. Automatic genre detection across poetry, technical, formal, literature, and comics.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

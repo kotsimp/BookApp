@@ -11,6 +11,10 @@ test_audit_regressions.py - Regression guards for bugs found in the full codebas
 5. An undefined name (DailyQuotaExhaustedError) in a comic except-clause turned any AI-polish error into NameError.
    Guarded generically: no undefined names anywhere in the backend (pyflakes, when available).
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")
@@ -137,6 +141,7 @@ class TestCorsPolicy(unittest.TestCase):
 class TestDependencyAndStaticIntegrity(unittest.TestCase):
 
     IMPORT_TO_PACKAGE = {
+        "imageio_ffmpeg": "imageio-ffmpeg",
         "PIL": "pillow", "docx": "python-docx", "bs4": "beautifulsoup4", "ebooklib": "ebooklib",
         "edge_tts": "edge-tts", "deep_translator": "deep-translator", "pymupdf": "pymupdf", "fitz": "pymupdf",
         "mutagen": "mutagen", "aiofiles": "aiofiles", "aiohttp": "aiohttp", "fastapi": "fastapi",

@@ -4,6 +4,10 @@ test_quota_behavior_choice.py - Tests for user choice prior to translation or au
 - 'fallback': Seamlessly switches to free engine (e.g. GTX / local translation / Edge-TTS) without interrupting processing.
 - Ensures Session History hygiene (0 test jobs remain).
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 import unittest

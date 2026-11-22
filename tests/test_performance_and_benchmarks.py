@@ -6,6 +6,10 @@ Validates:
 3. Genre Detector Throughput (classifies 100+ documents in < 0.2s).
 4. Categorized Glossary Regex Replacement Scalability (500+ terms across 50,000 words).
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import unittest
 import time

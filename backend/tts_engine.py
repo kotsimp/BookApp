@@ -287,6 +287,37 @@ def build_ffmetadata(chapters: list[dict], title: str = "", author: str = "") ->
     return "\n".join(lines) + "\n"
 
 
+class M4BExportError(RuntimeError):
+    """The M4B conversion failed; no .m4b file was written."""
+
+
+class M4BUnavailableError(M4BExportError):
+    """There is no ffmpeg to encode M4B with."""
+
+
+def find_ffmpeg() -> Optional[str]:
+    """ffmpeg from PATH, otherwise the binary bundled with the imageio-ffmpeg package."""
+    import shutil
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        logger.debug(f"No bundled ffmpeg: {e}")
+        return None
+
+
+def is_mp4_file(path) -> bool:
+    """True for a real MP4/M4B container (not MP3 data saved with an .m4b name)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(12)[4:8] == b"ftyp"
+    except OSError:
+        return False
+
+
 async def export_audiobook_m4b(
     mp3_path: str,
     m4b_path: str,
@@ -295,48 +326,75 @@ async def export_audiobook_m4b(
     cover_image_path: Optional[str] = None,
     chapters: Optional[list[dict]] = None,
 ) -> str:
-    """Exports audio as .m4b with chapter metadata (when chapters are known), optional cover art, and timeout."""
-    import shutil
+    """
+    Exports a real AAC .m4b with chapter metadata (when chapters are known), optional cover art, and timeout.
+    Raises M4BExportError on failure: MP3 data is never saved under the .m4b name.
+    """
     import subprocess
-    ffmpeg_bin = shutil.which("ffmpeg")
-    Path(m4b_path).parent.mkdir(parents=True, exist_ok=True)
+    import uuid
+    ffmpeg_bin = find_ffmpeg()
+    if not ffmpeg_bin:
+        raise M4BUnavailableError(
+            "Η εξαγωγή M4B χρειάζεται το FFmpeg, που δεν βρέθηκε στον υπολογιστή του BookApp. "
+            "Εκτελέστε 'pip install -r requirements.txt' ή εγκαταστήστε το FFmpeg. Το MP3 παραμένει διαθέσιμο."
+        )
 
-    if ffmpeg_bin:
+    dest = Path(m4b_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:8]
+    staged = dest.with_name(f".{dest.stem}.{token}.part")  # not *.m4b: downloads must not pick up a partial file
+    meta_file = None
+    if chapters:
+        meta_file = dest.with_name(f".{dest.stem}.{token}.ffmeta.txt")
+        meta_file.write_text(build_ffmetadata(chapters, title, author), encoding="utf-8")
+
+    def build_cmd(with_cover: bool) -> list[str]:
+        # All inputs must precede the output options (-map, -c:v, ...)
         cmd = [ffmpeg_bin, "-y", "-i", mp3_path]
-        has_cov = bool(cover_image_path and Path(cover_image_path).exists())
-        if has_cov:
-            cmd.extend(["-i", cover_image_path, "-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v", "attached_pic"])
-        meta_file = None
-        if chapters:
-            meta_file = Path(m4b_path).with_name(f".{Path(m4b_path).stem}.ffmeta.txt")
-            meta_file.write_text(build_ffmetadata(chapters, title, author), encoding="utf-8")
-            meta_idx = 2 if has_cov else 1
+        if with_cover:
+            cmd.extend(["-i", str(cover_image_path)])
+        if meta_file is not None:
+            meta_idx = 2 if with_cover else 1
             cmd.extend(["-i", str(meta_file), "-map_metadata", str(meta_idx), "-map_chapters", str(meta_idx)])
+        cmd.extend(["-map", "0:a:0"])
+        if with_cover:
+            cmd.extend(["-map", "1:v", "-c:v", "copy", "-disposition:v", "attached_pic"])
         cmd.extend([
             "-c:a", "aac", "-b:a", "64k",
             "-metadata", f"title={title or 'Audiobook'}",
             "-metadata", f"artist={author or 'BookApp'}",
             "-metadata", "genre=Audiobook",
-            m4b_path,
+            "-f", "ipod",
+            str(staged),
         ])
-        # AAC encoding time grows with length: a fixed 300 s made long audiobooks silently fall back to a copy
-        size_mb = Path(mp3_path).stat().st_size / (1024 * 1024) if Path(mp3_path).exists() else 0
-        ff_timeout = max(300, int(300 + size_mb * 4))
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True, timeout=ff_timeout))
-            return m4b_path
-        except Exception as e:
-            logger.warning(f"ffmpeg conversion failed: {e}. Falling back to tagged copy.")
-        finally:
-            if meta_file is not None and meta_file.exists():
-                try:
-                    meta_file.unlink()
-                except OSError:
-                    pass
+        return cmd
 
-    await asyncio.to_thread(shutil.copyfile, mp3_path, m4b_path)
-    await asyncio.to_thread(tag_audiobook_file, m4b_path, title=title, author=author, cover_image_path=cover_image_path)
+    # AAC encoding time grows with length
+    size_mb = Path(mp3_path).stat().st_size / (1024 * 1024) if Path(mp3_path).exists() else 0
+    ff_timeout = max(300, int(300 + size_mb * 4))
+
+    def convert() -> None:
+        has_cover = bool(cover_image_path and Path(cover_image_path).exists())
+        last_error = None
+        try:
+            # An unreadable cover (EMF, GIF...) must not cost the whole audiobook: retry without it
+            for with_cover in ([True, False] if has_cover else [False]):
+                try:
+                    subprocess.run(build_cmd(with_cover), capture_output=True, stdin=subprocess.DEVNULL,
+                                   check=True, timeout=ff_timeout)
+                    os.replace(staged, dest)
+                    return
+                except (subprocess.SubprocessError, OSError) as e:
+                    last_error = e
+                    detail = (getattr(e, "stderr", None) or b"")[-600:].decode("utf-8", "replace")
+                    logger.warning(f"ffmpeg M4B conversion failed (cover={with_cover}): {e} {detail}")
+            raise M4BExportError("Η μετατροπή σε M4B απέτυχε. Το MP3 παραμένει διαθέσιμο.") from last_error
+        finally:
+            staged.unlink(missing_ok=True)
+            if meta_file is not None:
+                meta_file.unlink(missing_ok=True)
+
+    await asyncio.to_thread(convert)
     return m4b_path
 
 

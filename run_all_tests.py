@@ -1,22 +1,30 @@
 """
 run_all_tests.py - Bulletproof Unified Master Test Suite Runner.
 Features:
-1. Auto-discovers and executes all test suites in tests/.
-2. Snapshots & restores config/settings.json safely (NEVER overwrites or deletes user API keys).
-3. Auto-launches a temporary Uvicorn backend if localhost:8000 is not already running.
-4. Supports '--fast' flag to run all static, unit, regression, benchmark, and mock-API suites in seconds.
+1. Runs every suite in a throw-away copy of the project, on a free port, with an empty database and no API keys.
+   Your jobs, files, settings and a running BookApp (port 8000) are never touched.
+2. Auto-discovers and executes all test suites in tests/, against its own temporary Uvicorn backend.
+3. '--fast' skips the suites that need the internet.
+4. Names select suites:  python run_all_tests.py test_output_refinement test_book_insights
 """
 
+import os
+import re
 import sys
 import glob
 import time
 import shutil
+import socket
+import tempfile
 import subprocess
 import urllib.request
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(BASE_DIR))
+
+IN_SANDBOX = os.environ.get("BOOKAPP_TEST_MODE") == "1"
+PORT = int(os.environ.get("BOOKAPP_TEST_PORT", "0"))
 
 SLOW_EXTERNAL_NETWORK_SUITES = {
     "test_api.py",
@@ -27,9 +35,54 @@ SLOW_EXTERNAL_NETWORK_SUITES = {
 }
 
 
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _run_in_sandbox() -> int:
+    """Copies the code (never data/, temp/ or settings) to a temp folder and runs the suites there."""
+    work = Path(tempfile.mkdtemp(prefix="bookapp-tests-"))
+    sandbox = work / "app"
+    ignore = shutil.ignore_patterns(
+        ".git", ".venv", "venv", "__pycache__", ".pytest_cache", "settings*.json*", "settings*.tmp", "*.log",
+    )
+
+    def ignore_top(folder, names):
+        skipped = set(ignore(folder, names))
+        if Path(folder).resolve() == BASE_DIR:
+            skipped |= {"data", "temp"} & set(names)
+        return skipped
+
+    try:
+        shutil.copytree(BASE_DIR, sandbox, ignore=ignore_top)
+        for sub_dir in ("data", "temp/uploads", "temp/outputs"):
+            (sandbox / sub_dir).mkdir(parents=True, exist_ok=True)
+        port = _free_port()
+        # The suites address the app's default port: point the copies at the sandbox's own port
+        for test_file in (sandbox / "tests").glob("*.py"):
+            test_file.write_bytes(re.sub(rb"\b8000\b", str(port).encode(), test_file.read_bytes()))
+
+        env = dict(os.environ)
+        for var in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GEMINI_QUOTA_EXHAUSTED_UNTIL", "BOOKAPP_PAIRING",
+                    "BOOKAPP_TRUST_LOOPBACK", "FINAL_REFINEMENT_ENABLED"):
+            env.pop(var, None)
+        env.update(BOOKAPP_TEST_MODE="1", BOOKAPP_TEST_PORT=str(port), PYTHONIOENCODING="utf-8",
+                   PYTHONDONTWRITEBYTECODE="1")
+        return subprocess.run([sys.executable, str(sandbox / "run_all_tests.py"), *sys.argv[1:]],
+                              cwd=str(sandbox), env=env).returncode
+    finally:
+        for _ in range(5):  # Windows releases file handles of the stopped server with a small delay
+            shutil.rmtree(work, ignore_errors=True)
+            if not work.exists():
+                break
+            time.sleep(0.5)
+
+
 def _is_server_up() -> bool:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=0.8) as resp:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=0.8) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -37,7 +90,7 @@ def _is_server_up() -> bool:
 
 def _start_temp_server():
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "8000", "--log-level", "error"],
+        [sys.executable, "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", str(PORT), "--log-level", "error"],
         cwd=str(BASE_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -47,99 +100,6 @@ def _start_temp_server():
             return proc
         time.sleep(0.15)
     return proc
-
-
-def _clear_test_sessions(initial_outputs=None, initial_uploads=None, initial_jobs=None):
-    """Clear all test jobs and temp test artifacts while strictly preserving user jobs and queue."""
-    # 1. Trigger HTTP cleanup endpoint for test-only jobs
-    try:
-        req = urllib.request.Request("http://127.0.0.1:8000/api/jobs/tests/cleanup", method="DELETE")
-        with urllib.request.urlopen(req, timeout=5):
-            pass
-    except Exception:
-        pass
-
-    # 2. Call backend job_manager cleanup directly
-    try:
-        from backend.job_manager import cleanup_test_jobs, is_test_job_identifier, _jobs
-        cleanup_test_jobs()
-        if initial_jobs is not None:
-            for jid in list(_jobs.keys()):
-                if jid not in initial_jobs and is_test_job_identifier(jid, getattr(_jobs[jid], "file_name", None)):
-                    _jobs.pop(jid, None)
-    except Exception:
-        pass
-
-    # 3. Clean up SQLite database: delete only test jobs matching test patterns
-    try:
-        from backend.database import _get_connection, _db_lock, db_delete_test_jobs
-        from backend.job_manager import is_test_job_identifier
-        db_delete_test_jobs()
-        with _db_lock:
-            conn = _get_connection()
-            with conn:
-                rows = conn.execute("SELECT job_id, file_name FROM jobs").fetchall()
-                to_del = [r[0] for r in rows if is_test_job_identifier(r[0], r[1])]
-                if to_del:
-                    conn.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_del])
-    except Exception:
-        pass
-
-    # 4. Sweep temp/outputs: delete only directories belonging to tests
-    outputs_dir = BASE_DIR / "temp" / "outputs"
-    if outputs_dir.is_dir():
-        from backend.job_manager import is_test_job_identifier
-        for d in outputs_dir.iterdir():
-            if not d.is_dir():
-                continue
-            should_delete = False
-            if is_test_job_identifier(d.name) or any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
-                should_delete = True
-            else:
-                try:
-                    files = list(d.iterdir())
-                    if files and all(is_test_job_identifier(f.stem, f.name) for f in files):
-                        should_delete = True
-                except Exception:
-                    pass
-            if should_delete:
-                shutil.rmtree(d, ignore_errors=True)
-
-    # 5. Sweep temp/uploads: delete any directory created by tests (except tmp)
-    uploads_dir = BASE_DIR / "temp" / "uploads"
-    if uploads_dir.is_dir():
-        for d in uploads_dir.iterdir():
-            if not d.is_dir() or d.name == "tmp":
-                continue
-            should_delete = False
-            if initial_uploads is not None and d.name not in initial_uploads:
-                should_delete = True
-            elif any(d.name.startswith(p) for p in ("test_", "sample_", "reg_", "q_iso_", "direct_text")):
-                should_delete = True
-            if should_delete:
-                shutil.rmtree(d, ignore_errors=True)
-
-    # 6. Remove stray temp/test_* or sample_* files created by tests in root temp dir
-    temp_dir = BASE_DIR / "temp"
-    if temp_dir.is_dir():
-        for pattern in ("test_*", "sample_*", "reg_*", "q_iso_*", "stress_*", "direct_text*", "*.tmp"):
-            for f in temp_dir.glob(pattern):
-                try:
-                    if f.is_dir():
-                        shutil.rmtree(f, ignore_errors=True)
-                    else:
-                        f.unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-    # 7. Clean up preview audio files in temp/previews
-    prev_dir = BASE_DIR / "temp" / "previews"
-    if prev_dir.is_dir():
-        for f in prev_dir.glob("*.mp3"):
-            try:
-                f.unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 def run_suite():
@@ -152,29 +112,16 @@ def run_suite():
     if fast_mode:
         test_files = [tf for tf in test_files if Path(tf).name not in SLOW_EXTERNAL_NETWORK_SUITES]
 
-    # Pre-clean any leftover test junk from previous runs
-    _clear_test_sessions()
+    wanted = {Path(a).stem for a in sys.argv[1:] if not a.startswith("-")}
+    if wanted:
+        test_files = [tf for tf in test_files if Path(tf).stem in wanted]
+        unknown = wanted - {Path(tf).stem for tf in test_files}
+        if unknown:
+            print(f"❌ Unknown suite(s): {', '.join(sorted(unknown))}")
+            sys.exit(1)
 
-    # Snapshot existing real user outputs, uploads, and DB jobs so tests NEVER touch or delete them
-    initial_outputs = set(p.name for p in (BASE_DIR / "temp" / "outputs").iterdir() if p.is_dir()) if (BASE_DIR / "temp" / "outputs").is_dir() else set()
-    initial_uploads = set(p.name for p in (BASE_DIR / "temp" / "uploads").iterdir() if p.is_dir()) if (BASE_DIR / "temp" / "uploads").is_dir() else set()
-    initial_jobs = set()
-    try:
-        from backend.database import _get_connection, _db_lock
-        with _db_lock:
-            conn = _get_connection()
-            initial_jobs = set(r[0] for r in conn.execute("SELECT job_id FROM jobs").fetchall())
-    except Exception:
-        pass
-
-    # Snapshot user's config/settings.json so tests can NEVER lose or overwrite user API keys
-    settings_file = BASE_DIR / "config" / "settings.json"
-    settings_backup = settings_file.read_bytes() if settings_file.exists() else None
-
-    temp_server = None
-    if not _is_server_up():
-        print("⚙️  No server detected on port 8000 — starting temporary Uvicorn test server...")
-        temp_server = _start_temp_server()
+    print(f"⚙️  Isolated sandbox on port {PORT} — your jobs, settings and running BookApp are not touched.")
+    temp_server = _start_temp_server()
 
     mode_label = "FAST MODE" if fast_mode else "FULL SUITE"
     print("=" * 72)
@@ -202,29 +149,11 @@ def run_suite():
                 failed.append((rel_name, dur, err_output))
                 print(f"❌ FAIL ({dur:.2f}s)")
     finally:
-        # 1. Clear all test sessions via HTTP while server is still up
-        _clear_test_sessions(initial_outputs, initial_uploads, initial_jobs)
-
-        # 2. Stop temporary server so Windows releases all file handles
-        if temp_server is not None:
-            temp_server.terminate()
-            try:
-                temp_server.wait(timeout=5)
-            except Exception:
-                temp_server.kill()
-
-        # 3. Run disk/SQLite cleanup again after server exit to guarantee zero locked test leftovers
-        _clear_test_sessions(initial_outputs, initial_uploads, initial_jobs)
-
-        # 4. Always restore user settings untouched
-        if settings_backup is not None:
-            settings_file.parent.mkdir(parents=True, exist_ok=True)
-            settings_file.write_bytes(settings_backup)
-        elif settings_file.exists():
-            try:
-                settings_file.unlink(missing_ok=True)
-            except Exception:
-                pass
+        temp_server.terminate()
+        try:
+            temp_server.wait(timeout=5)
+        except Exception:
+            temp_server.kill()
 
     total_dur = time.time() - total_start
     print("\n" + "=" * 72)
@@ -235,8 +164,7 @@ def run_suite():
     print(f"  Passed           : {len(passed)} ✅")
     print(f"  Failed           : {len(failed)} {'❌' if failed else ''}")
     print(f"  Total Duration   : {total_dur:.2f}s")
-    print("  User Settings    : Protected & Restored 🛡️")
-    print("  Session History  : Cleared & Clean 🧹")
+    print("  User data        : Not touched (isolated sandbox) 🛡️")
     print("=" * 72)
 
     if failed:
@@ -253,4 +181,7 @@ def run_suite():
 
 
 if __name__ == "__main__":
-    run_suite()
+    if IN_SANDBOX:
+        run_suite()
+    else:
+        sys.exit(_run_in_sandbox())

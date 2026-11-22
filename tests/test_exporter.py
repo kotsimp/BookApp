@@ -1,4 +1,8 @@
 # Test 5: Exporter module - all 4 formats
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 print("=== Test 5: Exporter (TXT, DOCX, PDF, EPUB) ===")
 import sys
 from pathlib import Path

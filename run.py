@@ -73,7 +73,7 @@ def main():
         core_pkgs = [
             "fastapi", "uvicorn", "python-multipart", "aiofiles", "aiohttp",
             "pymupdf", "python-docx", "beautifulsoup4",
-            "deep-translator", "edge-tts", "EbookLib",
+            "deep-translator", "edge-tts", "EbookLib", "imageio-ffmpeg",
         ]
         for pkg in core_pkgs:
             try:

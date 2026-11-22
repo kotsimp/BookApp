@@ -6,6 +6,10 @@ test_ai_polish_advanced.py - Comprehensive Unit & Integration Tests for AI Polis
 4. Smart Disk Checkpointing & Resume.
 5. Rolling Narrative Context.
 """
+try:
+    import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
+except ImportError:
+    from tests import _sandbox_guard  # noqa: F401
 
 import sys
 sys.path.insert(0, ".")

@@ -180,6 +180,7 @@ All translated text passes automatically through the built-in publishing typogra
      - Full-bleed unpaginated page 1 in **PDF**.
      - Official e-book cover metadata in **EPUB**.
      - Document title page in **DOCX**.
+   - **Exception:** a DOCX or EPUB translated in its original format, and every comic, keeps its own artwork and formatting. A custom cover is not inserted into those files (the app tells you); it is used for the other formats you download.
 
 6. **⚡ Gemini Quota Handling Choice & Automatic Resumption:**
    - Choose how the system behaves if the Google Gemini API daily limit is exceeded:
@@ -235,6 +236,10 @@ The active progress card displays real-time telemetry:
    * **🔍 Find & Replace:** Single and document-wide replacements (Replace All).
    * **Live Word & Character Counters.**
 3. Click **💾 Save & Update Files** to instantly update all output files (Word, PDF, EPUB, TXT) and audiobook source text with your edits.
+   * **DOCX→DOCX / EPUB→EPUB:** edits are made inside the document, keeping styles, tables, images and bold/italic. Replaced text takes the style of the words it replaced. Table-of-contents entries and hyperlink text don't change in the document.
+   * **Paragraph breaks:** leave an empty line between paragraphs. A single line break stays in the same paragraph.
+   * **Graphic Novels:** only the text is saved. Pictures and balloons don't change.
+   * **If an edit can't be applied safely** (or the file is open in Word), you get a message and no file is changed.
 
 ### ✨ Gemini AI Polish & Proofreading
 For publications requiring professional editorial tone:
@@ -339,7 +344,8 @@ Create a theatrical audio experience:
 * Every audiobook exports with complete metadata tags (Title, Artist, Album, Genre="Audiobook").
 * Active cover art is embedded directly into the audio file container (**Embedded APIC Cover Art**), rendering natively in Apple Books, Android players, and car dashboards.
 * **Streamed Audio Assembly:** Audio chunks are assembled in 64KB streams, ensuring 10+ hour audiobooks render without high RAM usage.
-* **Chapters:** chapter headings in the book become chapters in the M4B, so your player can skip between them. This needs FFmpeg, which the Docker image includes.
+* **Chapters:** chapter headings in the book become chapters in the M4B, so your player can skip between them.
+* **FFmpeg:** M4B needs it; it is installed with BookApp's requirements (and is in the Docker image). If it is missing, the app tells you and the MP3 stays available.
 
 ### Step-by-Step Audiobook Guide
 1. Navigate to the **🎧 Generate Audiobook** tab.
@@ -450,8 +456,8 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 * **Reload & Full Settings Restoration:** Clicking any history entry restores the document, output format, layout style, language direction, and page metrics.
 * **Interrupted Job Resumption:** If an AI translation was paused, clicking **Start Translation** continues from the saved checkpoint (`.direct_ai_checkpoint.json`).
 * **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
-* **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete old jobs and temporary files while preserving the translation cache.
-* **Automatic Test Job Isolation & Zero-Junk History:** Automated test runs and test-generated jobs (files or identifiers matching `test_*`, `reg_*`, `mock_*`, `sample_*`, `direct_text*`, `book*`, `temp_*`, `stress_*`) are automatically purged from disk and strictly filtered out of Session History. Even if test suites execute in the background, your Session History stays 100% clean, displaying only your real personal translations.
+* **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete all jobs, books and results while preserving the translation cache. This can't be undone.
+* **Your work is kept until you delete it:** restarting BookApp never removes jobs, books or results, whatever their age or file name. As history only shrinks when you delete, remove what you no longer need to free disk space.
 
 ---
 
