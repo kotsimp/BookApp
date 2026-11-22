@@ -535,7 +535,7 @@ async def _ai_polish_comic_balloons(
         "gemini-flash-latest",
     ]:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"  # key in header only
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
@@ -544,7 +544,8 @@ async def _ai_polish_comic_balloons(
             loop = asyncio.get_running_loop()
             resp_raw = await loop.run_in_executor(None, _fetch_sync, req)
             data = json.loads(resp_raw)
-            from backend.ai_polisher import _extract_gemini_text_and_reason
+            from backend.ai_polisher import _extract_gemini_text_and_reason, record_gemini_usage
+            record_gemini_usage(data)
             raw_text, _ = _extract_gemini_text_and_reason(data)
             if not raw_text:
                 continue
@@ -990,7 +991,7 @@ async def _detect_comic_balloons_vision_async(
             for model in list(vision_models):
                 if model in _DEAD_VISION_MODELS:
                     continue
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"  # key in header only
                 m_low = model.lower()
                 use_no_thinking = "2.5-flash" in m_low
                 req_payload = (
@@ -1008,6 +1009,8 @@ async def _detect_comic_balloons_vision_async(
                     async with session.post(url, json=req_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=45)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
+                            from backend.ai_polisher import record_gemini_usage
+                            record_gemini_usage(data)
                             text_resp, finish_reason = _extract_gemini_text_and_reason(data)
                             if not text_resp:
                                 last_error = f"{model}: empty parts ({finish_reason})"

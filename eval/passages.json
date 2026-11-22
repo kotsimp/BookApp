@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "description": "English -> Greek translation evaluation passages (original texts written for BookApp). Each passage targets known machine-translation pitfalls; checks are deliberately conservative: they only flag renderings that are clearly wrong or clearly unnatural in Greek.",
+  "passages": [
+    {
+      "id": "dialogue_idioms",
+      "style": "literature",
+      "source": "=== PAGE 1 ===\nChapter Three: The Letter From Lisbon\n\nMarta put her hand in her coat pocket and found the letter that her brother had sent her from Lisbon. She had not opened it. She had carried it for three days, the way you carry a stone you mean to throw.\n\n\"You're going to read it eventually,\" said Daniel, who was leaning against the doorframe with his arms crossed. \"It's been sitting in your pocket since Monday.\"\n\n\"It doesn't make sense,\" she said. \"He hasn't written to me in eleven years. Why now?\"\n\nThe kettle began to whistle in the kitchen, and Marta nearly jumped out of her skin.",
+      "checks": {
+        "forbid": ["κάνει νόημα", "σαπίζει", "μπρίκι", "Κεφάλαιο Τρίτο: Το Γράμμα", "ενδεχομένως", "από τη θέση της"],
+        "require_any": [["Λισαβόνα"], ["Ντάνιελ"], ["Δευτέρα"]],
+        "max_count": {"αυτή": 1}
+      }
+    },
+    {
+      "id": "false_friends",
+      "style": "natural",
+      "source": "=== PAGE 1 ===\nEventually the librarian admitted that the novel was actually quite sensible. She was sympathetic to the young author, who had suffered a lot, and she promised to recommend the book to the committee.",
+      "checks": {
+        "forbid": ["ενδεχομένως", "νουβέλα", "ευαίσθητ", "συμπαθητικ"],
+        "require_any": [["τελικά", "κάποια στιγμή", "στο τέλος"], ["μυθιστόρημα"], ["βιβλιοθηκ"]]
+      }
+    },
+    {
+      "id": "pronouns_possessives",
+      "style": "literature",
+      "source": "=== PAGE 1 ===\nHe put his hand in his pocket and took out his phone. He looked at his watch, then at his brother, and he shook his head.",
+      "checks": {
+        "forbid": ["Αυτός έβαλε", "Αυτός κοίταξε"],
+        "max_count": {"του ": 3, "Αυτός": 0}
+      }
+    },
+    {
+      "id": "numbers_units",
+      "style": "natural",
+      "source": "=== PAGE 1 ===\nIn 1987 she drove 120 kilometres to Thessaloniki in less than 90 minutes. The temperature was 38 °C and fuel cost 1.25 euros per litre.",
+      "checks": {
+        "require_any": [["1987"], ["120"], ["90"], ["38"], ["1,25", "1.25"], ["Θεσσαλονίκη"]],
+        "forbid": ["μίλια"]
+      }
+    },
+    {
+      "id": "technical_terms",
+      "style": "technical",
+      "source": "=== PAGE 1 ===\nBefore deploying the new API version, restart the server, clear the cache and check that the database backup completed successfully.",
+      "checks": {
+        "require_any": [["API"], ["διακομιστ"], ["αντίγραφο ασφαλείας", "αντιγράφου ασφαλείας", "backup"], ["βάση δεδομένων", "βάσης δεδομένων"]],
+        "forbid": ["σέρβερ"]
+      }
+    }
+  ]
+}

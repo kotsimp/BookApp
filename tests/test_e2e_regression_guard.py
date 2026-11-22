@@ -3,7 +3,7 @@ tests/test_e2e_regression_guard.py - Real-World User Flow & Anti-Regression Guar
 Explicitly guards against every real production bug ever encountered:
 1. Single-job delete (DELETE /api/jobs/{id}) must permanently remove the job from GET /api/jobs AND SQLite.
 2. Clear All Session History (DELETE /api/jobs) must empty BOTH GET /api/jobs AND SQLite jobs table, while preserving translation_cache.
-3. DOCX + ai_polish=True must route through Single-Pass Direct AI Translation (never bypass AI polish).
+3. DOCX + ai_polish=True must be translated by AI (format-preserving AI for DOCX->DOCX; never bypass AI polish).
 4. Invalid Gemini API Key on a scanned comic must fail fast (<10s) with a clear error instead of spinning for 15+ minutes.
 5. Full test hygiene: cleans up every job it creates so Session History stays clean.
 """
@@ -184,7 +184,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
                     pass
 
     def test_3_docx_with_ai_polish_routes_to_single_pass_direct_ai(self):
-        print("-> 3. Testing DOCX + ai_polish=True routes through Single-Pass Direct AI...")
+        print("-> 3. Testing DOCX + ai_polish=True is translated by AI (never bypassed)...")
         doc_path = Path("temp/reg_docx_polish.docx")
         d = docx.Document()
         d.add_heading("Chapter 1", level=1)
@@ -218,7 +218,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
             txt_files = list((Path("temp/outputs") / jid).glob("*_translated_*.txt"))
             self.assertTrue(len(txt_files) >= 1)
             out_txt = txt_files[0].read_text(encoding="utf-8")
-            self.assertIn("[Επιμελημένο AI]", out_txt, "DOCX with ai_polish=True bypassed Single-Pass Direct AI!")
+            self.assertIn("[Επιμελημένο AI]", out_txt, "DOCX with ai_polish=True bypassed the AI translation!")
             print("   DOCX + AI Polish Single-Pass routing: OK")
         finally:
             doc_path.unlink(missing_ok=True)

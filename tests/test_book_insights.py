@@ -392,7 +392,8 @@ class TestAnalysisAndLanguage(InsightsBase):
             self.skipTest("Node.js not installed")
         js = (ROOT / "frontend" / "app.js").read_text(encoding="utf-8")
         esc = re.search(r"function escHtml\(str\) \{[\s\S]*?\n\}", js).group(0)
-        render = re.search(r"function renderInsightMarkdown\(md\) \{[\s\S]*?\n\}", js).group(0)
+        ins_js = (ROOT / "frontend" / "insights.js").read_text(encoding="utf-8")
+        render = re.search(r"function renderInsightMarkdown\(md\) \{[\s\S]*?\n\}", ins_js).group(0)
         payload = "## <img src=x onerror=alert(1)>\n\n**bold** <script>alert(2)</script>\n\n- item <b>x</b>"
         script = f"{esc}\n{render}\nprocess.stdout.write(renderInsightMarkdown({json.dumps(payload)}));"
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20).stdout

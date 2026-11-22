@@ -15,6 +15,18 @@ import importlib
 from pathlib import Path
 
 
+def _frontend_js_source() -> str:
+    """All frontend scripts (app.js first, then the feature modules loaded after it)."""
+    files = [Path("frontend/app.js")] + sorted(p for p in Path("frontend").glob("*.js") if p.name != "app.js")
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
+def _backend_route_source() -> str:
+    """backend/main.py plus the API routers in backend/api/ (routes declared with @app.* or @router.*)."""
+    files = [Path("backend/main.py")] + sorted(Path("backend/api").glob("*.py"))
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
 def test_ast_and_syntax_validity():
     print("-> 1. Testing AST & Syntax validity for all Python modules...")
     py_files = sorted(glob.glob("backend/**/*.py", recursive=True) + glob.glob("tests/**/*.py", recursive=True))
@@ -254,7 +266,7 @@ def test_frontend_html_js_integrity():
     print("-> 7. Testing Frontend HTML <-> JS cross-integrity & UI contracts...")
     import re
     html = Path("frontend/index.html").read_text(encoding="utf-8")
-    js = Path("frontend/app.js").read_text(encoding="utf-8")
+    js = _frontend_js_source()
 
     html_ids = set(re.findall(r'\bid=["\']([^"\']+)["\']', html))
     js_dyn_ids = set(re.findall(r'id=["\']([^"\']+)["\']', js))
@@ -308,10 +320,10 @@ def test_production_config_hygiene():
 def test_frontend_api_routes_match_backend():
     print("-> 9. Testing Frontend ${API} URLs match real FastAPI routes (zero 404 drift)...")
     import re
-    main_src = Path("backend/main.py").read_text(encoding="utf-8")
-    js_src = Path("frontend/app.js").read_text(encoding="utf-8")
+    main_src = _backend_route_source()
+    js_src = _frontend_js_source()
 
-    routes = re.findall(r'@app\.(?:get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
+    routes = re.findall(r'@(?:app|router)\.(?:get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
     backend_patterns = []
     for path in routes:
         pat = "^" + re.sub(r"\{[^}]+\}", r"[^/?]+", path.replace("/api", "")) + r"(\?.*)?$"
@@ -329,8 +341,8 @@ def test_frontend_api_routes_match_backend():
 def test_all_backend_endpoints_covered_by_tests():
     print("-> 10. Testing 100% Backend Endpoint Test Coverage Guard...")
     import re
-    main_src = Path("backend/main.py").read_text(encoding="utf-8")
-    routes = re.findall(r'@app\.(get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
+    main_src = _backend_route_source()
+    routes = re.findall(r'@(?:app|router)\.(get|post|put|delete|patch|api_route)\(["\']([^"\']+)["\']', main_src)
     # Exclude test_code_health.py itself so static guards cannot count as coverage
     test_files = [f for f in glob.glob("tests/*.py") if Path(f).name != "test_code_health.py"]
     test_src = "\n".join(Path(f).read_text(encoding="utf-8") for f in test_files)

@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.9.2" />
+  <link rel="stylesheet" href="style.css?v=2.9.3" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -1138,6 +1138,7 @@
             <span id="gemini-pool-summary-badge" style="font-size:0.76rem; color:var(--text-secondary)">Pool: 0 κλειδιά</span>
             <span id="gemini-key-saved-badge" style="display:none; color:var(--emerald); font-size:0.75rem; font-weight:600">✓ Αποθηκεύτηκαν</span>
           </div>
+          <span id="gemini-usage-today" style="font-size:0.74rem; color:var(--text-muted)"></span>
           <div style="display:flex; align-items:center; gap:8px">
             <button type="button" id="btn-clear-key" onclick="clearGeminiKey()" class="btn btn-outline" style="display:none; border-color:var(--rose); color:var(--rose); font-size:0.78rem; padding:5px 10px">
               🗑️ Clear All
@@ -1154,6 +1155,18 @@
 
         <div style="margin-top:10px; padding:8px 12px; background:rgba(124,58,237,0.06); border:1px solid rgba(124,58,237,0.2); border-radius:8px; font-size:0.78rem; color:var(--text-secondary); line-height:1.4">
           💡 <strong>Αυτόματη Εναλλαγή Χωρίς Κόστος ($0):</strong> Συνδέστε δωρεάν API Keys από έως 4 διαφορετικούς λογαριασμούς Google (4 x 1.500 = <strong>έως 6.000 αιτήματα/ημέρα</strong>). Μόλις το βασικό κλειδί εξαντλήσει το όριό του (429 / Quota), η εφαρμογή μεταβαίνει αυτόματα στο επόμενο εφεδρικό χωρίς καμία διακοπή!
+        </div>
+
+        <!-- Device pairing (only shown when BOOKAPP_PAIRING=1) -->
+        <div id="pairing-section" style="display:none; margin-top:12px; padding:12px 14px; background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.35); border-radius:10px; font-size:0.82rem; line-height:1.45">
+          <div style="font-weight:600; margin-bottom:6px">📱 Συσκευές (Device pairing)</div>
+          <div style="color:var(--text-secondary); margin-bottom:8px">Μόνο αυτός ο υπολογιστής και οι συνδεδεμένες συσκευές έχουν πρόσβαση. Δημιουργήστε έναν σύνδεσμο και ανοίξτε τον <strong>μία φορά</strong> στη νέα συσκευή (ισχύει 15 λεπτά).</div>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="createPairingLink()">🔗 Δημιουργία συνδέσμου σύζευξης</button>
+          <div id="pairing-link-box" style="display:none; margin-top:8px; gap:6px; align-items:center">
+            <input type="text" id="pairing-link-output" class="form-input" readonly style="font-family:monospace; font-size:0.78rem; padding:6px 8px; flex:1" />
+            <button type="button" class="btn btn-sm btn-secondary" onclick="copyPairingLink()">📋</button>
+          </div>
+          <ul id="pairing-devices" style="margin:10px 0 0; padding-left:18px"></ul>
         </div>
       </div>
 
@@ -1313,5 +1326,7 @@
 <div class="toast-container" id="toast-container"></div>
 
 <script src="app.js?v=2.9.0"></script>
+<script src="insights.js?v=2.9.0"></script>
+<script src="pairing.js?v=2.9.0"></script>
 </body>
 </html>

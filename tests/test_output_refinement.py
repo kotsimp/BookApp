@@ -643,7 +643,7 @@ class TestWorkflowIntegration(_RefinementTestBase):
         job, src, output_path, _ = self._translation_job(fmt="docx", ftype="docx")
         original_docx = b"PK\x03\x04 format preserved docx"
 
-        async def fake_in_place(fp, out_docx, s, t, prog, style=None):
+        async def fake_in_place(fp, out_docx, s, t, prog, style=None, segment_translator=None):
             Path(out_docx).write_bytes(original_docx)
             return "Και και τότε."
         try:

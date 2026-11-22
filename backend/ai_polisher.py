@@ -38,9 +38,86 @@ STYLE_PROMPTS = _prompts.STYLE_PROMPTS  # public re-export (existing callers/tes
 _FULL_MODELS_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("gemini_full_models_only", default=False)
 
 
+# Models that recently timed out are tried LAST for a while (not removed: they stay as fallbacks). Without this,
+# every request re-waited the full timeout on the same slow model before reaching a responsive one.
+_MODEL_SLOW_UNTIL: dict[str, float] = {}
+SLOW_MODEL_PENALTY_S = 600.0
+
+
+def _deprioritize_slow_models(candidates: list[str]) -> list[str]:
+    now = time.time()
+    fast = [m for m in candidates if _MODEL_SLOW_UNTIL.get(m, 0.0) <= now]
+    slow = [m for m in candidates if _MODEL_SLOW_UNTIL.get(m, 0.0) > now]
+    return fast + slow
+
+
 def _is_full_model(name: str) -> bool:
     n = (name or "").lower()
     return "lite" not in n and not n.startswith("gemma") and ("flash" in n or "pro" in n)
+
+
+# ---------------------------------------------------------------------------
+# Gemini usage accounting (per job + per day)
+# ---------------------------------------------------------------------------
+# A pipeline opens an accumulator with `track_gemini_usage()`; every Gemini call made inside it (including child
+# asyncio tasks, which inherit the context) adds its usageMetadata. A daily total is kept for the settings view.
+_USAGE_ACC: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("gemini_usage_acc", default=None)
+_DAILY_USAGE: dict[str, Any] = {"date": "", "requests": 0, "cached": 0, "prompt_tokens": 0, "output_tokens": 0}
+_USAGE_LOCK = threading.Lock()
+
+
+def new_usage_accumulator() -> dict[str, Any]:
+    return {"requests": 0, "cached": 0, "prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
+class track_gemini_usage:
+    """Context manager: `with track_gemini_usage() as usage: ...` collects usage of all Gemini calls inside."""
+
+    def __init__(self, acc: Optional[dict] = None):
+        self.acc = acc if acc is not None else new_usage_accumulator()
+        self._token = None
+
+    def __enter__(self) -> dict:
+        self._token = _USAGE_ACC.set(self.acc)
+        return self.acc
+
+    def __exit__(self, *exc) -> bool:
+        _USAGE_ACC.reset(self._token)
+        return False
+
+
+def record_gemini_usage(response_json: Optional[dict] = None, cached: bool = False) -> None:
+    """Adds one Gemini response (or a cache hit) to the active job accumulator and the daily total."""
+    meta = (response_json or {}).get("usageMetadata") or {}
+    p_tok = int(meta.get("promptTokenCount") or 0)
+    o_tok = int(meta.get("candidatesTokenCount") or 0)
+    today = time.strftime("%Y-%m-%d")
+    with _USAGE_LOCK:
+        if _DAILY_USAGE["date"] != today:
+            _DAILY_USAGE.update(date=today, requests=0, cached=0, prompt_tokens=0, output_tokens=0)
+        targets = [_DAILY_USAGE]
+        acc = _USAGE_ACC.get()
+        if acc is not None:
+            targets.append(acc)
+        for t in targets:
+            if cached:
+                t["cached"] = t.get("cached", 0) + 1
+            else:
+                t["requests"] = t.get("requests", 0) + 1
+                t["prompt_tokens"] = t.get("prompt_tokens", 0) + p_tok
+                t["output_tokens"] = t.get("output_tokens", 0) + o_tok
+            if "total_tokens" in t:
+                t["total_tokens"] = t["prompt_tokens"] + t["output_tokens"]
+
+
+def get_daily_gemini_usage() -> dict[str, Any]:
+    with _USAGE_LOCK:
+        if _DAILY_USAGE["date"] != time.strftime("%Y-%m-%d"):
+            return {"date": time.strftime("%Y-%m-%d"), "requests": 0, "cached": 0, "prompt_tokens": 0,
+                    "output_tokens": 0, "total_tokens": 0}
+        d = dict(_DAILY_USAGE)
+        d["total_tokens"] = d["prompt_tokens"] + d["output_tokens"]
+        return d
 
 STYLE_TEMPERATURES = {
     "literature": 0.35,
@@ -1626,6 +1703,8 @@ async def _call_gemini_api(
             m_tag = re.search(rf"<{tag}>(.*?)</{tag}>", content_text, re.DOTALL | re.IGNORECASE)
             if m_tag:
                 inner = m_tag.group(1).strip()
+                if "⟦" in inner:   # numbered segments (format-preserving AI): mark every segment
+                    return re.sub(r"(⟦\d+⟧)\s*", r"\1 [Επιμελημένο AI]: ", inner)
                 if re.search(r"={3,}\s*PAGE\s+\d+\s*={3,}", inner):
                     subbed = re.sub(r"(={3,}\s*PAGE\s+\d+\s*={3,})", r"\1\n[Επιμελημένο AI]:", inner)
                     return sanitize_ai_output(subbed)
@@ -1647,6 +1726,7 @@ async def _call_gemini_api(
             cached_result = db_get_cached_translation(cache_key)
             if cached_result is not None:
                 logger.info("Retrieved AI polished chunk directly from SQLite cache.")
+                record_gemini_usage(cached=True)
                 return sanitize_ai_output(cached_result)
         except Exception as ex:
             logger.debug(f"Polish cache check skipped: {ex}")
@@ -1729,6 +1809,7 @@ async def _call_gemini_api(
 
             if _FULL_MODELS_ONLY.get():
                 candidates = [m for m in candidates if _is_full_model(m)]
+            candidates = _deprioritize_slow_models(candidates)
 
             # Filter out candidate models that are currently cooling down for this specific key
             candidates = GeminiKeyPool.get_active_models_for_key(active_key, candidates)
@@ -1809,6 +1890,8 @@ async def _call_gemini_api(
                                     meta_out["model"] = model
                                     meta_out["finish_reason"] = finish_reason
                                 logger.info(f"Gemini API success using model: {model}")
+                                record_gemini_usage(result)
+                                _MODEL_SLOW_UNTIL.pop(model, None)
                                 cacheable = (
                                     cache_gate(polished) if cache_gate is not None
                                     else not detect_greek_output_issues(polished, source_text=content_text)
@@ -1957,6 +2040,7 @@ async def _call_gemini_api(
                     except asyncio.TimeoutError:
                         last_error = f"Model {model} timed out after {req_timeout_s:.0f}s."
                         logger.warning(f"Model {model} timed out after {req_timeout_s:.0f}s. Switching immediately to next candidate...")
+                        _MODEL_SLOW_UNTIL[model] = time.time() + SLOW_MODEL_PENALTY_S
                         if _CACHED_WORKING_MODEL == model:
                             _CACHED_WORKING_MODEL = None
                         break

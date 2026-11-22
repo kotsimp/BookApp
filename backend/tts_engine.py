@@ -4,6 +4,7 @@ Supports Greek (el-GR) and English (en-US) with multiple voice options.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -231,14 +232,70 @@ async def synthesize_voice_preview(
     return str(out_file)
 
 
+def compute_chapter_marks(parts: list[tuple[str, str]]) -> list[dict]:
+    """
+    Chapter start times from the synthesised parts: [(part_text, part_mp3_path), ...] in playback order.
+    A heading at the start of a part starts the chapter at the part's start; a heading inside a part is placed
+    proportionally to its character offset within that part.
+    """
+    from backend.exporter import _is_chapter_heading
+    marks: list[dict] = []
+    t_ms = 0.0
+    for text, path in parts:
+        try:
+            from mutagen.mp3 import MP3
+            dur_ms = float(MP3(path).info.length or 0.0) * 1000.0
+        except Exception:
+            dur_ms = 0.0
+        if dur_ms <= 0:
+            # Unreadable header: estimate from size at edge-tts' 48 kbit/s so later chapter marks don't shift
+            try:
+                dur_ms = Path(path).stat().st_size * 8 / 48.0
+            except OSError:
+                dur_ms = 0.0
+        if dur_ms <= 0:
+            continue
+        offset = 0
+        for line in (text or "").split("\n"):
+            stripped = line.strip()
+            if stripped and _is_chapter_heading(stripped):
+                start = t_ms + dur_ms * (offset / max(len(text), 1))
+                if not marks or start - marks[-1]["start_ms"] > 1000:
+                    marks.append({"start_ms": int(start), "title": stripped[:80]})
+            offset += len(line) + 1
+        t_ms += dur_ms
+    if marks and marks[0]["start_ms"] > 1000:
+        marks.insert(0, {"start_ms": 0, "title": "Εισαγωγή"})
+    if marks:
+        marks[-1]["end_ms"] = int(t_ms)
+    return marks if len(marks) >= 2 else []
+
+
+def _ffmeta_escape(v: str) -> str:
+    return "".join("\\" + c if c in "=;#\\\n" else c for c in str(v))
+
+
+def build_ffmetadata(chapters: list[dict], title: str = "", author: str = "") -> str:
+    """FFMETADATA1 document with one [CHAPTER] block per chapter (millisecond timebase)."""
+    total_end = max((c.get("end_ms", 0) for c in chapters), default=0)
+    lines = [";FFMETADATA1", f"title={_ffmeta_escape(title or 'Audiobook')}", f"artist={_ffmeta_escape(author or 'BookApp')}"]
+    for i, ch in enumerate(chapters):
+        start = int(ch["start_ms"])
+        end = int(chapters[i + 1]["start_ms"]) if i + 1 < len(chapters) else int(ch.get("end_ms") or total_end or start + 1)
+        lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={max(end, start + 1)}",
+                  f"title={_ffmeta_escape(ch['title'])}"]
+    return "\n".join(lines) + "\n"
+
+
 async def export_audiobook_m4b(
     mp3_path: str,
     m4b_path: str,
     title: str = "",
     author: str = "",
     cover_image_path: Optional[str] = None,
+    chapters: Optional[list[dict]] = None,
 ) -> str:
-    """Exports audio as .m4b with chapter metadata, optional cover art, and subprocess timeout."""
+    """Exports audio as .m4b with chapter metadata (when chapters are known), optional cover art, and timeout."""
     import shutil
     import subprocess
     ffmpeg_bin = shutil.which("ffmpeg")
@@ -249,6 +306,12 @@ async def export_audiobook_m4b(
         has_cov = bool(cover_image_path and Path(cover_image_path).exists())
         if has_cov:
             cmd.extend(["-i", cover_image_path, "-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v", "attached_pic"])
+        meta_file = None
+        if chapters:
+            meta_file = Path(m4b_path).with_name(f".{Path(m4b_path).stem}.ffmeta.txt")
+            meta_file.write_text(build_ffmetadata(chapters, title, author), encoding="utf-8")
+            meta_idx = 2 if has_cov else 1
+            cmd.extend(["-i", str(meta_file), "-map_metadata", str(meta_idx), "-map_chapters", str(meta_idx)])
         cmd.extend([
             "-c:a", "aac", "-b:a", "64k",
             "-metadata", f"title={title or 'Audiobook'}",
@@ -256,12 +319,21 @@ async def export_audiobook_m4b(
             "-metadata", "genre=Audiobook",
             m4b_path,
         ])
+        # AAC encoding time grows with length: a fixed 300 s made long audiobooks silently fall back to a copy
+        size_mb = Path(mp3_path).stat().st_size / (1024 * 1024) if Path(mp3_path).exists() else 0
+        ff_timeout = max(300, int(300 + size_mb * 4))
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True, timeout=300))
+            await loop.run_in_executor(None, lambda: subprocess.run(cmd, capture_output=True, check=True, timeout=ff_timeout))
             return m4b_path
         except Exception as e:
             logger.warning(f"ffmpeg conversion failed: {e}. Falling back to tagged copy.")
+        finally:
+            if meta_file is not None and meta_file.exists():
+                try:
+                    meta_file.unlink()
+                except OSError:
+                    pass
 
     await asyncio.to_thread(shutil.copyfile, mp3_path, m4b_path)
     await asyncio.to_thread(tag_audiobook_file, m4b_path, title=title, author=author, cover_image_path=cover_image_path)
@@ -533,6 +605,17 @@ async def generate_audiobook(
                 break
         book_title = Path(file_path).stem if file_path else "Audiobook"
 
+        # Chapter marks (for M4B players) from the synthesised parts; saved next to the output so an MP3 converted
+        # to M4B later (download endpoint) gets the same chapters.
+        part_records = [(voice_segments[i][0], r) for i, r in enumerate(results) if r]
+        chapters = await asyncio.to_thread(compute_chapter_marks, part_records)
+        if chapters:
+            try:
+                Path(output_path).with_suffix(".chapters.json").write_text(
+                    json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
+            except Exception as ch_err:
+                logger.debug(f"[{job_id}] Chapter marks not saved: {ch_err}")
+
         if output_path.lower().endswith(".m4b"):
             temp_cat_mp3 = temp_dir / "full_concat.mp3"
             await _concatenate_mp3s(chunk_files, str(temp_cat_mp3))
@@ -542,6 +625,7 @@ async def generate_audiobook(
                 title=book_title,
                 author="BookApp",
                 cover_image_path=cover_img,
+                chapters=chapters,
             )
         else:
             await _concatenate_mp3s(chunk_files, output_path)
@@ -587,7 +671,7 @@ async def generate_audiobook(
                         heal_mp3 = temp_dir / "full_concat_refined.mp3"
                         await _concatenate_mp3s(files, str(heal_mp3))
                         await export_audiobook_m4b(str(heal_mp3), dest, title=book_title,
-                                                   author="BookApp", cover_image_path=cover_img)
+                                                   author="BookApp", cover_image_path=cover_img, chapters=chapters)
                     else:
                         await _concatenate_mp3s(files, dest)
                         await asyncio.to_thread(tag_audiobook_file, dest, title=book_title, author="BookApp",

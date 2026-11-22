@@ -41,6 +41,7 @@ class Job:
     refinement_report: Optional[dict] = None  # summary produced by backend.output_refiner
     max_quality: bool = False  # Advanced Mode: second AI pass revising the translation against the original
     revision_report: Optional[dict] = None  # result of the maximum-quality revision pass
+    gemini_usage: Optional[dict] = None  # Gemini requests/tokens consumed by the last run of this job
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -112,6 +113,7 @@ def _job_to_db_dict(job: Job) -> dict:
             "refinement_report": getattr(job, "refinement_report", None),
             "max_quality": bool(getattr(job, "max_quality", False)),
             "revision_report": getattr(job, "revision_report", None),
+            "gemini_usage": getattr(job, "gemini_usage", None),
         },
     }
 
@@ -160,6 +162,7 @@ def _job_from_db_row(row: dict) -> Job:
         refinement_report=meta.get("refinement_report") if isinstance(meta.get("refinement_report"), dict) else None,
         max_quality=bool(meta.get("max_quality", False)),
         revision_report=meta.get("revision_report") if isinstance(meta.get("revision_report"), dict) else None,
+        gemini_usage=meta.get("gemini_usage") if isinstance(meta.get("gemini_usage"), dict) else None,
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -411,6 +414,7 @@ def _notify_subscribers(job: Job):
         "final_refinement": getattr(job, "final_refinement", None),
         "refinement_report": getattr(job, "refinement_report", None),
         "revision_report": getattr(job, "revision_report", None),
+        "gemini_usage": getattr(job, "gemini_usage", None),
     }
     try:
         running_loop = asyncio.get_running_loop()

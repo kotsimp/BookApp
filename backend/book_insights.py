@@ -916,6 +916,62 @@ class InsightTask:
 
 _TASKS: Dict[str, InsightTask] = {}
 _ACTIVE: Dict[Tuple[str, str, str, str], str] = {}
+
+# Small on-disk task index so a client polling a task after a server restart gets a meaningful answer
+# (the saved result, or "interrupted") instead of "not found". Set by backend.main.
+TASK_INDEX_PATH: Optional[Path] = None
+_INDEX_MAX = 300
+
+
+def _index_update(task: "InsightTask") -> None:
+    if TASK_INDEX_PATH is None:
+        return
+    try:
+        idx = json.loads(TASK_INDEX_PATH.read_text(encoding="utf-8")) if TASK_INDEX_PATH.is_file() else {}
+    except Exception:
+        idx = {}
+    idx[task.task_id] = {"job_id": task.job_id, "action": task.action, "insight_type": task.insight_type,
+                         "language": task.language, "status": task.status, "created_at": task.created_at,
+                         "error": task.error}
+    if len(idx) > _INDEX_MAX:
+        for k in sorted(idx, key=lambda k: idx[k].get("created_at", 0))[: len(idx) - _INDEX_MAX]:
+            idx.pop(k, None)
+    try:
+        TASK_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(TASK_INDEX_PATH, idx)
+    except Exception as e:
+        logger.debug(f"Insights task index not saved: {e}")
+
+
+def recover_task(task_id: str, job_output_dir_for: Callable[[str], Path]) -> Optional[Dict[str, Any]]:
+    """After a restart: rebuild a task's public state from the index and the results saved on disk."""
+    if TASK_INDEX_PATH is None or not TASK_INDEX_PATH.is_file():
+        return None
+    try:
+        entry = json.loads(TASK_INDEX_PATH.read_text(encoding="utf-8")).get(task_id)
+    except Exception:
+        return None
+    if not entry:
+        return None
+    base = {"task_id": task_id, "job_id": entry["job_id"], "action": entry["action"],
+            "insight_type": entry["insight_type"], "language": entry["language"], "progress": 100, "result": None}
+    langs = [entry["language"]] if entry.get("language") not in (None, "auto") else ["greek", "english", "other"]
+    try:
+        out_dir = job_output_dir_for(entry["job_id"])
+    except Exception:
+        out_dir = None
+    for lang in langs:
+        rec = load_insight(out_dir, entry["insight_type"], lang) if out_dir else None
+        if not rec or float(rec.get("created_at", 0)) + 5 < float(entry.get("created_at", 0)):
+            continue
+        if entry["action"] == "audio" and not (rec.get("audio_file") and rec.get("audio_text_hash") == rec.get("text_hash")):
+            continue
+        return {**base, "status": "done", "step": "Έτοιμο", "result": rec, "error": None, "recovered": True}
+    if entry.get("status") == "error" and entry.get("error"):
+        return {**base, "status": "error", "step": "", "error": entry["error"], "recovered": True}
+    return {**base, "status": "error", "step": "", "recovered": True,
+            "error": {"code": "interrupted",
+                      "message": "Η εργασία διακόπηκε επειδή έγινε επανεκκίνηση του διακομιστή. Δοκιμάστε ξανά."}}
 _GEN_SEM: Optional[asyncio.Semaphore] = None
 _MAX_TASKS = 200
 
@@ -951,12 +1007,17 @@ def start_task(job_id: str, action: str, insight_type: str, language: Optional[s
     _TASKS[task.task_id] = task
     _ACTIVE[key] = task.task_id
     _prune()
+    _index_update(task)
 
     async def _wrapper():
+        from backend.ai_polisher import track_gemini_usage
         try:
             async with _sem():
                 task.status = "running"
-                task.result = await runner(task)
+                with track_gemini_usage() as usage:
+                    task.result = await runner(task)
+                if isinstance(task.result, dict):
+                    task.result = {**task.result, "gemini_usage": dict(usage)}
                 task.status, task.progress, task.step = "done", 100, "Έτοιμο"
         except InsightsError as e:
             logger.warning(f"Book Insights task {task.task_id} ({action}/{insight_type}) failed: {e}")
@@ -967,6 +1028,7 @@ def start_task(job_id: str, action: str, insight_type: str, language: Optional[s
         finally:
             if _ACTIVE.get(key) == task.task_id:
                 _ACTIVE.pop(key, None)
+            _index_update(task)
 
     asyncio.get_running_loop().create_task(_wrapper())
     return task, False

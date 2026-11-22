@@ -305,6 +305,9 @@ def inspect_text_quality(
         for m in _MONOSYLLABIC_ACCENT_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Monosyllable must not be accented: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
+        if greek_sentence_case_headings(text) != text:
+            issues.append(RefinementIssue("formatting", "English-style Title Case in a Greek heading", "", "info",
+                                          None, True))
         for m in _ARTICLE_FINAL_NU_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Missing final -ν on article: '{m.group(0).strip()}'",
                                           m.group(0), "warning", _line_of(text, m.start()), True))
@@ -350,6 +353,61 @@ def inspect_text_quality(
 
     _LINE_INDEX_CACHE.clear()  # release the reference to the inspected text
     return issues
+
+
+# ---------------------------------------------------------------------------
+# English Title Case in Greek headings -> Greek sentence case
+# ---------------------------------------------------------------------------
+_GREEK_ORDINALS = {
+    "Πρώτο", "Δεύτερο", "Τρίτο", "Τέταρτο", "Πέμπτο", "Έκτο", "Έβδομο", "Όγδοο", "Ένατο", "Δέκατο",
+    "Πρώτος", "Δεύτερος", "Τρίτος", "Τέταρτος", "Πέμπτος", "Έκτος", "Έβδομος", "Όγδοος", "Ένατος", "Δέκατος",
+    "Πρώτη", "Δεύτερη", "Τρίτη", "Τέταρτη", "Πέμπτη", "Έκτη", "Έβδομη", "Όγδοη", "Ένατη", "Δέκατη",
+}
+_SECTION_WORDS = {"Κεφάλαιο", "Μέρος", "Βιβλίο", "Πράξη", "Σκηνή", "Ενότητα"}
+_CAP_WORD_RE = re.compile(rf"^[Α-ΩΆΈΉΊΌΎΏ][{_GR}]+$")
+
+
+def greek_sentence_case_headings(text: str) -> str:
+    """
+    Converts English-style Title Case in Greek heading lines ('Κεφάλαιο Τρίτο: Το Γράμμα από τη Λισαβόνα') to Greek
+    sentence case ('Κεφάλαιο τρίτο: Το γράμμα από τη Λισαβόνα'). A capitalised word is lowered only when it is a
+    chapter ordinal after Κεφάλαιο/Μέρος/... or when the same word occurs in lowercase elsewhere in the text (so it is
+    a common word, not a name). The first word and the first word after ':' keep their capital.
+    """
+    lines = text.split("\n")
+    lowercase_vocab = set(re.findall(rf"(?<![{_GR}\w])[α-ωάέήίόύώϊϋΐΰ][{_GR}]+", text))
+
+    def is_heading(i: int) -> bool:
+        ln = lines[i].strip()
+        if not ln or len(ln) > 90 or re.search(r"[.!;…»\"·,]$", ln) or _PAGE_MARKER_LINE.match(ln):
+            return False
+        words = ln.split()
+        if not 2 <= len(words) <= 12:
+            return False
+        prev_blank = i == 0 or not lines[i - 1].strip() or _PAGE_MARKER_LINE.match(lines[i - 1].strip())
+        next_blank = i == len(lines) - 1 or not lines[i + 1].strip()
+        return bool(prev_blank and next_blank)
+
+    for i in range(len(lines)):
+        if not is_heading(i):
+            continue
+        words = lines[i].split(" ")
+        caps = [k for k, w in enumerate(words) if k > 0 and _CAP_WORD_RE.match(w.strip(":"))]
+        if len(caps) < 2:
+            continue   # a single capitalised word is most likely a name
+        new_words = list(words)
+        for k in caps:
+            w = words[k]
+            core = w.rstrip(":")
+            after_colon = words[k - 1].endswith(":")
+            if after_colon:
+                continue
+            lower = core[0].lower() + core[1:]
+            ordinal = core in _GREEK_ORDINALS and words[k - 1].rstrip(":") in _SECTION_WORDS
+            if ordinal or lower in lowercase_vocab:
+                new_words[k] = lower + w[len(core):]
+        lines[i] = " ".join(new_words)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +470,7 @@ def refine_text_content(
                   lambda m: _preserve_case(m.group(0), _MONOSYLLABLE_FIX[m.group(0).lower()]), s))
         _step("Restored missing accents on capitalised words",
               lambda s: _MISSING_INITIAL_ACCENT_PATTERN.sub(lambda m: _MISSING_INITIAL_ACCENT[m.group(0)], s))
+        _step("Greek sentence case for English-style Title Case headings", greek_sentence_case_headings)
 
         def _calques(s: str) -> str:
             for pattern, replacement, _ in _SAFE_CALQUE_FIXES:

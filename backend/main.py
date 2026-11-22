@@ -20,10 +20,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.api.common import (  # noqa: E402
+    BASE_DIR, TEMP_DIR, UPLOAD_DIR, OUTPUT_DIR, MIME_MAP, _validate_job_id, _job_output_dir,
+)
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
     cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled,
-    is_valid_job_id, cleanup_test_jobs, is_test_job_identifier,
+    cleanup_test_jobs, is_test_job_identifier,
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
@@ -61,6 +64,15 @@ async def _quota_auto_resume_monitor():
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("DocTranslate & AudioBook Generator started.")
+    from backend import device_pairing
+    if device_pairing.is_enabled():
+        code = device_pairing.create_pairing_code()
+        logger.warning(
+            "[Pairing] Device pairing is ON: only paired devices%s may use BookApp. "
+            "Pair a device by opening (valid %d min, single use):  http://<this-computer>:8000/pair?code=%s",
+            " and this computer" if device_pairing.trust_loopback() else "",
+            device_pairing.PAIRING_CODE_TTL // 60, code,
+        )
     cleanup_old_jobs()
     cleanup_test_jobs()
     monitor_task = asyncio.create_task(_quota_auto_resume_monitor())
@@ -92,6 +104,22 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def device_pairing_guard(request: Request, call_next):
+    """Opt-in (BOOKAPP_PAIRING=1): only the host computer and paired devices may use the app. No-op when disabled."""
+    from backend import device_pairing
+    if not device_pairing.is_enabled() or device_pairing.is_open_path(request.url.path):
+        return await call_next(request)
+    client = request.client.host if request.client else None
+    if device_pairing.is_trusted(client, request.cookies.get(device_pairing.COOKIE_NAME)):
+        return await call_next(request)
+    from fastapi.responses import JSONResponse, HTMLResponse
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "This device is not paired with BookApp. Open a pairing link first."},
+                            status_code=403)
+    return HTMLResponse(device_pairing.NOT_PAIRED_HTML, status_code=403)
+
+
+@app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
@@ -101,15 +129,7 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
     return response
 
-# Directories
-BASE_DIR = Path(__file__).parent.parent
-TEMP_DIR = BASE_DIR / "temp"
-TEMP_DIR.mkdir(exist_ok=True)
-
-UPLOAD_DIR = TEMP_DIR / "uploads"
-OUTPUT_DIR = TEMP_DIR / "outputs"
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+# Directories, MIME types and job-id/path helpers live in backend/api/common.py (shared with routers)
 
 # ---------------------------------------------------------------------------
 # Request / Response Models
@@ -198,20 +218,6 @@ class PolishRequest(BaseModel):
     final_refinement: Optional[bool] = None
 
 
-class RefinementRequest(BaseModel):
-    job_id: Optional[str] = None
-    text: Optional[str] = None
-    file_path: Optional[str] = None
-    target_lang: Optional[str] = None   # defaults to the job's target language (or 'greek' for direct text)
-    source_lang: Optional[str] = None
-    mode: str = "auto"  # 'auto', 'translation', 'audiobook'
-    style: Optional[str] = None
-    layout_mode: Optional[str] = None
-    output_format: Optional[str] = None
-    api_key: Optional[str] = None
-    enabled: Optional[bool] = None
-
-
 class GlossaryTermRequest(BaseModel):
     source: str
     target: str
@@ -230,13 +236,6 @@ _WINDOWS_RESERVED_NAMES = {
 }
 
 
-def _validate_job_id(job_id: Optional[str]) -> str:
-    """Validates a single-segment job_id to prevent path traversal."""
-    if not is_valid_job_id(job_id):
-        raise HTTPException(400, "Invalid job_id.")
-    return job_id
-
-
 def _sanitize_filename(filename: Optional[str]) -> str:
     """Sanitizes uploaded filenames for Windows/POSIX filesystem safety."""
     raw = (filename or "document").replace("\\", "/").split("/")[-1]
@@ -253,13 +252,6 @@ def _get_file_type(filename: str) -> Optional[str]:
     ext = Path(filename).suffix.lower()
     mapping = {".pdf": "pdf", ".docx": "docx", ".epub": "epub", ".cbz": "cbz", ".zip": "cbz"}
     return mapping.get(ext)
-
-
-def _job_output_dir(job_id: str) -> Path:
-    _validate_job_id(job_id)
-    d = OUTPUT_DIR / job_id
-    d.mkdir(exist_ok=True)
-    return d
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +523,9 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
     task = asyncio.current_task()
     if task:
         register_task(job_id, task)
+    from backend.ai_polisher import track_gemini_usage
+    usage_cm = track_gemini_usage()
+    usage = usage_cm.__enter__()          # counts every Gemini call of this job (incl. child tasks)
     try:
         job = get_job(job_id)
         if not job:
@@ -561,6 +556,21 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         # Whether the final document is regenerated from the plain-text translation by export_text().
         # Format-preserving outputs (comics, in-place DOCX/EPUB) must never be re-exported by the refiner.
         refine_reexportable = True
+
+        # Format-preserving AI translation: DOCX->DOCX / EPUB->EPUB keep fonts, styles, tables, images and HTML/CSS
+        # (AI translates the document's own paragraphs/runs/text nodes in context-preserving batches).
+        ai_in_place = bool(ai_polish and resolved_key) and (
+            (file_type == "docx" and fmt in ("docx", "doc")) or (file_type == "epub" and fmt == "epub")
+        )
+        ai_segment_translator = None
+        if ai_in_place:
+            from functools import partial
+            from backend.ai_segment_translator import translate_segments_with_gemini
+            ai_segment_translator = partial(
+                translate_segments_with_gemini, source_lang=source_lang, target_lang=target_lang,
+                api_key=resolved_key, style="literature" if layout == "literature" else "natural",
+                quota_behavior=quota_behavior,
+            )
 
         # 0. Graphic Novel / Comic / Scanned Image PDF translation (balloons/vision only, preserving 100% artwork)
         if is_comic_flow:
@@ -610,8 +620,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 fmt = "pdf"
             job.layout_mode = "comic"
 
-        # 1. Single-Pass Direct AI Translation & Polish for ALL book/document formats (PDF, EPUB, DOCX, TXT)
-        elif ai_polish and resolved_key:
+        # 1. Single-Pass Direct AI Translation & Polish for book/document formats (PDF, EPUB, DOCX, TXT)
+        elif ai_polish and resolved_key and not ai_in_place:
             from backend.ai_polisher import translate_and_polish_direct_with_gemini
             style_for_layout = "literature" if layout == "literature" else "natural"
             await translate_and_polish_direct_with_gemini(
@@ -654,6 +664,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 target_lang,
                 docx_prog,
                 style="literature" if layout == "literature" else None,
+                segment_translator=ai_segment_translator,
             )
             if is_job_cancelled(job_id):
                 return
@@ -679,6 +690,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 target_lang,
                 epub_prog,
                 style="literature",
+                segment_translator=ai_segment_translator,
             )
             if is_job_cancelled(job_id):
                 return
@@ -710,8 +722,13 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
-        if getattr(job, "max_quality", False) and not (ai_polish and resolved_key) and not is_comic_flow:
-            update_job(job_id, revision_report={"status": "skipped", "reason": "requires_ai_polish_and_key"})
+        if getattr(job, "max_quality", False) and not is_comic_flow:
+            if not (ai_polish and resolved_key):
+                update_job(job_id, revision_report={"status": "skipped", "reason": "requires_ai_polish_and_key"})
+            elif ai_in_place:
+                # The revision pass works on the page-aligned plain-text path; format-preserved documents keep
+                # their single, format-preserving AI translation.
+                update_job(job_id, revision_report={"status": "skipped", "reason": "format_preserved_output"})
 
         # Automatic Final Output Refinement & Quality-Control stage (independent, non-fatal, local-only)
         try:
@@ -769,6 +786,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         else:
             update_job(job_id, status="error", error=err_str)
     finally:
+        usage_cm.__exit__(None, None, None)
+        update_job(job_id, gemini_usage=dict(usage))
         unregister_task(job_id)
 
 
@@ -848,6 +867,9 @@ async def _run_audiobook(
     task = asyncio.current_task()
     if task:
         register_task(job_id, task)
+    from backend.ai_polisher import track_gemini_usage
+    usage_cm = track_gemini_usage()
+    usage = usage_cm.__enter__()
     try:
         if is_job_cancelled(job_id):
             return
@@ -885,6 +907,8 @@ async def _run_audiobook(
         else:
             update_job(job_id, status="error", error=err_str)
     finally:
+        usage_cm.__exit__(None, None, None)
+        update_job(job_id, gemini_usage=dict(usage))
         unregister_task(job_id)
 
 
@@ -920,6 +944,7 @@ async def progress_stream(job_id: str):
                 "final_refinement": getattr(job, "final_refinement", None),
                 "refinement_report": getattr(job, "refinement_report", None),
                 "revision_report": getattr(job, "revision_report", None),
+                "gemini_usage": getattr(job, "gemini_usage", None),
             }
             yield f"data: {json.dumps(state)}\n\n"
 
@@ -1005,6 +1030,7 @@ async def job_status(job_id: str):
         "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
         "final_refinement": getattr(job, "final_refinement", None),
         "refinement_report": getattr(job, "refinement_report", None),
+        "gemini_usage": getattr(job, "gemini_usage", None),
         "max_quality": bool(getattr(job, "max_quality", False)),
         "revision_report": getattr(job, "revision_report", None),
         "gemini_quota_exhausted": quota_info["exhausted"],
@@ -1015,17 +1041,6 @@ async def job_status(job_id: str):
     }
 
 
-MIME_MAP = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".doc": "application/msword",
-    ".epub": "application/epub+zip",
-    ".txt": "text/plain; charset=utf-8",
-    ".mp3": "audio/mpeg",
-    ".m4b": "audio/mp4",
-    ".cbz": "application/vnd.comicbook+zip",
-    ".cbr": "application/vnd.comicbook-rar",
-}
 
 
 @app.api_route("/api/download/{job_id}", methods=["GET", "HEAD"])
@@ -1133,12 +1148,20 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                         if cand.exists():
                             cov_img = str(cand)
                             break
+                    chapters = None
+                    ch_file = src_mp3.with_suffix(".chapters.json")
+                    if ch_file.is_file():
+                        try:
+                            chapters = json.loads(ch_file.read_text(encoding="utf-8")) or None
+                        except Exception:
+                            chapters = None
                     await export_audiobook_m4b(
                         str(src_mp3),
                         str(target_m4b),
                         title=job.file_name if job else "Audiobook",
                         author="BookApp",
                         cover_image_path=cov_img,
+                        chapters=chapters,
                     )
                     out_path = target_m4b
                     if job:
@@ -1555,9 +1578,13 @@ async def get_app_settings():
     pool_status = GeminiKeyPool.get_pool_status()
     from backend.output_refiner import is_refinement_enabled
     refinement_on = is_refinement_enabled()
+    from backend.gemini_key_pool import mask_api_key
+    # Keys never leave the server in clear text: the UI only needs masked forms (it sends them back unchanged to keep
+    # a key; GeminiKeyPool.set_keys maps masked values back to the stored keys).
     return {
-        "gemini_api_key": key,
-        "gemini_api_keys": keys,
+        "gemini_api_key": mask_api_key(key),
+        "gemini_api_keys": [mask_api_key(k) for k in keys],
+        "gemini_api_keys_count": len(keys),
         "pool": pool_status,
         "default_quota_behavior": quota_behavior,
         "final_refinement_enabled": refinement_on,
@@ -1647,8 +1674,10 @@ async def delete_app_setting(key: str):
 @app.get("/api/gemini/status")
 async def get_gemini_status():
     """Returns current Gemini daily quota exhaustion status and cooldown info."""
-    from backend.ai_polisher import get_gemini_quota_info
-    return get_gemini_quota_info()
+    from backend.ai_polisher import get_gemini_quota_info, get_daily_gemini_usage
+    info = dict(get_gemini_quota_info())
+    info["usage_today"] = get_daily_gemini_usage()
+    return info
 
 
 @app.post("/api/gemini/reset-quota")
@@ -1778,6 +1807,9 @@ async def polish_translation(req: PolishRequest):
         step=init_step,
     )
 
+    from backend.ai_polisher import track_gemini_usage
+    polish_usage_cm = track_gemini_usage()
+    polish_usage = polish_usage_cm.__enter__()
     try:
         polished = await polish_text_with_gemini(
             text=text_to_polish,
@@ -1858,370 +1890,20 @@ async def polish_translation(req: PolishRequest):
             current_step="AI Polishing complete!",
         )
 
-    return {"status": "polished", "job_id": req.job_id, "polished_text": polished}
+    polish_usage_cm.__exit__(None, None, None)
+    return {"status": "polished", "job_id": req.job_id, "polished_text": polished, "gemini_usage": dict(polish_usage)}
 
 
 # ---------------------------------------------------------------------------
-# Output Refinement & Quality Control Endpoints
+# Self-contained endpoint groups (backend/api/*): refinement, Book Insights, device pairing
 # ---------------------------------------------------------------------------
+from backend.api import refine as _refine_api, insights as _insights_api, pairing as _pairing_api  # noqa: E402
 
-@app.get("/api/refine/config")
-async def get_refine_config():
-    """Returns configuration and operational status of the Final Output Refinement stage."""
-    from backend.output_refiner import is_refinement_enabled, REFINER_VERSION, MAX_AUDIO_HEAL_CHUNKS
-    return {
-        "enabled": is_refinement_enabled(),
-        "version": REFINER_VERSION,
-        "supported_modes": ["translation", "audiobook"],
-        "uses_external_api": False,
-        "max_audio_heal_chunks": MAX_AUDIO_HEAL_CHUNKS,
-        "pipeline_stages": [
-            "structural_integrity",
-            "omission_detection",
-            "orthography_and_accents",
-            "grammar_and_morphology",
-            "calque_detection_and_safe_remediation",
-            "repetition_and_stutter_filtering",
-            "formatting_normalization",
-            "audio_container_and_stream_validation",
-            "audio_sequence_continuity_verification",
-            "audio_missing_section_healing",
-            "metadata_verification",
-        ],
-    }
-
-
-def _resolve_job_output_file(job_id: str, file_path: Optional[str], suffixes: tuple) -> Optional[Path]:
-    """Resolves a file strictly inside the job's own output directory (prevents path traversal)."""
-    out_d = _job_output_dir(job_id).resolve()
-    if file_path:
-        cand = Path(file_path)
-        if not cand.is_absolute():
-            cand = out_d / cand
-        try:
-            cand = cand.resolve()
-        except OSError:
-            return None
-        if out_d not in cand.parents or not cand.is_file() or cand.suffix.lower() not in suffixes:
-            raise HTTPException(400, "file_path must reference an output file of the given job.")
-        return cand
-    job = get_job(job_id)
-    if job and job.output_path and Path(job.output_path).suffix.lower() in suffixes:
-        cand = Path(job.output_path).resolve()
-        if out_d in cand.parents and cand.is_file():
-            return cand
-    cands = [
-        f for f in out_d.iterdir()
-        if f.is_file() and f.suffix.lower() in suffixes and not f.name.endswith("_original.txt")
-    ]
-    # Prefer translation outputs, newest first
-    cands.sort(key=lambda f: ("_translated_" in f.name, f.stat().st_mtime), reverse=True)
-    return cands[0] if cands else None
-
-
-def _job_output_is_reexportable(job) -> bool:
-    """False for outputs produced by format-preserving flows (comics, in-place DOCX/EPUB)."""
-    if not job:
-        return False
-    fmt = (getattr(job, "output_format", "") or "").lower()
-    ftype = (getattr(job, "file_type", "") or "").lower()
-    if (getattr(job, "layout_mode", "") or "").lower() in ("comic", "graphic_novel") or fmt in ("cbz", "cbr"):
-        return False
-    if not getattr(job, "ai_polish", False) and (
-        (ftype == "docx" and fmt in ("docx", "doc")) or (ftype == "epub" and fmt == "epub")
-    ):
-        return False
-    return True
-
-
-@app.post("/api/refine")
-async def refine_output_endpoint(req: RefinementRequest):
-    """
-    On-demand Final Output Refinement & Quality Control.
-    - ``text``: refine a text snippet (nothing is written to disk).
-    - ``job_id``: refine/inspect that job's translation, or validate its audiobook (``mode='audiobook'``).
-    Files are only ever resolved inside the job's own output directory.
-    """
-    from dataclasses import asdict
-    from backend.output_refiner import (
-        refine_text_content, refine_translation_output, refine_audiobook_output_async,
-        is_refinement_enabled, build_refinement_report, MAX_DIRECT_TEXT_CHARS,
-    )
-
-    if not is_refinement_enabled(req.enabled):
-        return {"status": "skipped", "message": "Final refinement stage is disabled."}
-
-    req_mode = (req.mode or "auto").strip().lower()
-    if req_mode not in ("auto", "translation", "audiobook"):
-        raise HTTPException(400, "mode must be 'auto', 'translation' or 'audiobook'.")
-
-    # 1. Direct text (stateless)
-    if req.text is not None and req_mode != "audiobook":
-        if len(req.text) > MAX_DIRECT_TEXT_CHARS:
-            raise HTTPException(413, "Text too large for direct refinement.")
-        refined_txt, issues, corrections = refine_text_content(
-            req.text, target_lang=req.target_lang or "greek", source_lang=req.source_lang or "english",
-            style=req.style or req.layout_mode,
-        )
-        return {
-            "status": "refined" if corrections else "verified_clean",
-            "mode": "translation",
-            "original_text": req.text,
-            "refined_text": refined_txt,
-            "issues_detected": [asdict(i) for i in issues],
-            "corrections_applied": corrections,
-            "modifications_count": len(corrections),
-        }
-
-    if not req.job_id:
-        raise HTTPException(400, "Provide either 'text' or 'job_id' for refinement.")
-    _validate_job_id(req.job_id)
-    job = get_job(req.job_id)
-    if not job:
-        raise HTTPException(404, f"Job '{req.job_id}' not found.")
-    if job.status == "running":
-        raise HTTPException(409, "Job is still running; refinement runs automatically when it finishes.")
-
-    audio_suffixes = (".mp3", ".m4b")
-    is_audio = req_mode == "audiobook" or (
-        req_mode == "auto" and (
-            (req.file_path or "").lower().endswith(audio_suffixes)
-            or (not req.file_path and (job.mode == "audiobook" or (job.output_path or "").lower().endswith(audio_suffixes)))
-        )
-    )
-
-    # 2. Audiobook validation (inspection + missing-metadata repair; chunks are gone after generation)
-    if is_audio:
-        target_audio = _resolve_job_output_file(req.job_id, req.file_path, audio_suffixes)
-        if not target_audio:
-            raise HTTPException(404, "Audiobook file not found for refinement.")
-        res = await refine_audiobook_output_async(
-            job_id=req.job_id, output_path=str(target_audio), language=req.target_lang or "greek",
-            book_title=Path(job.file_name or "Audiobook").stem, enabled=True,
-        )
-        update_job(req.job_id, refinement_report=build_refinement_report(res))
-        return {"status": res.status, "mode": "audiobook", "result": asdict(res)}
-
-    # 3. Translation output of a job
-    text_p = _resolve_job_output_file(req.job_id, req.file_path if (req.file_path or "").lower().endswith(".txt") else None, (".txt",))
-    if text_p and text_p.name.endswith("_original.txt"):
-        text_p = None
-    if not text_p:
-        raise HTTPException(404, f"No translation text output found for job '{req.job_id}'.")
-    final_p = job.output_path if job.output_path and Path(job.output_path).exists() else str(text_p)
-    res_trans = await refine_translation_output(
-        job_id=req.job_id,
-        output_path=str(text_p),
-        final_exported_path=final_p,
-        source_lang=req.source_lang or getattr(job, "source_lang", "english"),
-        target_lang=req.target_lang or getattr(job, "target_lang", "greek"),
-        layout_mode=req.layout_mode or getattr(job, "layout_mode", "standard") or "standard",
-        output_format=req.output_format or job.output_format,
-        enabled=True,
-        allow_reexport=_job_output_is_reexportable(job),
-    )
-    update_job(req.job_id, refinement_report=build_refinement_report(res_trans))
-    return {"status": res_trans.status, "mode": "translation", "result": asdict(res_trans)}
-
-
-# ---------------------------------------------------------------------------
-# Book Insights (summaries, synopses & audio versions) — backend/book_insights.py
-# ---------------------------------------------------------------------------
-
-class InsightsGenerateRequest(BaseModel):
-    job_id: str
-    insight_type: str                     # one_sentence | short_summary | extended_summary | standard_synopsis |
-                                          # extended_synopsis | summary (basic) | synopsis (basic)
-    language: Optional[str] = None        # 'greek' | 'english' | None/'auto' (= document language)
-    api_key: Optional[str] = None
-
-
-class InsightsExportRequest(BaseModel):
-    job_id: str
-    insight_type: str
-    language: str
-    format: str                           # pdf | docx | doc | txt
-
-
-class InsightsAudioRequest(BaseModel):
-    job_id: str
-    insight_type: str
-    language: str
-    voice_name: Optional[str] = None
-
-
-def _insights_http_error(e) -> HTTPException:
-    return HTTPException(getattr(e, "http_status", 400), detail=e.user_message)
-
-
-def _insights_job(job_id: str):
-    _validate_job_id(job_id)
-    job = get_job(job_id)
-    if not job:
-        raise HTTPException(404, "Το έγγραφο δεν βρέθηκε. Ανεβάστε το ξανά.")
-    return job
-
-
-async def _insights_source_text(job) -> str:
-    from backend.book_insights import extract_document_text, InsightsError
-    if (job.file_type or "").lower() in ("cbz", "cbr", "zip") or (getattr(job, "layout_mode", "") or "") == "comic":
-        raise _insights_http_error(InsightsError("unsupported_format"))
-    try:
-        return await asyncio.to_thread(extract_document_text, job.file_path, job.file_type)
-    except InsightsError as e:
-        raise _insights_http_error(e)
-
-
-def _insights_resolve_type(raw: str) -> str:
-    from backend.book_insights import INSIGHT_TYPES, BASIC_TYPES, InsightsError
-    t = (raw or "").strip().lower()
-    t = BASIC_TYPES.get(t, t)
-    if t not in INSIGHT_TYPES:
-        raise _insights_http_error(InsightsError("invalid_request"))
-    return t
-
-
-def _insights_public_record(job_id: str, rec: dict) -> dict:
-    pub = {k: v for k, v in rec.items() if k not in ("source_hash", "text_hash", "audio_text_hash")}
-    if rec.get("audio_file"):
-        pub["audio_url"] = f"/api/insights/{job_id}/files/{rec['audio_file']}"
-    return pub
-
-
-@app.get("/api/insights/tasks/{task_id}")
-async def insights_task_status(task_id: str):
-    """Progress / result of a Book Insights background task."""
-    from backend.book_insights import get_task
-    if not re.fullmatch(r"[0-9a-f]{32}", task_id or ""):
-        raise HTTPException(400, "Invalid task id.")
-    task = get_task(task_id)
-    if not task:
-        raise HTTPException(404, "Η εργασία δεν βρέθηκε (ίσως έγινε επανεκκίνηση του διακομιστή). Δοκιμάστε ξανά.")
-    data = task.public()
-    if data.get("result"):
-        data["result"] = _insights_public_record(task.job_id, data["result"])
-    return data
-
-
-@app.get("/api/insights/{job_id}/analysis")
-async def insights_analysis(job_id: str):
-    """Meaningful-text length, detected language and summary/synopsis availability for a document."""
-    from backend.book_insights import analyze_text, list_insights
-    from backend.gemini_key_pool import resolve_gemini_api_key
-    job = _insights_job(job_id)
-    text = await _insights_source_text(job)
-    info = await asyncio.to_thread(analyze_text, text)
-    info["has_api_key"] = bool(resolve_gemini_api_key(None))
-    info["file_name"] = job.file_name
-    info["existing"] = list_insights(_job_output_dir(job_id))
-    return info
-
-
-@app.get("/api/insights/{job_id}")
-async def insights_list(job_id: str):
-    """Previously generated insights for a document (text included)."""
-    from backend.book_insights import list_insights, load_insight
-    _insights_job(job_id)
-    out_dir = _job_output_dir(job_id)
-    items = []
-    for meta in list_insights(out_dir):
-        rec = load_insight(out_dir, meta["insight_type"], meta["language"])
-        if rec:
-            items.append(_insights_public_record(job_id, rec))
-    return {"job_id": job_id, "insights": items}
-
-
-@app.post("/api/insights/generate")
-async def insights_generate(req: InsightsGenerateRequest):
-    """Starts summary/synopsis generation in the background. Identical in-flight requests are de-duplicated."""
-    from backend.book_insights import (
-        start_task, generate_insight, analyze_text, InsightsError, INSIGHT_TYPES, OUTPUT_LANGUAGES,
-    )
-    from backend.gemini_key_pool import resolve_gemini_api_key
-    job = _insights_job(req.job_id)
-    insight_type = _insights_resolve_type(req.insight_type)
-    lang = (req.language or "auto").strip().lower()
-    if lang not in OUTPUT_LANGUAGES + ("auto",):
-        raise _insights_http_error(InsightsError("invalid_request"))
-    api_key = resolve_gemini_api_key(req.api_key)
-    if not api_key:
-        raise _insights_http_error(InsightsError("no_api_key", http_status=401))
-    text = await _insights_source_text(job)
-    # Fail fast (before any API usage) when the document is ineligible
-    info = await asyncio.to_thread(analyze_text, text)
-    if not info["can_summary"]:
-        raise _insights_http_error(InsightsError("insufficient_text", http_status=422))
-    if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and not info["can_synopsis"]:
-        raise HTTPException(422, info["reasons"]["synopsis"])
-    if lang == "auto" and info["detected_language"] is None:
-        raise _insights_http_error(InsightsError("language_detection_failed", http_status=422))
-
-    out_dir = _job_output_dir(req.job_id)
-    title = Path(job.file_name or "document").stem
-
-    async def _run(task):
-        def _prog(pct, step):
-            task.progress, task.step = int(pct), step
-        return await generate_insight(text, insight_type, None if lang == "auto" else lang, api_key,
-                                      title=title, job_output_dir=out_dir, progress=_prog)
-
-    task, duplicate = start_task(req.job_id, "generate", insight_type, lang, _run)
-    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate, "insight_type": insight_type}
-
-
-@app.post("/api/insights/export")
-async def insights_export(req: InsightsExportRequest):
-    """Exports a generated insight to PDF, DOCX or TXT and returns its download URL."""
-    from backend.book_insights import load_insight, export_insight, InsightsError
-    _insights_job(req.job_id)
-    insight_type = _insights_resolve_type(req.insight_type)
-    rec = load_insight(_job_output_dir(req.job_id), insight_type, (req.language or "").lower())
-    if not rec:
-        raise _insights_http_error(InsightsError("not_generated", http_status=404))
-    try:
-        path = await asyncio.to_thread(export_insight, rec, _job_output_dir(req.job_id), req.format)
-    except InsightsError as e:
-        raise _insights_http_error(e)
-    return {"file_name": path.name, "url": f"/api/insights/{req.job_id}/files/{path.name}"}
-
-
-@app.post("/api/insights/audio")
-async def insights_audio(req: InsightsAudioRequest):
-    """Starts narration of the final insight text with the existing neural TTS voices."""
-    from backend.book_insights import load_insight, synthesize_insight_audio, start_task, InsightsError
-    _insights_job(req.job_id)
-    insight_type = _insights_resolve_type(req.insight_type)
-    lang = (req.language or "").lower()
-    out_dir = _job_output_dir(req.job_id)
-    rec = load_insight(out_dir, insight_type, lang)
-    if not rec:
-        raise _insights_http_error(InsightsError("not_generated", http_status=404))
-    if lang not in ("greek", "english"):
-        raise _insights_http_error(InsightsError("audio_unsupported_language"))
-
-    async def _run(task):
-        def _prog(pct, step):
-            task.progress, task.step = int(pct), step
-        record = load_insight(out_dir, insight_type, lang) or rec
-        await synthesize_insight_audio(record, out_dir, voice_name=req.voice_name, progress=_prog)
-        return record
-
-    task, duplicate = start_task(req.job_id, "audio", insight_type, lang, _run)
-    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate}
-
-
-@app.get("/api/insights/{job_id}/files/{filename}")
-async def insights_file(job_id: str, filename: str):
-    """Downloads/streams an exported insight file or its audio (strictly inside the job's insights folder)."""
-    _insights_job(job_id)
-    if not re.fullmatch(r"[\w\-. ]{1,160}", filename or "", flags=re.UNICODE) or filename.startswith("."):
-        raise HTTPException(400, "Invalid file name.")
-    base = (_job_output_dir(job_id) / "insights").resolve()
-    path = (base / filename).resolve()
-    if path.parent != base or not path.is_file() or path.suffix.lower() not in (".pdf", ".docx", ".txt", ".mp3"):
-        raise HTTPException(404, "Το αρχείο δεν βρέθηκε.")
-    return FileResponse(str(path), media_type=MIME_MAP.get(path.suffix.lower(), "application/octet-stream"),
-                        filename=path.name)
+# Register the routers' routes directly on the app (no prefix/dependencies), so they appear as plain APIRoute
+# entries in app.routes exactly like routes declared here (FastAPI >= 0.16x nests include_router() routers,
+# which hides them from code that inspects app.routes, e.g. the API contract and coverage tests).
+for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router):
+    app.router.routes.extend(_api_router.routes)
 
 
 # ---------------------------------------------------------------------------

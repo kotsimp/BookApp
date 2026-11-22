@@ -52,15 +52,13 @@ def api_post_file(path, filepath, filename):
 
 def run_tests():
     print("=== 1. Testing Persistent Settings API ===")
-    _, orig_settings = api_get("/settings")
-    orig_key = orig_settings.get("gemini_api_key", "")
+    # Snapshot the settings FILE (GET /api/settings only returns masked keys, which cannot restore real keys).
+    from backend.settings_manager import load_settings, save_settings
+    orig_settings = load_settings()
     try:
         _run_standalone_polish_suite()
     finally:
-        if orig_key:
-            api_post_json("/settings", {"gemini_api_key": orig_key})
-        else:
-            api_delete("/settings/gemini_api_key")
+        save_settings(orig_settings)   # the server re-reads keys from this file on every request
 
 
 def _run_standalone_polish_suite():
@@ -68,8 +66,12 @@ def _run_standalone_polish_suite():
     assert status == 200, f"Expected 200, got {status}"
     status, settings = api_get("/settings")
     assert status == 200
-    assert settings.get("gemini_api_key") == "AQ.TestKeyAutoPersist123"
-    print("  GET & POST /settings: OK (API key persisted successfully)")
+    # Keys are only ever returned masked; the real key stays on the server
+    from backend.gemini_key_pool import mask_api_key
+    assert settings.get("gemini_api_key") == mask_api_key("AQ.TestKeyAutoPersist123")
+    assert settings.get("has_gemini_key") is True
+    assert "AQ.TestKeyAutoPersist123" not in json.dumps(settings)
+    print("  GET & POST /settings: OK (API key persisted, returned masked)")
 
     print("\n=== 2. Testing Standalone Polish on Uploaded Document (No Translation) ===")
     # Create sample Greek Word document

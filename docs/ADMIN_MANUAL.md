@@ -97,6 +97,10 @@ The application implements an asynchronous, event-driven API architecture:
   * **Models:** `_FULL_MODELS_ONLY` (a `contextvars.ContextVar`) restricts `_call_gemini_api` to non-Lite, non-Gemma Flash/Pro models, and adds a `:full` suffix to the cache key. If no full model is available, a `DailyQuotaExhaustedError` is raised and recorded as `reason="quota_exhausted"`.
   * **Acceptance:** identical page markers and a length ratio of 0.8–1.25; whitespace-only differences count as `verified_clean`; the file is replaced atomically via a `.revision-tmp` file.
   * **Report:** `revision_report = {status: revised|verified_clean|skipped|error, reason, changed_lines, similarity, duration_s}`, persisted in job metadata and exposed via `GET /api/status/{job_id}` and SSE.
+* **Format-preserving AI translation (`backend/ai_segment_translator.py` + `format_preserver`):** when AI Polish and a key are used for DOCX→DOCX or EPUB→EPUB, `format_preserver` collects units in document order. Units are paragraphs, or individual runs for mixed bold/italic paragraphs (DOCX), or text nodes (EPUB). Gemini translates them in numbered batches (`⟦n⟧ text`, ~4,000 characters / 60 segments) with the direct-translation prompt, dossier (>18k characters) and glossary, and the result is written back in place. Missing or duplicated segments are retried in halves, then fall back to the free engine individually. A quota error falls back or propagates per `quota_behavior`. Maximum quality is not applied to these outputs (`revision_report.reason = format_preserved_output`).
+* **Gemini usage accounting:** `ai_polisher.track_gemini_usage()` opens a context-scoped accumulator around each job, Book Insights task and standalone polish. `record_gemini_usage()` adds `usageMetadata` (and cache hits) per call, including comic Vision calls. The result is stored in `Job.gemini_usage` and exposed via status/SSE; the daily total is in `GET /api/gemini/status` (`usage_today`).
+* **Slow-model memory:** a model that times out is moved to the end of the candidate list for `SLOW_MODEL_PENALTY_S = 600` seconds; a success clears it.
+* **M4B chapters:** `tts_engine.compute_chapter_marks()` derives chapter start times from the synthesised parts (exporter heading detector; proportional placement inside a part; size-based duration fallback). They're written next to the output as `<name>.chapters.json` and passed to ffmpeg as an FFMETADATA file (`-map_metadata` / `-map_chapters`), both during generation and for on-demand MP3→M4B downloads. The ffmpeg timeout is `300 s + 4 s/MB`.
 * **Shared Gemini call (`ai_polisher._call_gemini_api`):** size-aware per-request timeout `45 + len(content)/120` seconds (clamped 45–180; previously a fixed 25 s that pushed long batches onto Lite models), rate-limiter token estimate `≈ (prompt + content chars) / 2` (clamped 500–60,000; previously a constant 1,500), and an optional `cache_gate(output) -> bool` predicate. Without a gate, only outputs passing `detect_greek_output_issues` are cached (unchanged); Book Insights and the dossier extraction pass a non-empty gate so English and short outputs are cached too.
 * **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously across different Google accounts (providing up to 6,000 free requests/day). Features sliding-window rate limiting (`GeminiRateLimiter` tracking RPM/TPM and smoothing request pacing), explicit Retry-After support, intelligent error payload classification (`parse_gemini_error`), per-model quota cooldown isolation (`_MODEL_COOLDOWNS` preventing low-quota models like `gemini-3.8-flash` with 20 RPD from blocking 1,500 RPD models on the same key), seamless key rotation upon HTTP 429 daily exhaustion, transient burst backoff (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when cooldowns expire or new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
 * **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
@@ -129,7 +133,16 @@ The application implements an asynchronous, event-driven API architecture:
   * `FINAL_REFINEMENT_ENABLED=true|false`: overrides the Final Output Refinement setting.
   * `BOOKAPP_CORS_ORIGINS="https://a.example,https://b.example"`: extra origins allowed to call the API cross-origin. Normally unnecessary: the UI is served by the same server (same origin), including behind Nginx, on a LAN or in Docker.
 * **CORS policy:** only same-origin requests and local development origins (`http(s)://localhost`, `127.0.0.1` and `[::1]`, any port) receive CORS permission. Other websites open in the user's browser cannot read API responses, such as `/api/settings`, which contains the Gemini keys. They also cannot send JSON or DELETE requests to the app.
-* **Network exposure:** the API has no user authentication; it's designed as a single-user local app. `run.py` and `start_bookapp.bat` bind to `127.0.0.1`. The Docker image binds to `0.0.0.0`, so on a LAN anyone who can reach port 8000 can use the app and read the configured keys. Expose it only on trusted networks, or put it behind a reverse proxy with authentication (e.g. Nginx `auth_basic`).
+* **Network exposure:** the API has no user accounts; it's designed as a single-user local app. `run.py` and `start_bookapp.bat` bind to `127.0.0.1`. The Docker image binds to `0.0.0.0`, so on a LAN anyone who can reach port 8000 can use the app. Use device pairing (below), expose it only on trusted networks, or put it behind a reverse proxy with authentication.
+* **Gemini API keys** are stored only in `config/settings.json` on the server. `GET /api/settings` returns masked forms (`AIzaSy...4f2D`), and the browser never stores keys. `GeminiKeyPool.set_keys` and `resolve_gemini_api_key` map masked values back to the stored keys, and drop unknown masked values.
+* **Device pairing (optional, no password):**
+  * **Enabling:** set `BOOKAPP_PAIRING=1`. Only trusted clients can use the app: the host computer (loopback) and paired devices. Unpaired clients get HTTP 403 (a JSON message for `/api/*`, an explanatory page otherwise). `/api/health` stays open for health checks.
+  * **First device:** at startup the server logs a one-time link `http://<this-computer>:8000/pair?code=...`, valid 15 minutes and single use. Opening it sets a 1-year HttpOnly, SameSite=Lax cookie.
+  * **More devices:** create links from any trusted device in **🔑 Gemini API Key → 📱 Συσκευές**, which also lists devices and lets you revoke them.
+  * **Storage:** only SHA-256 hashes of device tokens are stored (`paired_devices` in settings).
+  * **Reverse proxy on the same machine:** set `BOOKAPP_TRUST_LOOPBACK=0`, otherwise every proxied request looks like the host.
+  * **Endpoints:** `GET /pair`, `GET /api/pairing`, `POST /api/pairing/links`, `DELETE /api/pairing/devices/{id}`.
+
 
 ---
 
@@ -157,6 +170,8 @@ cd BookApp
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
+# optional, reproducible: pin to the exact versions of a verified environment
+pip install -r requirements.txt -c requirements-lock.txt
 ```
 Dependencies: FastAPI, Uvicorn, python-multipart, aiofiles, aiohttp, Pydantic, PyMuPDF, python-docx, EbookLib, BeautifulSoup4, deep-translator, edge-tts, mutagen, Pillow (comic page rendering). FFmpeg is optional (true chaptered M4B audio); without it, M4B export falls back to a tagged MP3 stream.
 
@@ -264,7 +279,13 @@ server {
 ```
 BookApp/
 ├── backend/
-│   ├── main.py              # FastAPI application (45 REST endpoints & SSE streaming)
+│   ├── main.py              # FastAPI application (pipelines, core endpoints & SSE streaming)
+│   ├── api/                 # API routers: refine.py, insights.py, pairing.py + shared common.py (58 REST endpoints in total)
+│   ├── output_refiner.py    # Final Output Refinement & quality-control stage
+│   ├── book_insights.py     # Book Insights: summaries, synopses & their audio
+│   ├── translation_prompts.py # Versioned prompt library (translation, polish, revision, audiobook script, dossier)
+│   ├── ai_segment_translator.py # Format-preserving AI translation of DOCX/EPUB segments
+│   ├── device_pairing.py    # Optional password-free device pairing (BOOKAPP_PAIRING=1)
 │   ├── ai_polisher.py       # Single-Pass Direct AI Translation & Gemini Polish engine
 │   ├── comic_translator.py  # Graphic Novel, Scanned PDF & Manga (RTL) Vision AI engine
 │   ├── queue_manager.py     # Smart Batch Queue serial engine (max 20 files, retry, auto-pause)
@@ -286,16 +307,19 @@ BookApp/
 │   └── settings.json        # Persistent configuration & API keys (gitignored)
 ├── data/
 │   └── bookapp.db           # Persistent SQLite database (jobs, settings & semantic cache)
-├── frontend/                # Single-page application assets (HTML, CSS, JS)
+├── frontend/                # Single-page app: index.html, style.css, app.js (core), insights.js, pairing.js
 ├── temp/
 │   ├── uploads/{job_id}/    # Uploaded input documents
-│   └── outputs/{job_id}/    # Translated books, checkpoints, and audiobooks
-├── tests/                   # 42 Automated test suites (100% PASS rate)
-└── requirements.txt
+│   └── outputs/{job_id}/    # Translated books, checkpoints, audiobooks (+ <name>.chapters.json), insights/
+├── tests/                   # 48 automated test suites (100% PASS rate)
+├── eval/passages.json       # Translation quality evaluation passages
+├── scripts/                 # eval_translation_quality.py (quality evaluation runner)
+├── requirements.txt
+└── requirements-lock.txt    # Exact versions of a verified environment (pip -c constraints)
 ```
 
 ### REST API Administration Endpoints
-The backend provides **54 REST endpoints** for complete administrative control:
+The backend provides **58 REST endpoints** for complete administrative control:
 * `POST /api/translate`: Initiates document translation. Supports `quota_behavior: "wait" | "fallback"`, `final_refinement` (local quality stage override) and `max_quality` (second AI revision against the original; requires `ai_polish` and a Gemini key).
 * `POST /api/audiobook`: Initiates neural audiobook synthesis.
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
@@ -337,16 +361,16 @@ On application startup, `cleanup_old_jobs()` automatically deletes orphaned jobs
 
 ## 6. Automated Test Suite Execution
 
-The repository includes a comprehensive master test runner with **100% endpoint coverage across all 54 FastAPI routes**:
+The repository includes a comprehensive master test runner with **100% endpoint coverage across all 58 FastAPI routes**:
 
 > [!IMPORTANT]
 > **User Output Protection & Zero-Junk Guarantee During Test Runs:** Test automation runs safely isolate test jobs and outputs using `DELETE /api/jobs/tests/cleanup`. User translation outputs in `temp/outputs/` and `temp/uploads/` are never wiped during automated test suite execution, and `run_all_tests.py` / `test_e2e_regression_guard.py` automatically back up and restore real user directories and SQLite records. All test sessions, temporary artifacts, and scratch directories created during tests are guaranteed 100% purged upon completion, ensuring zero junk files or test history in the user interface.
 
 ```bash
-# Execute all 46 test suites (Full Master Suite):
+# Execute all 48 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (41 local static, unit, contract, UI, and queue suites):
+# Fast execution (43 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 ```
 
@@ -408,7 +432,22 @@ The master runner automatically executes all test suites:
 
 46. `test_audit_regressions.py`: regression guards from the November 2026 codebase audit (7 tests): a quota-paused queue reports `paused_for_quota` so it can auto-resume; saving new keys resets the quota circuit breaker; CORS rejects foreign origins and accepts local development origins; every third-party import is declared in `requirements.txt`; no undefined names in the backend (pyflakes, when installed).
 
-All test suites pass: **`46/46 PASS (41/41 in --fast mode · 54/54 FastAPI routes covered)`**.
+47. `test_device_pairing.py`: device pairing (7 tests). Covers: disabled means no change; unpaired clients blocked (JSON for the API, a page otherwise); health stays open; a single-use code sets an HttpOnly cookie; expiry; links from trusted devices; list and revoke (a revoked cookie stops working); only token hashes stored; loopback trust on/off.
+48. `test_improvements.py`: improvement batch (17 tests). Covers:
+    * per-job and daily Gemini usage, including child tasks and cache hits;
+    * slow-model memory;
+    * the segment protocol: parsing, alignment and fallback, quota fallback vs wait;
+    * DOCX/EPUB AI in-place round-trips keeping bold runs, headings, tables and HTML tags, with the free path unchanged;
+    * pipeline routing of DOCX with AI Polish to in-place, and the max-quality skip;
+    * chapter marks, FFMETADATA and the ffmpeg command;
+    * Insights task recovery;
+    * Greek sentence-case headings;
+    * the evaluation scorer;
+    * no API keys in comic URLs.
+
+**Translation quality evaluation (manual, optional):** `python scripts/eval_translation_quality.py --live` translates the passages in `eval/passages.json` with the current prompt (about 1 Gemini request per passage) and scores structure, script, known wrong renderings and required terms. `--from-dir DIR` scores saved outputs without API use. Run it after changing prompts.
+
+All test suites pass: **`48/48 PASS (43/43 in --fast mode · 58/58 FastAPI routes covered)`**.
 
 ---
 

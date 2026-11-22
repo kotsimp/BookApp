@@ -44,17 +44,17 @@ class TestQueueQuotaPause(unittest.TestCase):
         from backend.ai_polisher import DailyQuotaExhaustedError
         job = create_job("", "test_audit_queue.pdf", "pdf")
         qm.clear_queue()
-        qm.add_to_queue(job.job_id, quota_behavior="wait")
+        # explicit key: without one, add_to_queue correctly downgrades "wait" to "fallback"
+        qm.add_to_queue(job.job_id, quota_behavior="wait", api_key="AQ.TestQueueQuotaKey")
 
         async def failing_runner(item):
             raise DailyQuotaExhaustedError("⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API")
 
         async def run():
             qm.start_queue(failing_runner)
-            for _ in range(100):
-                if qm._queue_task is None or qm._queue_task.done():
-                    break
-                await asyncio.sleep(0.02)
+            task = qm._queue_task
+            if task is not None:
+                await asyncio.wait_for(asyncio.shield(task), timeout=15)
 
         asyncio.run(run())
         self.assertTrue(qm.is_queue_paused_for_quota(), "quota-paused queue must report paused_for_quota (auto-resume)")

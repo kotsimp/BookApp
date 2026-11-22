@@ -7,7 +7,7 @@ format_preserver.py - Translates documents in-place while preserving rich format
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Awaitable
 
 from backend.translator import _translate_with_retry
 from backend.glossary import apply_glossary
@@ -40,6 +40,32 @@ def _clear_run_text_preserving_media(run) -> None:
             t_el.text = ""
 
 
+SegmentTranslator = Callable[[List[str]], Awaitable[List[str]]]
+
+
+async def _translate_units(
+    units: List[str],
+    source_lang: str,
+    target_lang: str,
+    segment_translator: Optional[SegmentTranslator],
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> List[str]:
+    """Translates collected units. With a segment_translator (AI) they go in context-preserving batches; otherwise
+    each unit is translated by the free engine exactly as before."""
+    if segment_translator is not None:
+        out = await segment_translator(units)
+        if len(out) != len(units):
+            raise RuntimeError("segment translator returned a misaligned result")
+        return out
+    out: List[str] = []
+    for i, u in enumerate(units):
+        if progress:
+            progress(i, len(units))
+        out.append(await _translate_with_retry(u, source_lang, target_lang) if u.strip() else u)
+        await asyncio.sleep(0.04)  # yield to the event loop
+    return out
+
+
 async def translate_docx_in_place(
     input_path: str,
     output_path: str,
@@ -47,10 +73,12 @@ async def translate_docx_in_place(
     target_lang: str,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     style: Optional[str] = None,
+    segment_translator: Optional[SegmentTranslator] = None,
 ) -> str:
     """
     Translates a .docx file in-place, preserving paragraph styles, headings,
     fonts, font sizes, bold/italic, alignment, tables, and embedded images.
+    Units are collected first, translated (free engine or AI segment batches), then written back in place.
     Returns the full translated text (useful for .txt backup or audiobook generation).
     """
     import docx
@@ -71,15 +99,12 @@ async def translate_docx_in_place(
                     paragraphs.append(p)
 
     active_paragraphs = [p for p in paragraphs if p.text.strip()]
-    total = len(active_paragraphs)
-    all_translated_lines = []
 
-    for idx, p in enumerate(active_paragraphs):
-        if progress_callback:
-            progress_callback(idx, total, f"Translating paragraph {idx+1} of {total} (preserving styles)...")
-
+    # 1. Collect translation units
+    units: List[str] = []
+    plan = []
+    for p in active_paragraphs:
         runs_with_text = [r for r in p.runs if r.text.strip()]
-
         has_mixed_styles = False
         if len(runs_with_text) > 1:
             first_b = runs_with_text[0].bold
@@ -88,45 +113,63 @@ async def translate_docx_in_place(
                 if r.bold != first_b or r.italic != first_i:
                     has_mixed_styles = True
                     break
-
         if not has_mixed_styles or len(runs_with_text) <= 1:
-            # Uniform styling: translate full text for best grammatical quality
-            orig_text = _sanitize_pua(p.text.strip())
-            translated = await _translate_with_retry(orig_text, source_lang, target_lang)
-            translated = _postprocess_translated_fragment(translated, target_lang, style=style)
-            if runs_with_text:
-                target_run = runs_with_text[0]
-                target_run.text = translated
-                target_r_xml = target_run._r
-                for r in p.runs:
-                    if r._r is not target_r_xml:
-                        _clear_run_text_preserving_media(r)
-            elif p.runs:
-                first_r_xml = p.runs[0]._r
-                p.runs[0].text = translated
-                for r in p.runs:
-                    if r._r is not first_r_xml:
-                        _clear_run_text_preserving_media(r)
-            else:
-                p.text = translated
-            all_translated_lines.append(translated)
+            # Uniform styling: translate the full paragraph for best grammatical quality
+            units.append(_sanitize_pua(p.text.strip()))
+            plan.append(("para", p, runs_with_text, len(units) - 1))
         else:
-            # Mixed styling (e.g. bold header + normal body): translate each run in-place
-            para_translated_parts = []
+            # Mixed styling (e.g. bold header + normal body): one unit per run, kept in place
+            run_units = []
             for r in p.runs:
                 if not r.text.strip():
                     continue
                 sanitized_run = _sanitize_pua(r.text)
                 leading_ws = len(sanitized_run) - len(sanitized_run.lstrip())
                 trailing_ws = len(sanitized_run) - len(sanitized_run.rstrip())
-                tr_text = await _translate_with_retry(sanitized_run.strip(), source_lang, target_lang)
-                tr_text = _postprocess_translated_fragment(tr_text, target_lang, style=style)
-                r.text = (" " * leading_ws) + tr_text + (" " * trailing_ws)
-                para_translated_parts.append(tr_text)
-            all_translated_lines.append(" ".join(para_translated_parts))
+                units.append(sanitized_run.strip())
+                run_units.append((r, leading_ws, trailing_ws, len(units) - 1))
+            plan.append(("runs", p, run_units, None))
 
-        # Yield to event loop briefly
-        await asyncio.sleep(0.04)
+    total = len(active_paragraphs)
+
+    def _prog(done, n):
+        if progress_callback:
+            progress_callback(min(total, int(done * total / max(n, 1))), total,
+                              f"Translating paragraph {min(total, int(done * total / max(n, 1))) + 1} of {total} (preserving styles)...")
+
+    # 2. Translate
+    translated = await _translate_units(units, source_lang, target_lang, segment_translator, _prog)
+    translated = [_postprocess_translated_fragment(t, target_lang, style=style) for t in translated]
+
+    # 3. Write back in place
+    all_translated_lines = []
+    for kind, p, data, idx in plan:
+        if kind == "para":
+            tr = translated[idx]
+            runs_with_text = data
+            if runs_with_text:
+                target_run = runs_with_text[0]
+                target_run.text = tr
+                target_r_xml = target_run._r
+                for r in p.runs:
+                    if r._r is not target_r_xml:
+                        _clear_run_text_preserving_media(r)
+            elif p.runs:
+                first_r_xml = p.runs[0]._r
+                p.runs[0].text = tr
+                for r in p.runs:
+                    if r._r is not first_r_xml:
+                        _clear_run_text_preserving_media(r)
+            else:
+                p.text = tr
+            all_translated_lines.append(tr)
+        else:
+            parts = []
+            for r, lead, trail, ridx in data:
+                tr = translated[ridx]
+                r.text = (" " * lead) + tr + (" " * trail)
+                parts.append(tr)
+            all_translated_lines.append(" ".join(parts))
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
@@ -142,10 +185,12 @@ async def translate_epub_in_place(
     target_lang: str,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     style: Optional[str] = "literature",
+    segment_translator: Optional[SegmentTranslator] = None,
 ) -> str:
     """
     Translates an .epub file in-place, preserving HTML structure, tags (h1-h6, p, em, strong),
     CSS links, styling, comments, and images without double-translating nested tags.
+    Text nodes are collected first, translated (free engine or AI segment batches), then written back.
     Returns the full translated text.
     """
     import ebooklib
@@ -158,11 +203,14 @@ async def translate_epub_in_place(
 
     doc_items = [item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT]
     total_docs = len(doc_items)
-    all_translated_lines = []
     block_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "dt", "dd", "blockquote"}
 
-    async def _translate_text_nodes(node) -> list[str]:
-        parts: list[str] = []
+    units: List[str] = []
+    nodes = []          # (NavigableString, lead, trail, unit index)
+    blocks = []         # list of unit-index lists, one per block tag (for the plain-text backup)
+    soups = []          # (item, soup) to serialise after write-back
+
+    def _collect(node, acc):
         for child in list(node.children):
             if isinstance(child, Comment):
                 continue
@@ -171,34 +219,42 @@ async def translate_epub_in_place(
                 if not raw_s.strip():
                     continue
                 lead = raw_s[: len(raw_s) - len(raw_s.lstrip())]
-                trail = raw_s[len(raw_s.rstrip()) :]
-                tr = await _translate_with_retry(raw_s.strip(), source_lang, target_lang)
-                tr = _postprocess_translated_fragment(tr, target_lang, style=style)
-                child.replace_with(f"{lead}{tr}{trail}")
-                parts.append(tr)
+                trail = raw_s[len(raw_s.rstrip()):]
+                units.append(raw_s.strip())
+                nodes.append((child, lead, trail, len(units) - 1))
+                acc.append(len(units) - 1)
             elif getattr(child, "name", None) and child.name not in ("script", "style", "img", "svg", "br", "hr"):
-                # Recurse into inline elements (em, strong, a, span) without destroying them;
-                # skip nested block tags because they are visited in the outer block list
+                # Recurse into inline elements (em, strong, a, span); nested block tags are visited separately
                 if child.name not in block_tags:
-                    parts.extend(await _translate_text_nodes(child))
-        return parts
+                    _collect(child, acc)
 
-    for d_idx, item in enumerate(doc_items):
-        if progress_callback:
-            progress_callback(d_idx, total_docs, f"Translating chapter {d_idx+1} of {total_docs} (preserving HTML/CSS)...")
-
+    # 1. Collect
+    for item in doc_items:
         soup = BeautifulSoup(item.get_content(), "html.parser")
-        tags_to_translate = soup.find_all(list(block_tags))
-
-        for tag in tags_to_translate:
+        for tag in soup.find_all(list(block_tags)):
             if not tag.get_text(strip=True):
                 continue
-            translated_parts = await _translate_text_nodes(tag)
-            if translated_parts:
-                all_translated_lines.append(" ".join(translated_parts))
-            await asyncio.sleep(0.03)
+            acc: List[int] = []
+            _collect(tag, acc)
+            if acc:
+                blocks.append(acc)
+        soups.append((item, soup))
 
+    def _prog(done, n):
+        if progress_callback:
+            d = min(total_docs, int(done * total_docs / max(n, 1)))
+            progress_callback(d, total_docs, f"Translating chapter {min(total_docs, d + 1)} of {total_docs} (preserving HTML/CSS)...")
+
+    # 2. Translate
+    translated = await _translate_units(units, source_lang, target_lang, segment_translator, _prog)
+    translated = [_postprocess_translated_fragment(t, target_lang, style=style) for t in translated]
+
+    # 3. Write back
+    for child, lead, trail, idx in nodes:
+        child.replace_with(f"{lead}{translated[idx]}{trail}")
+    for item, soup in soups:
         item.set_content(str(soup).encode("utf-8"))
+    all_translated_lines = [" ".join(translated[i] for i in b) for b in blocks]
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     epub.write_epub(str(output_path), book, {})

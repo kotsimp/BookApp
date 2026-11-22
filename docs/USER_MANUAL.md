@@ -269,7 +269,7 @@ Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After
 * **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
 * **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
 * **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress.
-* **Authoritative Server Sync & Key Protection:** The application performs a safe bidirectional merge between server configuration (`config/settings.json`) and browser `localStorage`. Your configured backup keys are never accidentally wiped, duplicated, or dropped when switching tabs or refreshing the page.
+* **Keys stay on the server:** keys are stored only in the server configuration (`config/settings.json`) and shown masked in the page (e.g. `AIzaSy...4f2D`). The browser keeps no copy; keys saved in the browser by older versions are moved to the server once. Saving the window without typing a new key keeps your existing keys, so they're never accidentally wiped or duplicated when you switch tabs or refresh.
 * **Auto-Resume on Save:** If a translation was waiting on quota, clicking **«💾 Save Pool»** with new keys immediately resumes the job automatically without requiring a manual resume click!
 * **Navbar Pool Status Indicator:**
   * `🟢 4/4 Keys`: All configured keys are active and available.
@@ -291,6 +291,7 @@ Click **⚙️ Glossary** in the top navigation to configure persistent domain t
 * **Front Matter Preservation:** Line-level header/footer cleaning preserves prologues, epigraphs, and tables of contents on the opening pages.
 * **EPUB (`.epub`):** Retains CSS stylesheets, chapter hierarchies (`<h1>`–`<h6>`), and embedded images.
 * **PDF (`.pdf`):** Formats headings, validates all characters against font glyph sets to eliminate missing tofu boxes (`□□`), and wraps long URLs cleanly within page margins.
+* **With AI Polish too:** DOCX→DOCX and EPUB→EPUB keep their original formatting, so headings, bold/italic, tables, images and the EPUB layout stay exactly as they were. Gemini translates the text inside the document piece by piece, with surrounding context.
 
 ---
 
@@ -338,6 +339,7 @@ Create a theatrical audio experience:
 * Every audiobook exports with complete metadata tags (Title, Artist, Album, Genre="Audiobook").
 * Active cover art is embedded directly into the audio file container (**Embedded APIC Cover Art**), rendering natively in Apple Books, Android players, and car dashboards.
 * **Streamed Audio Assembly:** Audio chunks are assembled in 64KB streams, ensuring 10+ hour audiobooks render without high RAM usage.
+* **Chapters:** chapter headings in the book become chapters in the M4B, so your player can skip between them. This needs FFmpeg, which the Docker image includes.
 
 ### Step-by-Step Audiobook Guide
 1. Navigate to the **🎧 Generate Audiobook** tab.
@@ -476,6 +478,15 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 
 #### ❓ Can I translate older Word (.doc) files?
 * Please open the file in Microsoft Word and save it as `.docx` before uploading.
+
+#### ❓ How much of my Gemini quota did a job use?
+When a translation, audiobook or Book Insights result finishes, a notification shows how many Gemini requests and tokens it used. The settings window (🔑 Gemini API Key) shows today's total.
+
+#### ❓ Where are my API keys stored?
+Only on the computer that runs BookApp. The page shows them masked (for example `AIzaSy...4f2D`), and your browser no longer keeps a copy. To replace a key, type the new one into its slot and save.
+
+#### ❓ Can I use BookApp from my phone or another computer safely?
+Yes. Your administrator can turn on **device pairing**. Then, in 🔑 Gemini API Key → 📱 Συσκευές, create a link and open it once on the new device; after that it just works, with no password. Devices you haven't paired are refused, and you can revoke a device at any time.
 
 #### ❓ Do I need to pay for an API key?
 * **No.** Standard document translation and Microsoft Edge neural voices are 100% free with zero keys. A free Google Gemini API key is only needed for Gemini AI Polish and scanned comic Vision AI.

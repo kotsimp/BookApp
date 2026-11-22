@@ -22,6 +22,72 @@ async function parseApiError(res, fallbackMsg = 'Request failed') {
   return `${fallbackMsg} (HTTP ${res.status})`;
 }
 
+// ── Gemini API keys: stored ONLY on the server ─────────────
+// The browser never keeps keys (no localStorage); it only knows whether a key exists and its masked form
+// (e.g. "AIzaSy...4f2D"). Masked values sent back on save are mapped to the stored keys by the server.
+const geminiKeyState = { hasKey: false, masked: [] };
+
+function hasGeminiKey() {
+  return Boolean(geminiKeyState.hasKey);
+}
+
+function getClientApiKey() {
+  // Requests never carry a key: the server resolves one from its multi-key pool.
+  return null;
+}
+
+function applyGeminiKeyState(sData) {
+  if (!sData) return;
+  geminiKeyState.hasKey = Boolean(sData.has_gemini_key);
+  geminiKeyState.masked = Array.isArray(sData.gemini_api_keys) ? sData.gemini_api_keys.filter(Boolean) : [];
+}
+
+function isMaskedKeyValue(v) {
+  return typeof v === 'string' && (v.includes('...') || v === '***');
+}
+
+async function migrateBrowserStoredGeminiKeys() {
+  // Older versions kept the keys in localStorage: hand any real key over to the server once, then forget it.
+  let legacy = [];
+  try {
+    const raw = localStorage.getItem('gemini_api_keys');
+    if (raw) legacy = JSON.parse(raw);
+    if (!Array.isArray(legacy) || legacy.length === 0) {
+      const single = localStorage.getItem('gemini_api_key');
+      legacy = single ? [single] : [];
+    }
+  } catch (_) { legacy = []; }
+  const realKeys = legacy.filter(k => typeof k === 'string' && k.trim() && !isMaskedKeyValue(k));
+  if (realKeys.length) {
+    const merged = [...geminiKeyState.masked];
+    for (const k of realKeys) if (merged.length < 4) merged.push(k);
+    try {
+      const res = await fetch(`${API}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gemini_api_keys: merged }),
+      });
+      if (!res.ok) return;   // keep local copy until the server has accepted it
+    } catch (_) { return; }
+  }
+  try {
+    localStorage.removeItem('gemini_api_key');
+    localStorage.removeItem('gemini_api_keys');
+  } catch (_) {}
+}
+
+async function refreshGeminiKeyState() {
+  try {
+    const sRes = await fetch(`${API}/settings`);
+    if (!sRes.ok) return null;
+    const sData = await sRes.json();
+    applyGeminiKeyState(sData);
+    return sData;
+  } catch (_) {
+    return null;
+  }
+}
+
 // ── State ──────────────────────────────────────────────────
 const state = {
   tr: { jobId: null, file: null, sse: null, pollInterval: null, status: 'idle' },
@@ -1016,15 +1082,8 @@ async function startTranslation() {
     document.getElementById('tr-output-format').value = 'pdf';
   }
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
-  const apiKey = localStorage.getItem('gemini_api_key') || null;
-  let hasKey = Boolean(apiKey);
-  try {
-    const rawKeys = localStorage.getItem('gemini_api_keys');
-    if (rawKeys) {
-      const arr = JSON.parse(rawKeys);
-      if (Array.isArray(arr) && arr.some(k => typeof k === 'string' && k.trim())) hasKey = true;
-    }
-  } catch (_) {}
+  const apiKey = getClientApiKey();
+  const hasKey = hasGeminiKey();
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
@@ -1086,7 +1145,7 @@ function onQuotaBehaviorChange(prefix) {
   const sel = document.querySelector(`input[name="${prefix}-quota-behavior"]:checked`);
   const val = sel ? sel.value : 'wait';
   const descEl = document.getElementById(`${prefix}-quota-behavior-desc`);
-  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  const hasKey = hasGeminiKey();
   if (descEl) {
     if (val === 'wait') {
       if (!hasKey) {
@@ -1116,7 +1175,7 @@ function onQuotaBehaviorChange(prefix) {
 }
 
 function initQuotaBehaviorSelectors() {
-  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  const hasKey = hasGeminiKey();
   const defaultBehavior = hasKey ? 'wait' : 'fallback';
   ['tr', 'ab'].forEach((prefix) => {
     try {
@@ -1185,7 +1244,7 @@ async function startAudiobook() {
   const voiceName = document.getElementById('ab-voice-selected').value || state.selectedVoice;
   const useTranslated = document.getElementById('ab-use-translated')?.checked || false;
   const aiPolish = document.getElementById('ab-ai-polish')?.checked || false;
-  const apiKey = localStorage.getItem('gemini_api_key') || null;
+  const apiKey = getClientApiKey();
   const styleRaw = document.getElementById('ab-narration-style')?.value || 'literature:-12%';
   const [narrationStyle] = styleRaw.split(':');
   const sliderEl = document.getElementById('ab-speed-slider');
@@ -1270,6 +1329,7 @@ function connectSSE(prefix, jobId) {
     updateProgress(prefix, data);
     notifyRefinementReport(jobId, data);
     notifyRevisionReport(jobId, data);
+    notifyGeminiUsage(jobId, data);
 
     if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
       sse.close();
@@ -1342,7 +1402,7 @@ function onMaxQualityToggle() {
   const estTxt = pages
     ? ` Για αυτό το έγγραφο: περίπου <strong>${Math.round(pages * 300 * 4.5).toLocaleString('el-GR')} επιπλέον tokens</strong>.`
     : '';
-  const hasKey = Boolean(localStorage.getItem('gemini_api_key'));
+  const hasKey = hasGeminiKey();
   warn.innerHTML = '⚠️ <strong>Επιπλέον κατανάλωση Gemini API:</strong> το πρωτότυπο και η μετάφραση αποστέλλονται ξανά για αναθεώρηση. ' +
     'Η κατανάλωση tokens είναι περίπου <strong>1,5 φορά</strong> αυτή της AI μετάφρασης και ο χρόνος περίπου διπλάσιος.' + estTxt +
     ' Μετράει στο ημερήσιο όριο των κλειδιών σας. Χρησιμοποιούνται μόνο πλήρη μοντέλα Gemini· αν δεν είναι διαθέσιμα, κρατιέται η μετάφραση του 1ου περάσματος.' +
@@ -1366,7 +1426,37 @@ function notifyRevisionReport(jobId, data) {
     toast('🏆 Η αναθεώρηση δεν ολοκληρώθηκε — κρατήθηκε η μετάφραση του 1ου περάσματος.', 'warning');
   } else if (rep.status === 'skipped' && rep.reason === 'requires_ai_polish_and_key') {
     toast('🏆 Η αναθεώρηση απαιτεί AI Polish και Gemini API Key.', 'info');
+  } else if (rep.status === 'skipped' && rep.reason === 'format_preserved_output') {
+    toast('🏆 Η αναθεώρηση δεν εφαρμόζεται όταν διατηρείται η αρχική μορφοποίηση (DOCX→DOCX / EPUB→EPUB).', 'info');
   }
+}
+
+// ── Gemini usage per job / per day ─────────────────────────
+function formatGeminiUsage(u) {
+  if (!u) return '';
+  const tok = Number(u.total_tokens || ((u.prompt_tokens || 0) + (u.output_tokens || 0)));
+  const cached = u.cached ? ` · ${u.cached} από cache` : '';
+  return `${u.requests || 0} αιτήματα · ~${tok.toLocaleString('el-GR')} tokens${cached}`;
+}
+
+const _shownUsageReports = new Set();
+
+function notifyGeminiUsage(jobId, data) {
+  const u = data && data.gemini_usage;
+  if (!u || data.status !== 'done' || !jobId || _shownUsageReports.has(jobId)) return;
+  _shownUsageReports.add(jobId);
+  if ((u.requests || 0) + (u.cached || 0) > 0) toast(`🔢 Gemini: ${formatGeminiUsage(u)}`, 'info');
+}
+
+async function loadGeminiUsageToday() {
+  const el = document.getElementById('gemini-usage-today');
+  if (!el) return;
+  try {
+    const res = await fetch(`${API}/gemini/status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    el.textContent = data.usage_today ? `Σήμερα: ${formatGeminiUsage(data.usage_today)}` : '';
+  } catch (_) {}
 }
 
 function notifyRefinementReport(jobId, data) {
@@ -1403,6 +1493,7 @@ function pollProgress(prefix, jobId) {
       updateProgress(prefix, data);
       notifyRefinementReport(jobId, data);
       notifyRevisionReport(jobId, data);
+      notifyGeminiUsage(jobId, data);
       if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
         stopJobTracking(prefix);
       }
@@ -2719,7 +2810,7 @@ function updateNavGeminiBadge(poolData) {
   const total = poolData?.total_keys || 0;
   const avail = poolData?.available_keys || 0;
   const allExh = Boolean(poolData?.all_exhausted);
-  const savedKey = (typeof localStorage !== 'undefined') ? localStorage.getItem('gemini_api_key') : null;
+  const savedKey = hasGeminiKey() ? (geminiKeyState.masked[0] || 'configured') : null;
 
   navBadge.style.display = 'inline-block';
 
@@ -2776,7 +2867,11 @@ async function openAiPolishModal(mode = 'polish') {
   const btnRunPolish = document.getElementById('btn-run-polish');
   const btnCancelPolish = document.getElementById('btn-cancel-polish');
 
+  const pairingSection = document.getElementById('pairing-section');
+  if (pairingSection) pairingSection.style.display = 'none';
   if (_currentAiModalMode === 'settings') {
+    if (typeof loadPairingPanel === 'function') loadPairingPanel();
+    loadGeminiUsageToday();
     if (modalTitle) modalTitle.innerHTML = '🔑 Gemini Multi-Key Pool &amp; Ρυθμίσεις API';
     if (modalDesc) modalDesc.innerHTML = 'Διαχειριστείτε τα δωρεάν Google Gemini API Keys (έως 4 κλειδιά) για αυτόματη εναλλαγή (auto-failover) και αδιάλειπτη ροή χωρίς διακοπές:';
     if (toneGroup) toneGroup.style.display = 'none';
@@ -2801,58 +2896,10 @@ async function openAiPolishModal(mode = 'polish') {
     }
   }
 
-  let localPool = [];
-  try {
-    const rawLocal = localStorage.getItem('gemini_api_keys');
-    if (rawLocal) {
-      localPool = JSON.parse(rawLocal);
-    }
-  } catch (_) {}
-
-  if (!Array.isArray(localPool) || localPool.length === 0) {
-    const single = localStorage.getItem('gemini_api_key');
-    if (single) localPool = [single];
-  }
-
-  // Fetch latest settings & pool state from server
-  let serverPool = [];
-  try {
-    const sRes = await fetch(`${API}/settings`);
-    if (sRes.ok) {
-      const sData = await sRes.json();
-      if (Array.isArray(sData.gemini_api_keys) && sData.gemini_api_keys.length > 0) {
-        serverPool = sData.gemini_api_keys;
-      } else if (sData.gemini_api_key) {
-        serverPool = [sData.gemini_api_key];
-      }
-      if (sData.pool) {
-        renderGeminiPoolStatus(sData.pool);
-      }
-    }
-  } catch (_) {}
-
-  // Intelligent merge: retain every unique key from both server and local storage!
-  const poolKeys = [...serverPool];
-  for (const k of localPool) {
-    if (k && !poolKeys.includes(k) && poolKeys.length < 4) {
-      poolKeys.push(k);
-    }
-  }
-
-  // Keep both local and server synchronized with the complete pool
-  if (poolKeys.length > 0) {
-    localStorage.setItem('gemini_api_key', poolKeys[0]);
-    localStorage.setItem('gemini_api_keys', JSON.stringify(poolKeys));
-  }
-  if (poolKeys.length > serverPool.length) {
-    fetch(`${API}/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gemini_api_key: poolKeys[0], gemini_api_keys: poolKeys }),
-    }).then(r => r.json()).then(d => {
-      if (d.pool) renderGeminiPoolStatus(d.pool);
-    }).catch(() => {});
-  }
+  // Fetch latest settings & pool state from server (keys arrive masked; they never leave the server in clear)
+  const sData = await refreshGeminiKeyState();
+  if (sData && sData.pool) renderGeminiPoolStatus(sData.pool);
+  const poolKeys = [...geminiKeyState.masked];
 
   const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
   slotIds.forEach((id, idx) => {
@@ -3145,6 +3192,10 @@ async function saveGeminiKeyOnly() {
     const id = slotIds[idx];
     const input = document.getElementById(id);
     const val = (input ? input.value : '').trim();
+    if (val && isMaskedKeyValue(val)) {
+      keys.push(val);   // unchanged slot: the server maps the masked form back to the stored key
+      continue;
+    }
     if (val) {
       const isValid = (val.startsWith('AQ.') && val.length >= 25) ||
                       (val.startsWith('AIza') && val.length >= 35) ||
@@ -3171,24 +3222,21 @@ async function saveGeminiKeyOnly() {
     return;
   }
 
-  const primaryKey = keys[0] || '';
-  localStorage.setItem('gemini_api_key', primaryKey);
-  localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
-
   try {
     const res = await fetch(`${API}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gemini_api_key: primaryKey, gemini_api_keys: keys }),
+      body: JSON.stringify({ gemini_api_keys: keys }),
     });
     if (res.ok) {
       const data = await res.json();
       if (data.pool) renderGeminiPoolStatus(data.pool);
     }
-    // Keep input slots cleanly aligned with saved keys
+    // Show the saved keys in masked form only
+    await refreshGeminiKeyState();
     slotIds.forEach((id, idx) => {
       const input = document.getElementById(id);
-      if (input) input.value = keys[idx] || '';
+      if (input) input.value = geminiKeyState.masked[idx] || '';
     });
   } catch (_) {}
 
@@ -3261,8 +3309,9 @@ async function saveGeminiKeyOnly() {
 }
 
 async function clearGeminiKey() {
-  localStorage.removeItem('gemini_api_key');
-  localStorage.removeItem('gemini_api_keys');
+  try { localStorage.removeItem('gemini_api_key'); localStorage.removeItem('gemini_api_keys'); } catch (_) {}
+  geminiKeyState.hasKey = false;
+  geminiKeyState.masked = [];
   const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
   slotIds.forEach((id) => {
     const input = document.getElementById(id);
@@ -3385,8 +3434,11 @@ async function runAiPolish() {
   }
 
   const apiKeyInput = document.getElementById('gemini-api-key');
-  const apiKey = (apiKeyInput ? apiKeyInput.value.trim() : '') || localStorage.getItem('gemini_api_key') || '';
-  if (apiKey) {
+  const typedKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+  const apiKey = (typedKey && !isMaskedKeyValue(typedKey)) ? typedKey : '';
+  if (!apiKey && hasGeminiKey()) {
+    // A key is already stored on the server — nothing to send.
+  } else if (apiKey) {
     const isValidFormat = (apiKey.startsWith('AQ.') && apiKey.length >= 25) ||
                           (apiKey.startsWith('AIza') && apiKey.length >= 35) ||
                           (apiKey.length >= 25);
@@ -3394,13 +3446,12 @@ async function runAiPolish() {
       toast('Invalid API Key format. Google Gemini keys start with "AQ." or "AIzaSy...". Please paste a valid key.', 'error');
       return;
     }
-    localStorage.setItem('gemini_api_key', apiKey);
-    // Persist permanently on server settings as well
+    // Persist on the server (the browser does not keep keys)
     fetch(`${API}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gemini_api_key: apiKey }),
-    }).catch(() => {});
+    }).then(() => refreshGeminiKeyState()).catch(() => {});
   } else {
     toast('ℹ️ Δεν έχει οριστεί Gemini API Key: Χρήση των δωρεάν μοντέλων (τυπογραφία & γλωσσάρι).', 'info');
   }
@@ -3787,15 +3838,8 @@ function _readCurrentTranslationSettings() {
   const chosenFmt = document.getElementById('tr-output-format')?.value || 'pdf';
   const chosenLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
   const aiPolish = document.getElementById('tr-ai-polish')?.checked || false;
-  const apiKey = localStorage.getItem('gemini_api_key') || null;
-  let hasKey = Boolean(apiKey);
-  try {
-    const rawKeys = localStorage.getItem('gemini_api_keys');
-    if (rawKeys) {
-      const arr = JSON.parse(rawKeys);
-      if (Array.isArray(arr) && arr.some(k => typeof k === 'string' && k.trim())) hasKey = true;
-    }
-  } catch (_) {}
+  const apiKey = getClientApiKey();
+  const hasKey = hasGeminiKey();
   const readingDirEl = document.querySelector('input[name="tr-reading-dir"]:checked');
   const readingDirection = readingDirEl ? readingDirEl.value : 'ltr';
   const quotaBehaviorEl = document.querySelector('input[name="tr-quota-behavior"]:checked');
@@ -4317,51 +4361,16 @@ async function init() {
   initQuotaBehaviorSelectors();
   applyAppMode(currentAppMode);
 
-  // Auto-sync Gemini API key pool between localStorage and backend server
-  // Authoritative sync: Server settings are primary. Merge unique keys, never delete server keys on reload.
+  // Gemini keys live only on the server: load the masked state, migrate any legacy browser-stored keys once
   try {
-    const sRes = await fetch(`${API}/settings`);
-    if (sRes.ok) {
-      const sData = await sRes.json();
+    const sData = await refreshGeminiKeyState();
+    if (sData) {
       syncFinalRefinementToggles(sData.final_refinement_enabled !== false);
-      const serverKeys = Array.isArray(sData.gemini_api_keys) ? sData.gemini_api_keys : (sData.gemini_api_key ? [sData.gemini_api_key] : []);
-
-      let localKeys = [];
-      try {
-        const rawKeys = localStorage.getItem('gemini_api_keys');
-        if (rawKeys) localKeys = JSON.parse(rawKeys);
-      } catch (_) {}
-      if (!Array.isArray(localKeys) || localKeys.length === 0) {
-        const single = localStorage.getItem('gemini_api_key');
-        if (single) localKeys = [single];
-      }
-
-      // Merge unique keys preserving server priority up to 4 keys
-      const merged = [...serverKeys];
-      for (const k of localKeys) {
-        if (k && !merged.includes(k) && merged.length < 4) {
-          merged.push(k);
-        }
-      }
-
-      // Keep localStorage in sync with authoritative merged list
-      if (merged.length > 0) {
-        localStorage.setItem('gemini_api_key', merged[0]);
-        localStorage.setItem('gemini_api_keys', JSON.stringify(merged));
-      }
-
-      // If local had new keys that server was missing, sync merged pool to server
-      if (merged.length > serverKeys.length) {
-        await fetch(`${API}/settings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gemini_api_key: merged[0], gemini_api_keys: merged }),
-        });
-      }
-
-      if (sData.pool) {
-        renderGeminiPoolStatus(sData.pool);
-      }
+      await migrateBrowserStoredGeminiKeys();
+      const fresh = await refreshGeminiKeyState();
+      const poolData = (fresh || sData).pool;
+      if (poolData) renderGeminiPoolStatus(poolData);
+      initQuotaBehaviorSelectors();
     }
   } catch (_) {}
 
@@ -4451,390 +4460,3 @@ async function init() {
 }
 
 init();
-
-// ============================================================
-// Book Insights — summaries, synopses & their audio versions
-// (backend: backend/book_insights.py, endpoints /api/insights/*)
-// ============================================================
-const insState = {
-  jobId: null,
-  fileName: '',
-  analysis: null,
-  busy: false,
-  record: null,     // last displayed insight record
-  pollTimer: null,
-};
-
-const INS_LANG_LABELS = { greek: 'Ελληνικά', english: 'English', other: 'Γλώσσα εγγράφου' };
-
-function _insApiOrigin() {
-  return API.replace(/\/api$/, '');
-}
-
-function _insFriendlyNetworkError(err) {
-  if (err && (err.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(String(err.message || '')))) {
-    return 'Δεν υπάρχει σύνδεση με τον διακομιστή. Ελέγξτε ότι η εφαρμογή εκτελείται και τη σύνδεσή σας στο διαδίκτυο.';
-  }
-  return (err && err.message) ? err.message : 'Παρουσιάστηκε απρόσμενο σφάλμα.';
-}
-
-function showInsightsError(msg) {
-  const box = document.getElementById('ins-error');
-  if (!box) return;
-  if (!msg) {
-    box.style.display = 'none';
-    box.textContent = '';
-    return;
-  }
-  box.textContent = `❌ ${msg}`;
-  box.style.display = '';
-}
-
-function setInsightsBusy(busy) {
-  insState.busy = !!busy;
-  updateInsightsButtons();
-  const audioBtn = document.getElementById('ins-audio-btn');
-  if (audioBtn) audioBtn.disabled = !!busy;
-  const resultCard = document.getElementById('ins-result-card');
-  if (resultCard && resultCard.classList) {
-    if (busy) resultCard.classList.add('ins-busy'); else resultCard.classList.remove('ins-busy');
-  }
-}
-
-function setInsightsProgress(pct, step) {
-  const card = document.getElementById('ins-progress-card');
-  if (!card) return;
-  if (pct === null) {
-    card.style.display = 'none';
-    return;
-  }
-  card.style.display = '';
-  const p = Math.max(0, Math.min(100, Math.round(pct)));
-  document.getElementById('ins-progress-bar').style.width = `${p}%`;
-  document.getElementById('ins-progress-pct').textContent = `${p}%`;
-  document.getElementById('ins-progress-step').textContent = step || '';
-}
-
-function updateInsightsButtons() {
-  const a = insState.analysis;
-  const ready = Boolean(insState.jobId && a && a.has_api_key);
-  const canSummary = ready && a.can_summary;
-  const canSynopsis = ready && a.can_synopsis;
-  const set = (id, enabled) => { const el = document.getElementById(id); if (el) el.disabled = insState.busy || !enabled; };
-  set('ins-basic-summary-btn', canSummary);
-  set('ins-basic-synopsis-btn', canSynopsis);
-  set('ins-adv-summary-btn', canSummary);
-  set('ins-adv-synopsis-btn', canSynopsis);
-
-  const synReason = (a && !a.can_synopsis) ? (a.reasons?.synopsis || '') : '';
-  const sumReason = (a && !a.can_summary) ? (a.reasons?.summary || '') : '';
-  ['ins-basic-synopsis-reason', 'ins-adv-synopsis-reason'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const msg = sumReason || synReason;
-    el.textContent = msg ? `ℹ️ ${msg}` : '';
-    el.style.display = msg ? '' : 'none';
-  });
-  const keyWarn = document.getElementById('ins-key-warning');
-  if (keyWarn) keyWarn.style.display = (insState.jobId && a && !a.has_api_key) ? '' : 'none';
-}
-
-function refreshInsightsPanel() {
-  const btn = document.getElementById('ins-use-current-btn');
-  if (!btn) return;
-  const other = state.tr.jobId ? 'tr' : (state.ab.jobId ? 'ab' : null);
-  const show = Boolean(other && !insState.jobId);
-  btn.style.display = show ? '' : 'none';
-  if (show) {
-    const name = state[other].file?.name || '';
-    btn.textContent = name ? `📎 Χρήση του «${name}»` : '📎 Χρήση του εγγράφου που ήδη ανεβάσατε';
-  }
-}
-
-function _insShowDocument(name, metaText) {
-  document.getElementById('ins-file-name').textContent = name || 'Έγγραφο';
-  document.getElementById('ins-file-meta').textContent = metaText || '';
-  const ext = (name || '').split('.').pop().toLowerCase();
-  document.getElementById('ins-file-icon').textContent = ({ pdf: '📕', docx: '📘', epub: '📗' })[ext] || '📄';
-  document.getElementById('ins-selected-file').classList.add('visible');
-  document.getElementById('ins-upload-zone').style.display = 'none';
-  const useBtn = document.getElementById('ins-use-current-btn');
-  if (useBtn) useBtn.style.display = 'none';
-}
-
-function removeInsightsDocument() {
-  if (insState.busy) {
-    toast('Περιμένετε να ολοκληρωθεί η τρέχουσα δημιουργία.', 'info');
-    return;
-  }
-  insState.jobId = null;
-  insState.fileName = '';
-  insState.analysis = null;
-  insState.record = null;
-  document.getElementById('ins-selected-file').classList.remove('visible');
-  document.getElementById('ins-upload-zone').style.display = '';
-  document.getElementById('ins-result-card').style.display = 'none';
-  const inp = document.getElementById('ins-file-input');
-  if (inp) inp.value = '';
-  showInsightsError('');
-  setInsightsProgress(null);
-  updateInsightsButtons();
-  refreshInsightsPanel();
-}
-
-function handleInsightsDrop(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  const zone = document.getElementById('ins-upload-zone');
-  if (zone) zone.classList.remove('dragover');
-  const files = Array.from(e.dataTransfer?.files || []);
-  if (files.length) uploadInsightsDocument(files[0]);
-}
-
-function handleInsightsFileSelect(e) {
-  const files = Array.from(e.target.files || []);
-  if (files.length) uploadInsightsDocument(files[0]);
-  try { e.target.value = ''; } catch (_) {}
-}
-
-async function uploadInsightsDocument(file) {
-  if (insState.busy) {
-    toast('Περιμένετε να ολοκληρωθεί η τρέχουσα δημιουργία.', 'info');
-    return;
-  }
-  const dot = file.name.lastIndexOf('.');
-  const ext = dot > 0 ? file.name.slice(dot).toLowerCase() : '';
-  if (!['.pdf', '.docx', '.epub'].includes(ext)) {
-    showInsightsError(`Ο τύπος αρχείου «${ext || 'χωρίς επέκταση'}» δεν υποστηρίζεται για Book Insights. Χρησιμοποιήστε PDF, DOCX ή EPUB.`);
-    return;
-  }
-  showInsightsError('');
-  _insShowDocument(file.name, 'Μεταφόρτωση…');
-  const formData = new FormData();
-  formData.append('file', file);
-  try {
-    const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Η μεταφόρτωση απέτυχε'));
-    const data = await res.json();
-    insState.jobId = data.job_id;
-    insState.fileName = file.name;
-    await loadInsightsAnalysis();
-  } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
-    document.getElementById('ins-file-meta').textContent = 'Σφάλμα';
-  }
-}
-
-async function useCurrentDocumentForInsights() {
-  const other = state.tr.jobId ? 'tr' : (state.ab.jobId ? 'ab' : null);
-  if (!other) return;
-  insState.jobId = state[other].jobId;
-  insState.fileName = state[other].file?.name || '';
-  _insShowDocument(insState.fileName, 'Ανάλυση…');
-  await loadInsightsAnalysis();
-}
-
-async function loadInsightsAnalysis() {
-  if (!insState.jobId) return;
-  showInsightsError('');
-  document.getElementById('ins-file-meta').textContent = 'Ανάλυση κειμένου…';
-  try {
-    const res = await fetch(`${API}/insights/${encodeURIComponent(insState.jobId)}/analysis`);
-    if (!res.ok) throw new Error(await parseApiError(res, 'Η ανάλυση του εγγράφου απέτυχε'));
-    const a = await res.json();
-    insState.analysis = a;
-    if (a.file_name && !insState.fileName) insState.fileName = a.file_name;
-    const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
-    document.getElementById('ins-file-meta').textContent =
-      `~${a.meaningful_words.toLocaleString('el-GR')} λέξεις · ~${a.estimated_pages} σελίδες · ${lang}`;
-    if (!a.can_summary) showInsightsError(a.reasons?.summary || 'Το έγγραφο δεν περιέχει αρκετό κείμενο.');
-    else if (!a.detected_language) showInsightsError('Δεν εντοπίστηκε η γλώσσα του εγγράφου. Στην Προχωρημένη Λειτουργία μπορείτε να επιλέξετε γλώσσα εξόδου.');
-  } catch (err) {
-    insState.analysis = null;
-    showInsightsError(_insFriendlyNetworkError(err));
-    document.getElementById('ins-file-meta').textContent = 'Σφάλμα ανάλυσης';
-  }
-  updateInsightsButtons();
-}
-
-function _insPollTask(taskId) {
-  return new Promise((resolve, reject) => {
-    let failures = 0;
-    const tick = async () => {
-      try {
-        const res = await fetch(`${API}/insights/tasks/${encodeURIComponent(taskId)}`);
-        if (!res.ok) throw new Error(await parseApiError(res, 'Χάθηκε η παρακολούθηση της εργασίας'));
-        failures = 0;
-        const t = await res.json();
-        setInsightsProgress(t.progress || 0, t.step || '');
-        if (t.status === 'done') return resolve(t);
-        if (t.status === 'error') return reject(new Error(t.error?.message || 'Η δημιουργία απέτυχε.'));
-      } catch (err) {
-        failures += 1;
-        if (failures >= 5) return reject(err);
-      }
-      insState.pollTimer = setTimeout(tick, 1500);
-    };
-    tick();
-  });
-}
-
-async function runInsight(mode, kind) {
-  if (insState.busy) {
-    toast('Μια δημιουργία εκτελείται ήδη — περιμένετε να ολοκληρωθεί.', 'info');
-    return;
-  }
-  if (!insState.jobId) {
-    showInsightsError('Ανεβάστε πρώτα ένα βιβλίο ή έγγραφο.');
-    return;
-  }
-  let insightType = kind;            // basic: 'summary' | 'synopsis' (server maps to short/standard)
-  let language = 'auto';
-  let format = 'screen';
-  if (mode === 'advanced') {
-    insightType = document.getElementById(kind === 'summary' ? 'ins-summary-type' : 'ins-synopsis-type').value;
-    language = document.getElementById(kind === 'summary' ? 'ins-summary-lang' : 'ins-synopsis-lang').value;
-    format = document.getElementById(kind === 'summary' ? 'ins-summary-format' : 'ins-synopsis-format').value;
-  }
-  showInsightsError('');
-  setInsightsBusy(true);
-  setInsightsProgress(2, 'Έναρξη…');
-  try {
-    const apiKey = localStorage.getItem('gemini_api_key') || null;
-    const res = await fetch(`${API}/insights/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: insState.jobId, insight_type: insightType, language, api_key: apiKey }),
-    });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Η δημιουργία δεν ξεκίνησε'));
-    const started = await res.json();
-    if (started.duplicate) toast('Η ίδια δημιουργία εκτελείται ήδη — εμφανίζεται η πρόοδός της.', 'info');
-    const task = await _insPollTask(started.task_id);
-    renderInsightResult(task.result);
-    if (format !== 'screen') await exportInsight(format);
-    toast('✅ Ολοκληρώθηκε!', 'success');
-  } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
-  } finally {
-    setInsightsProgress(null);
-    setInsightsBusy(false);
-  }
-}
-
-function renderInsightMarkdown(md) {
-  // Escape first, then apply a tiny safe subset of Markdown (headings, bullets, bold, paragraphs)
-  const blocks = escHtml(md || '').split(/\n\s*\n/);
-  return blocks.map((block) => {
-    const lines = block.split('\n');
-    if (lines.every((l) => /^\s*-\s+/.test(l))) {
-      return '<ul>' + lines.map((l) => `<li>${l.replace(/^\s*-\s+/, '')}</li>`).join('') + '</ul>';
-    }
-    return lines.map((l) => {
-      const h = l.match(/^(#{2,3})\s+(.*)$/);
-      if (h) return h[1].length === 2 ? `<h3>${h[2]}</h3>` : `<h4>${h[2]}</h4>`;
-      if (/^\s*-\s+/.test(l)) return `<ul><li>${l.replace(/^\s*-\s+/, '')}</li></ul>`;
-      return l.trim() ? `<p>${l}</p>` : '';
-    }).join('');
-  }).join('').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-}
-
-function renderInsightResult(rec) {
-  if (!rec || !rec.text) {
-    showInsightsError('Δεν επιστράφηκε έγκυρο αποτέλεσμα. Δοκιμάστε ξανά.');
-    return;
-  }
-  insState.record = rec;
-  document.getElementById('ins-result-title').textContent = `${rec.label || 'Αποτέλεσμα'} — ${rec.title || ''}`;
-  const target = Array.isArray(rec.target_words) ? ` · στόχος ${rec.target_words[0]}–${rec.target_words[1]}` : '';
-  document.getElementById('ins-result-meta').textContent =
-    `${rec.word_count} λέξεις${target} · ${INS_LANG_LABELS[rec.language] || rec.language}` +
-    (rec.from_notes ? ' · από ανάλυση ολόκληρου του βιβλίου ανά ενότητα' : '');
-  const warnEl = document.getElementById('ins-result-warnings');
-  const warnings = Array.isArray(rec.warnings) ? rec.warnings : [];
-  warnEl.textContent = warnings.length ? `⚠️ Σημειώσεις ελέγχου: ${warnings.join(' · ')}` : '';
-  warnEl.style.display = warnings.length ? '' : 'none';
-  document.getElementById('ins-result-body').innerHTML = renderInsightMarkdown(rec.text);
-  const audioBox = document.getElementById('ins-audio-box');
-  if (rec.audio_url) {
-    _insShowAudio(rec.audio_url);
-  } else if (audioBox) {
-    audioBox.style.display = 'none';
-  }
-  const audioBtn = document.getElementById('ins-audio-btn');
-  if (audioBtn) audioBtn.style.display = (rec.language === 'greek' || rec.language === 'english') ? '' : 'none';
-  document.getElementById('ins-result-card').style.display = '';
-}
-
-async function copyInsightText() {
-  if (!insState.record) return;
-  try {
-    await navigator.clipboard.writeText(insState.record.text);
-    toast('📋 Αντιγράφηκε.', 'success');
-  } catch (_) {
-    toast('Η αντιγραφή δεν επιτρέπεται από τον browser.', 'error');
-  }
-}
-
-async function exportInsight(fmt) {
-  const rec = insState.record;
-  if (!rec || !insState.jobId) return;
-  try {
-    const res = await fetch(`${API}/insights/export`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: insState.jobId, insight_type: rec.insight_type, language: rec.language, format: fmt }),
-    });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Η εξαγωγή αρχείου απέτυχε'));
-    const data = await res.json();
-    const a = document.createElement('a');
-    a.href = `${_insApiOrigin()}${data.url}`;
-    a.download = data.file_name || '';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
-  }
-}
-
-function _insShowAudio(url) {
-  const box = document.getElementById('ins-audio-box');
-  const player = document.getElementById('ins-audio-player');
-  const dl = document.getElementById('ins-audio-download');
-  const full = `${_insApiOrigin()}${url}`;
-  player.src = full;
-  dl.href = full;
-  box.style.display = '';
-}
-
-async function generateInsightAudio() {
-  const rec = insState.record;
-  if (!rec || !insState.jobId) return;
-  if (insState.busy) {
-    toast('Μια δημιουργία εκτελείται ήδη — περιμένετε να ολοκληρωθεί.', 'info');
-    return;
-  }
-  showInsightsError('');
-  setInsightsBusy(true);
-  setInsightsProgress(2, 'Προετοιμασία εκφώνησης…');
-  try {
-    const res = await fetch(`${API}/insights/audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: insState.jobId, insight_type: rec.insight_type, language: rec.language }),
-    });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Η δημιουργία ήχου δεν ξεκίνησε'));
-    const started = await res.json();
-    const task = await _insPollTask(started.task_id);
-    const audioUrl = task.result && task.result.audio_url;
-    if (!audioUrl) throw new Error('Η δημιουργία ήχου απέτυχε.');
-    insState.record = task.result;
-    _insShowAudio(audioUrl);
-    toast('🎧 Ο ήχος είναι έτοιμος.', 'success');
-  } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
-  } finally {
-    setInsightsProgress(null);
-    setInsightsBusy(false);
-  }
-}

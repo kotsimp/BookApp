@@ -318,8 +318,9 @@ finally:
                 pass
 
 # Test 6g: DELETE /api/settings/gemini_api_key (restore original key if present)
-_, prev_settings = api_get("/settings")
-prev_key = prev_settings.get("gemini_api_key", "")
+# Snapshot the settings FILE: GET /api/settings returns masked keys only, which cannot restore real keys.
+from backend.settings_manager import load_settings as _load_settings, save_settings as _save_settings
+_prev_settings_file = _load_settings()
 try:
     api_post_json("/settings", {"gemini_api_key": "temp-test-key-123"})
     del_status, del_data = api_delete("/settings/gemini_api_key")
@@ -328,7 +329,6 @@ try:
     assert after_settings.get("gemini_api_key", "") == ""
     print("  DELETE /settings/gemini_api_key: OK")
 finally:
-    if prev_key:
-        api_post_json("/settings", {"gemini_api_key": prev_key})
+    _save_settings(_prev_settings_file)   # restores the real keys exactly (the server reads this file per request)
 
 print("  ALL API TESTS PASSED")

@@ -62,6 +62,31 @@ def mask_api_key(key: str) -> str:
     return f"{k[:6]}...{k[-4:]}"
 
 
+def is_masked_key(value: str) -> bool:
+    """True for display forms produced by mask_api_key (real Gemini keys never contain '...' or '*')."""
+    v = (value or "").strip()
+    return "..." in v or v == "***"
+
+
+def unmask_keys(values: List[str], existing: List[str]) -> List[str]:
+    """
+    Maps masked display values back to the stored keys they represent (so a UI round-trip of masked keys keeps the
+    real keys) and drops masked values that match no stored key — a masked string must never be saved as a key.
+    """
+    out: List[str] = []
+    for v in values or []:
+        if not isinstance(v, str) or not v.strip():
+            continue
+        v = v.strip()
+        if is_masked_key(v):
+            match = next((k for k in existing if mask_api_key(k) == v), None)
+            if match:
+                out.append(match)
+            continue
+        out.append(v)
+    return out
+
+
 class GeminiRateLimiter:
     """
     Thread-safe & asyncio-safe sliding-window rate limiter per API key and model.
@@ -368,7 +393,8 @@ class GeminiKeyPool:
 
         with _pool_lock:
             cleaned_keys: List[str] = []
-            for k in keys_input or []:
+            keys_input = unmask_keys(keys_input or [], GeminiKeyPool.get_keys())
+            for k in keys_input:
                 if isinstance(k, str) and k.strip():
                     c = k.strip()
                     if c not in cleaned_keys:
@@ -655,6 +681,9 @@ def resolve_gemini_api_key(explicit_key: Optional[str] = None) -> str:
     legacy setting, or environment variable. Returns empty string if none configured.
     """
     k = (explicit_key or "").strip()
+    if k and is_masked_key(k):
+        # A masked display value (e.g. from an older UI) stands for a stored key, never for itself
+        k = next(iter(unmask_keys([k], GeminiKeyPool.get_keys())), "")
     if k:
         return k
     active = GeminiKeyPool.get_active_key()

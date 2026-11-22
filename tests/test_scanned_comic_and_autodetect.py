@@ -159,7 +159,7 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         print("   Opaque raster erasure + Greek balloon rendering: OK")
 
     def test_3_epub_novel_with_ai_polish_single_pass(self):
-        print("-> 3. Testing EPUB Novel Translation with AI Polish (Single-Pass Direct AI)...")
+        print("-> 3. Testing EPUB Novel Translation with AI Polish (AI translation, never bypassed)...")
         epub_path = Path("temp/test_blindsight_sample.epub")
         book = epub.EpubBook()
         book.set_identifier("test-blind-001")
@@ -204,7 +204,7 @@ class TestScannedComicAndAutoDetect(unittest.TestCase):
         txt_files = list((Path("temp/outputs") / job_id).glob("*_translated_*.txt"))
         self.assertTrue(len(txt_files) >= 1)
         out_txt = txt_files[0].read_text(encoding="utf-8")
-        self.assertIn("[Επιμελημένο AI]", out_txt, "EPUB with ai_polish=True must route through Single-Pass Direct AI!")
+        self.assertIn("[Επιμελημένο AI]", out_txt, "EPUB with ai_polish=True must be translated by AI!")
 
         try:
             api_delete(f"/jobs/{job_id}")

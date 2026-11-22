@@ -15,6 +15,7 @@ tests/test_gemini_key_pool.py - Comprehensive Unit & Integration Tests for:
 import sys
 import unittest
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -165,10 +166,26 @@ class TestGeminiKeyPool(unittest.TestCase):
 
         # GET /api/settings
         s_data = asyncio.run(get_app_settings())
-        self.assertEqual(s_data["gemini_api_key"], "SlotKey1")
-        self.assertEqual(s_data["gemini_api_keys"], ["SlotKey1", "SlotKey2", "SlotKey3"])
+        # Keys are returned MASKED only (they never leave the server in clear text)
+        from backend.gemini_key_pool import mask_api_key
+        self.assertEqual(s_data["gemini_api_key"], mask_api_key("SlotKey1"))
+        self.assertEqual(s_data["gemini_api_keys"], [mask_api_key(k) for k in ("SlotKey1", "SlotKey2", "SlotKey3")])
+        self.assertNotIn("SlotKey1", json.dumps(s_data))
+        self.assertTrue(s_data["has_gemini_key"])
+        self.assertEqual(s_data["gemini_api_keys_count"], 3)
         self.assertIn("pool", s_data)
         self.assertEqual(s_data["pool"]["total_keys"], 3)
+
+        # Round-trip: saving the masked values back keeps the real keys; a new key in a slot is added
+        masked = s_data["gemini_api_keys"]
+        asyncio.run(update_app_settings(SettingsRequest(gemini_api_keys=[masked[0], "SlotKeyNEW4", masked[2]])))
+        self.assertEqual(GeminiKeyPool.get_keys(), ["SlotKey1", "SlotKeyNEW4", "SlotKey3"])
+        # An unknown masked value is never stored as a key
+        asyncio.run(update_app_settings(SettingsRequest(gemini_api_keys=["AIzaSy...ZZZZ", masked[0]])))
+        self.assertEqual(GeminiKeyPool.get_keys(), ["SlotKey1"])
+        # A masked explicit key resolves to the stored key, never to itself
+        from backend.gemini_key_pool import resolve_gemini_api_key
+        self.assertEqual(resolve_gemini_api_key(masked[0]), "SlotKey1")
 
         # DELETE /api/settings/{key}
         res_del = asyncio.run(delete_app_setting("gemini_api_keys"))

@@ -26,6 +26,12 @@ import subprocess
 import unittest
 from pathlib import Path
 
+
+def _frontend_js_source() -> str:
+    """All frontend scripts (app.js first, then the feature modules loaded after it)."""
+    files = [Path("frontend/app.js")] + sorted(p for p in Path("frontend").glob("*.js") if p.name != "app.js")
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
 from fastapi.routing import APIRoute
 from backend.main import app
 
@@ -34,7 +40,7 @@ class TestFrontendContractsAndUI(unittest.TestCase):
 
     def test_1_strict_http_method_and_route_alignment(self):
         print("-> 1. Testing strict (HTTP method, path) alignment between app.js and FastAPI app.routes...")
-        js_src = Path("frontend/app.js").read_text(encoding="utf-8")
+        js_src = _frontend_js_source()
 
         # Collect real (methods_set, compiled_regex) from FastAPI app.routes
         fastapi_routes = []
@@ -69,7 +75,7 @@ class TestFrontendContractsAndUI(unittest.TestCase):
 
     def test_2_frontend_json_payloads_match_pydantic_models(self):
         print("-> 2. Testing frontend JSON payload keys match FastAPI Pydantic models...")
-        js_src = Path("frontend/app.js").read_text(encoding="utf-8")
+        js_src = _frontend_js_source()
         from backend.main import (
             TranslateRequest,
             AudiobookRequest,
@@ -124,7 +130,7 @@ class TestFrontendContractsAndUI(unittest.TestCase):
 
     def test_3_frontend_security_and_static_hygiene(self):
         print("-> 3. Testing frontend security hygiene (no inline single-quote XSS, dynamic API origin)...")
-        js_src = Path("frontend/app.js").read_text(encoding="utf-8")
+        js_src = _frontend_js_source()
 
         # Must not interpolate escHtml(...) inside single-quoted JS string inside onclick="..."
         unsafe_onclick = re.findall(r'onclick="[^"]*\'[^\']*\$\{escHtml\([^)]+\)\}[^\']*\'[^"]*"', js_src)
@@ -141,8 +147,9 @@ class TestFrontendContractsAndUI(unittest.TestCase):
         # Verify JS syntax with node --check if Node is available
         node_bin = shutil.which("node")
         if node_bin:
-            res = subprocess.run([node_bin, "--check", "frontend/app.js"], capture_output=True, text=True)
-            self.assertEqual(res.returncode, 0, f"JavaScript syntax error in frontend/app.js:\n{res.stderr}")
+            for js_file in sorted(Path("frontend").glob("*.js")):
+                res = subprocess.run([node_bin, "--check", str(js_file)], capture_output=True, text=True)
+                self.assertEqual(res.returncode, 0, f"JavaScript syntax error in {js_file}:\n{res.stderr}")
         print("   Frontend security & JS syntax check: OK")
 
     def test_4_node_runtime_dom_and_state_behavior(self):
