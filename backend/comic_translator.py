@@ -161,6 +161,140 @@ def _comic_items_have_corruption(items: List[Dict[str, Any]], target_lang: str =
     return any(i.startswith("mixed_script") or i == "cot_leak" for i in issues)
 
 
+_LATIN_WORD = re.compile(r"[A-Za-z]{2,}")
+_GREEK_LETTER = re.compile(r"[Ͱ-Ͽἀ-῿]")
+
+
+def _item_translation(item: Dict[str, Any]) -> str:
+    return str(item.get("translated_text") or item.get("translation") or item.get("greek_text") or "")
+
+
+def _comic_items_in_latin_letters(items: List[Dict[str, Any]], target_lang: str = "greek") -> bool:
+    """
+    True when a Greek answer is written in Latin letters ("Greeklish": 'APO DO ERXETAI TO SIMA?'). The mixed-script
+    check misses it, since no Greek word holds a Latin letter. Latin words the original balloon also has (USS, KGB, a
+    sound effect, a name kept as it is) don't count: only words the model made up do.
+    """
+    if not items or not target_lang.lower().startswith(("gr", "el")):
+        return False
+    page_words = page_latin = page_greek = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = _item_translation(item)
+        source = {w.lower() for w in _LATIN_WORD.findall(str(item.get("original_text") or ""))}
+        invented = [w for w in _LATIN_WORD.findall(text) if w.lower() not in source]
+        latin, greek = sum(map(len, invented)), len(_GREEK_LETTER.findall(text))
+        if len(invented) >= 3 and latin > greek:
+            return True
+        page_words, page_latin, page_greek = page_words + len(invented), page_latin + latin, page_greek + greek
+    return page_words >= 3 and page_latin > page_greek
+
+
+def _comic_items_problem(items: List[Dict[str, Any]], target_lang: str = "greek") -> str:
+    """Why a Vision answer can't be used as it is ("" when it can)."""
+    if _comic_items_in_latin_letters(items, target_lang):
+        return "Latin letters instead of Greek"
+    if _comic_items_have_corruption(items, target_lang):
+        return "mixed-script corruption"
+    return ""
+
+
+def _comic_caps(text: str) -> str:
+    """Comic lettering: capitals without tonos, dialytika kept (Ϊ, Ϋ)."""
+    return text.replace("ΐ", "Ϊ").replace("ΰ", "Ϋ").upper().translate(_GREEK_UPPER_TONOS_MAP)
+
+
+def _item_names(item: Any) -> List[Tuple[str, str]]:
+    """The balloon's {"NAME IN THE ORIGINAL": "NAME IN THE TRANSLATION"} pairs, as Vision reported them."""
+    names = item.get("names") if isinstance(item, dict) else None
+    if isinstance(names, dict):
+        pairs = list(names.items())
+    elif isinstance(names, list):
+        pairs = [tuple(p) for p in names if isinstance(p, (list, tuple)) and len(p) == 2]
+    else:
+        return []
+    out = []
+    for src, tgt in pairs:
+        if isinstance(src, str) and isinstance(tgt, str):
+            src, tgt = " ".join(src.split()), " ".join(tgt.split())
+            if src and tgt and len(src) <= 60 and len(tgt) <= 60:
+                out.append((src, tgt))
+    return out
+
+
+def _record_comic_names(votes: Dict[str, Dict[str, int]], spelled: Dict[str, str], items: Any) -> None:
+    """Counts how a page wrote each name: votes[NAME][RENDERING] += 1, keeping the first spelling of each rendering."""
+    for item in items or []:
+        for src, tgt in _item_names(item):
+            key, rendering = _comic_caps(src), _comic_caps(tgt)
+            counts = votes.setdefault(key, {})
+            counts[rendering] = counts.get(rendering, 0) + 1
+            spelled.setdefault(rendering, tgt)
+
+
+def _comic_name_choices(votes: Dict[str, Dict[str, int]], spelled: Dict[str, str],
+                        glossary: Dict[str, str]) -> Dict[str, str]:
+    """One rendering per name: the user's glossary first, otherwise the one used most (the earliest on a tie)."""
+    chosen = {}
+    for key, counts in votes.items():
+        if key in glossary:
+            chosen[key] = glossary[key]
+        elif counts:
+            top = max(counts, key=counts.get)  # max keeps the first of equal counts, which is the earliest page
+            chosen[key] = spelled.get(top, top)
+    return chosen
+
+
+def _inflected_alike(a: str, b: str) -> bool:
+    """ΔΙΟΙΚΗΤΑ / ΔΙΟΙΚΗΤΗΣ: the same word in another case, not another spelling of a name."""
+    n = 0
+    while n < min(len(a), len(b)) and a[n] == b[n]:
+        n += 1
+    return n >= 3 and len(a) - n <= 2 and len(b) - n <= 2
+
+
+def _replace_name(text: str, old: str, new: str) -> str:
+    """Replaces the whole name `old` with `new`, ignoring case and tonos; capitals stay capitals."""
+    folded = "".join(_comic_caps(c) if len(_comic_caps(c)) == 1 else c for c in text)
+    pattern = re.compile(r"(?<!\w)" + re.escape(_comic_caps(old)) + r"(?!\w)")
+    out, last = [], 0
+    for m in pattern.finditer(folded):
+        span = text[m.start():m.end()]
+        out += [text[last:m.start()], _comic_caps(new) if span == span.upper() else new]
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _harmonize_comic_names(pages: Dict[int, List[Dict[str, Any]]], glossary: Dict[str, str]) -> int:
+    """
+    Pages are translated one by one, so a name can come out spelled three ways in one book. Every balloon that names
+    someone gets the rendering of the glossary or of most pages. Spellings that only differ in their last letters are
+    Greek cases (ΔΙΟΙΚΗΤΑ / ΔΙΟΙΚΗΤΗΣ) and stay. Changes the items in place; returns how many balloons changed.
+    """
+    votes: Dict[str, Dict[str, int]] = {}
+    spelled: Dict[str, str] = {}
+    for _p, items in sorted(pages.items()):
+        _record_comic_names(votes, spelled, items)
+    chosen = _comic_name_choices(votes, spelled, glossary)
+    changed = 0
+    for items in pages.values():
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            text = new = _item_translation(item)
+            for src, tgt in _item_names(item):
+                best = chosen.get(_comic_caps(src))
+                if best and not _inflected_alike(_comic_caps(tgt), _comic_caps(best)):
+                    new = _replace_name(new, tgt, best)
+            if new != text:
+                key = next(k for k in ("translated_text", "translation", "greek_text") if item.get(k))
+                item[key] = new
+                changed += 1
+    return changed
+
+
 def _wrap_text_to_width(
     text: str,
     font_obj: fitz.Font,
@@ -872,11 +1006,14 @@ async def _detect_comic_balloons_vision_async(
     target_lang: str,
     session=None,
     status_out: Optional[Dict[str, Any]] = None,
+    known_names: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Calls Gemini Vision Flash asynchronously (rotating across live Gemini 3.x / Flash-Lite models,
     skipping 404 retired models, retrying 429/503 with backoff, and using SQLite SHA-256 cache)
     to detect & translate all speech balloons on a scanned comic page.
+    ``known_names``: names the earlier pages (or the glossary) already rendered, so this page writes them the same way.
+    An answer in Latin letters or with mixed scripts goes to the next model; an empty page is checked by a second one.
     """
     import base64
     import hashlib
@@ -890,7 +1027,8 @@ async def _detect_comic_balloons_vision_async(
         cached = db_get_cached_translation(cache_key)
         if cached:
             parsed = json.loads(cached)
-            if isinstance(parsed, list) and len(parsed) > 0:
+            # an answer saved before the Greeklish check existed is asked again, and the new one replaces it
+            if isinstance(parsed, list) and len(parsed) > 0 and not _comic_items_problem(parsed, target_lang):
                 if status_out is not None:
                     status_out["succeeded"] = True
                     status_out["error"] = ""
@@ -908,22 +1046,34 @@ async def _detect_comic_balloons_vision_async(
         "- Use CONSISTENT comic lettering: ALL CAPS Greek without tonos accents (keep only dialytika Ϊ/Ϋ and disjunctive Ή) whenever the original balloon is uppercase.\n"
         "- Use Greek question mark ';' (NEVER '?') and Greek guillemets '«...»' ONLY when quoting someone inside speech.\n"
         "- NEVER use markdown asterisks (*...*), HTML tags, or non-Greek letters (Latin/Cyrillic/Armenian) spliced inside Greek words.\n"
+        "- Write every Greek word in the Greek alphabet: NEVER Greeklish (Greek words in Latin letters, e.g. 'KALIMERA').\n"
         if is_greek_target
         else ""
     )
+    names_block = ""
+    if known_names:
+        listed = "\n".join(f"- {src} → {tgt}" for src, tgt in list(known_names.items())[:60])
+        names_block = (
+            "NAMES ALREADY USED IN THIS BOOK: write each one exactly like this whenever it appears on this page:\n"
+            f"{listed}\n"
+        )
     prompt = (
         "You are an expert graphic novel and comic book localization engine. "
         "Detect ALL dialogue text, speech balloons, thought bubbles, and narration caption boxes on this comic page. "
         f"{greek_rules}"
+        f"{names_block}"
         "Return a STRICT JSON list of objects:\n"
         "[\n"
         "  {\n"
         "    \"box_2d\": [ymin, xmin, ymax, xmax],\n"
         "    \"original_text\": \"original dialogue\",\n"
         f"    \"translated_text\": \"natural, vivid {tgt_name} comic dialogue translation\",\n"
-        "    \"bg_color\": \"#ffffff\"\n"
+        "    \"bg_color\": \"#ffffff\",\n"
+        "    \"names\": {\"NAME AS IN THE ORIGINAL\": \"THE SAME NAME AS WRITTEN IN translated_text\"}\n"
         "  }\n"
         "]\n"
+        "Add \"names\" only to balloons that mention proper names of people, ships, places or organisations "
+        "(never ranks, titles or ordinary words); leave it out otherwise.\n"
         "Coordinates MUST be normalized integers 0 to 1000 representing the exact bounding box of the text inside each balloon. "
         "If the page has ONLY artwork and NO text at all, return []."
     )
@@ -1003,6 +1153,43 @@ async def _detect_comic_balloons_vision_async(
             cleaned_list.append(item_copy)
         return cleaned_list
 
+    empty_once = saw_text = False
+
+    def _take(parsed: List[Dict[str, Any]], model: str) -> bool:
+        """Keeps a complete answer, or says why the next model is asked (False)."""
+        nonlocal detected_items, fallback_corrupted_items, succeeded, last_error, empty_once, saw_text
+        global _CACHED_VISION_MODEL
+        saw_text = saw_text or bool(parsed)
+        if not parsed and not empty_once and len(vision_models) > 1:
+            empty_once = True  # a page full of balloons sometimes comes back empty: a second model checks it
+            last_error = f"{model}: no text found"
+            return False
+        problem = _comic_items_problem(parsed, target_lang)
+        if problem:
+            logger.warning(f"Vision model {model} answered with {problem}; trying next model...")
+            if problem == "mixed-script corruption" and fallback_corrupted_items is None:
+                fallback_corrupted_items = _clean_items(parsed)  # Greeklish is never kept, not even as a last resort
+            last_error = f"{model}: {problem}"
+            return False
+        detected_items = _clean_items(parsed)
+        succeeded = True
+        if "lite" not in model.lower():
+            _CACHED_VISION_MODEL = model
+        if cache_key and detected_items:
+            try:
+                from backend.database import db_set_cached_translation
+                db_set_cached_translation(
+                    cache_key,
+                    img_hash,
+                    json.dumps(detected_items, ensure_ascii=False),
+                    source_lang,
+                    target_lang,
+                    engine="gemini_comic_vision_v2",
+                )
+            except Exception:
+                pass
+        return True
+
     try:
         from backend.gemini_key_pool import GeminiKeyPool, mask_api_key, parse_gemini_error
         pool_keys = GeminiKeyPool.get_keys()
@@ -1063,33 +1250,10 @@ async def _detect_comic_balloons_vision_async(
                                 last_error = f"{model}: incomplete answer ({finish_reason or 'damaged JSON'})"
                                 continue  # the balloons after the cut would stay untranslated
                             if parsed is not None:
-                                # Quality gate: if mixed-script corruption detected (e.g. Armenian/Cyrillic/Latin in Greek),
-                                # save as last-resort fallback and try next Vision model first
-                                if _comic_items_have_corruption(parsed, target_lang):
-                                    logger.warning(f"Vision model {model} produced mixed-script Greek corruption; trying next model...")
-                                    if fallback_corrupted_items is None:
-                                        fallback_corrupted_items = _clean_items(parsed)
-                                    last_error = f"{model}: mixed-script corruption"
-                                    continue
-                                parsed = _clean_items(parsed)
-                                if "lite" not in m_low:
-                                    _CACHED_VISION_MODEL = model
-                                detected_items = parsed
-                                succeeded = True
-                                if cache_key and len(detected_items) > 0:
-                                    try:
-                                        from backend.database import db_set_cached_translation
-                                        db_set_cached_translation(
-                                            cache_key,
-                                            img_hash,
-                                            json.dumps(detected_items, ensure_ascii=False),
-                                            source_lang,
-                                            target_lang,
-                                            engine="gemini_comic_vision_v2",
-                                        )
-                                    except Exception:
-                                        pass
-                                break
+                                # Quality gate (Greeklish, mixed scripts, an empty page): _take decides
+                                if _take(parsed, model):
+                                    break
+                                continue
                             else:
                                 last_error = f"{model}: unparseable JSON"
                                 logger.warning(f"Vision model {model} returned unparseable JSON; trying next model...")
@@ -1129,25 +1293,9 @@ async def _detect_comic_balloons_vision_async(
                                         text_resp, finish_reason = _extract_gemini_text_and_reason(data)
                                         parsed = _parse_vision_json(text_resp)
                                         if parsed is not None and not _incomplete(text_resp, finish_reason, parsed):
-                                            parsed = _clean_items(parsed)
-                                            if "lite" not in m_low:
-                                                _CACHED_VISION_MODEL = model
-                                            detected_items = parsed
-                                            succeeded = True
-                                            if cache_key and len(detected_items) > 0:
-                                                try:
-                                                    from backend.database import db_set_cached_translation
-                                                    db_set_cached_translation(
-                                                        cache_key,
-                                                        img_hash,
-                                                        json.dumps(detected_items, ensure_ascii=False),
-                                                        source_lang,
-                                                        target_lang,
-                                                        engine="gemini_comic_vision_v2",
-                                                    )
-                                                except Exception:
-                                                    pass
-                                            break
+                                            if _take(parsed, model):
+                                                break
+                                            continue  # _take named the reason
                             last_error = f"{model}: HTTP {resp.status}"
                         elif resp.status in (429, 503):
                             rate_limited_round = True
@@ -1187,8 +1335,8 @@ async def _detect_comic_balloons_vision_async(
                 except PermissionError:
                     raise
                 except Exception as ex:
-                    last_error = f"{model}: {ex}"
-                    logger.debug(f"Vision model {model} attempt failed: {ex}")
+                    last_error = f"{model}: {str(ex) or type(ex).__name__}"  # a timeout has no message of its own
+                    logger.debug(f"Vision model {model} attempt failed: {last_error}")
                     await asyncio.sleep(0.3)
 
             if not succeeded and not out_of_quota and rate_limited_round and attempt_round == 1:
@@ -1206,13 +1354,16 @@ async def _detect_comic_balloons_vision_async(
     if not succeeded and fallback_corrupted_items is not None:
         detected_items = fallback_corrupted_items
         succeeded = True
+    if not succeeded and empty_once and not saw_text:  # no second model could look, and none found text
+        detected_items = []
+        succeeded = True
 
     if status_out is not None:
         status_out["succeeded"] = succeeded
         status_out["error"] = last_error if not succeeded else ""
 
-    if not succeeded and last_error:
-        logger.warning(f"Gemini Vision failed on page after trying all models: {last_error}")
+    if not succeeded and last_error:  # the caller logs the page number with it
+        logger.debug(f"Gemini Vision failed on page after trying all models: {last_error}")
 
     return detected_items
 
@@ -1392,6 +1543,8 @@ async def translate_comic_document(
         vision_pages_to_process: List[Tuple[int, bytes]] = []
         completed_count = 0
         untranslated_pages: List[int] = []
+        page_errors: Dict[int, str] = {}  # page number -> why Vision failed on it
+        blank_pages: List[int] = []  # scanned pages where Vision found no text to place
 
         # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
         for page_idx in range(total_pages):
@@ -1478,6 +1631,18 @@ async def translate_comic_document(
             vision_results: Dict[int, List[Dict[str, Any]]] = {}
             failed_vision_pages = 0
             last_vision_error = ""
+            # One spelling per name: the glossary decides, otherwise the earlier pages (see _harmonize_comic_names)
+            glossary_names: Dict[str, str] = {}
+            if target_lang.lower().startswith(("gr", "el")):
+                try:
+                    from backend.glossary import load_glossary
+                    glossary_names = {_comic_caps(" ".join(k.split())): v.strip()
+                                      for k, v in load_glossary(style="comic").items()
+                                      if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()}
+                except Exception as gl_err:
+                    logger.debug(f"[{job_id}] Glossary unavailable for comic names: {gl_err}")
+            name_votes: Dict[str, Dict[str, int]] = {}
+            name_spelled: Dict[str, str] = {}
 
             async with aiohttp.ClientSession(connector=connector) as session:
                 async def _vision_worker(p_idx: int, img_bytes: bytes):
@@ -1486,8 +1651,11 @@ async def translate_comic_document(
                         raise asyncio.CancelledError("Comic translation cancelled by user.")
 
                     p_key = str(p_idx)
-                    if p_key in cp_pages and isinstance(cp_pages[p_key], list):
-                        vision_results[p_idx] = cp_pages[p_key]
+                    saved = cp_pages.get(p_key)
+                    # an empty or Greeklish page from an earlier run is asked again
+                    if isinstance(saved, list) and saved and not _comic_items_problem(saved, target_lang):
+                        vision_results[p_idx] = saved
+                        _record_comic_names(name_votes, name_spelled, saved)
                         completed_count += 1
                         return
 
@@ -1496,17 +1664,23 @@ async def translate_comic_document(
                         if is_job_cancelled(job_id):
                             raise asyncio.CancelledError("Comic translation cancelled by user.")
                         items = await _detect_comic_balloons_vision_async(
-                            img_bytes, resolved_api_key, source_lang, target_lang, session=session, status_out=st_info
+                            img_bytes, resolved_api_key, source_lang, target_lang, session=session, status_out=st_info,
+                            known_names=_comic_name_choices(name_votes, name_spelled, glossary_names),
                         )
                         vision_results[p_idx] = items
                         if st_info.get("succeeded"):
-                            cp_pages[p_key] = items
-                            await _save_comic_cp()
+                            _record_comic_names(name_votes, name_spelled, items)
+                            if items:  # a page found empty is asked again next time, in case it was a miss
+                                cp_pages[p_key] = items
+                                await _save_comic_cp()
                         else:
                             failed_vision_pages += 1
                             untranslated_pages.append(p_idx + 1)
+                            page_errors[p_idx + 1] = st_info.get("error") or "no answer"
                             if st_info.get("error"):
                                 last_vision_error = st_info["error"]
+                            logger.warning(f"[{job_id}] Page {p_idx + 1} left untranslated: Vision AI failed "
+                                           f"({page_errors[p_idx + 1]}).")
                     completed_count += 1
                     update_job(
                         job_id,
@@ -1550,11 +1724,20 @@ async def translate_comic_document(
                         f"Απομένουν {failed_vision_pages} σελίδες· η πρόοδος αποθηκεύτηκε σε checkpoint!"
                     )
 
+            # One spelling per name across the book, on copies: the checkpoint keeps what Vision answered
+            render_pages = {p: [dict(i) for i in items if isinstance(i, dict)] for p, items in vision_results.items() if items}
+            renamed = _harmonize_comic_names(render_pages, glossary_names)
+            if renamed:
+                logger.info(f"[{job_id}] One spelling per name: {renamed} balloon(s) adjusted.")
+
             # Apply detected redactions and Greek text rendering cleanly on the PDF document
-            for p_idx, items in sorted(vision_results.items()):
-                if items:
-                    rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path, target_lang=target_lang)
-                    all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
+            for p_idx, items in sorted(render_pages.items()):
+                rendered_dialogues = _render_vision_balloons_on_page(doc[p_idx], items, font_path, target_lang=target_lang)
+                all_document_dialogues[p_idx] = (p_idx + 1, rendered_dialogues)
+            blank_pages.extend(sorted(
+                p_idx + 1 for p_idx in vision_results
+                if p_idx + 1 not in untranslated_pages and not all_document_dialogues[p_idx][1]
+            ))
 
             if failed_vision_pages == 0 and cp_file.exists():
                 try:
@@ -1609,8 +1792,17 @@ async def translate_comic_document(
 
     if untranslated_pages and notes is not None:
         pages_text = ", ".join(map(str, sorted(untranslated_pages)[:10])) + (" …" if len(untranslated_pages) > 10 else "")
-        reason = "Vision AI failed; translate again to retry them" if resolved_api_key else "image-only pages need a Gemini API key"
+        if resolved_api_key:
+            errors = list(page_errors.values())
+            why = f" ({max(set(errors), key=errors.count)[:140]})" if errors else ""  # the most common reason
+            reason = f"Vision AI failed{why}; translate again to retry them"
+        else:
+            reason = "image-only pages need a Gemini API key"
         notes.append(f"{len(untranslated_pages)} page(s) left untranslated ({pages_text}): {reason}.")
+    if blank_pages and notes is not None:
+        shown = ", ".join(map(str, blank_pages[:10])) + (" …" if len(blank_pages) > 10 else "")
+        notes.append(f"No text found on {len(blank_pages)} page(s) ({shown}): artwork only? "
+                      f"If one of them has balloons, translate again to retry it.")
 
     update_job(
         job_id,

@@ -79,6 +79,8 @@ class Session:
 
 
 BALLOON = {"box_2d": [100, 100, 300, 700], "original_text": "Hello", "translated_text": "Γεια σου"}
+GREEKLISH = {"box_2d": [100, 100, 300, 700], "original_text": "Where is the signal coming from?",
+             "translated_text": "APO PU ERXETAI TO SIMA;"}
 
 
 class TestPages(unittest.TestCase):
@@ -275,7 +277,7 @@ class TestNeighbours(unittest.TestCase):
 
 
 class TestVisionAnswers(unittest.TestCase):
-    def detect(self, session):
+    def detect(self, session, img=None):
         status = {}
         with mock.patch.object(ai_polisher, "is_gemini_quota_exhausted", return_value=False), \
                 mock.patch.object(ct.asyncio, "sleep", no_wait), \
@@ -284,7 +286,7 @@ class TestVisionAnswers(unittest.TestCase):
                 mock.patch.object(gemini_key_pool.GeminiKeyPool, "mark_model_exhausted"), \
                 mock.patch.object(gemini_key_pool.GeminiRateLimiter, "acquire", no_wait):
             items = asyncio.run(ct._detect_comic_balloons_vision_async(
-                uuid.uuid4().bytes, KEY, "english", "greek", session=session, status_out=status))
+                img or uuid.uuid4().bytes, KEY, "english", "greek", session=session, status_out=status))
         return items, status, key_off.called, trip.called
 
     def test_a_cut_page_is_not_a_finished_page(self):
@@ -313,6 +315,180 @@ class TestVisionAnswers(unittest.TestCase):
     def test_a_daily_limit_still_stops(self):
         _items, status, key_off, trip = self.detect(Session(refusal("GenerateRequestsPerDayPerProject", "3600s")))
         self.assertEqual((status["succeeded"], key_off, trip), (False, True, True))
+
+    def test_greeklish_goes_to_the_next_model(self):
+        session = Session(answer([GREEKLISH]), answer([BALLOON]))
+        items, status, _key_off, _trip = self.detect(session)
+        self.assertTrue(status["succeeded"])
+        self.assertEqual([i["translated_text"] for i in items], [BALLOON["translated_text"]])
+        self.assertEqual(session.sent, 2)
+
+    def test_greeklish_is_never_kept(self):
+        items, status, _key_off, _trip = self.detect(Session(answer([GREEKLISH])))
+        self.assertEqual((status["succeeded"], items), (False, []))
+        self.assertIn("Latin letters", status["error"])
+
+    def test_an_empty_page_is_checked_by_a_second_model(self):
+        session = Session(answer([]), answer([BALLOON]))
+        items, status, _key_off, _trip = self.detect(session)
+        self.assertEqual((status["succeeded"], len(items), session.sent), (True, 1, 2))
+
+    def test_a_page_two_answers_find_empty_has_no_text(self):
+        session = Session(answer([]))
+        items, status, _key_off, _trip = self.detect(session)
+        self.assertEqual((status["succeeded"], items, session.sent), (True, [], 2))
+
+    def test_an_empty_answer_does_not_hide_text_another_model_saw(self):
+        items, status, _key_off, _trip = self.detect(Session(answer([]), answer([GREEKLISH])))
+        self.assertEqual((status["succeeded"], items), (False, []))
+
+    def test_a_cached_greeklish_page_is_asked_again(self):
+        from backend.database import compute_cache_key, db_get_cached_translation, db_set_cached_translation
+        img = uuid.uuid4().bytes
+        digest = __import__("hashlib").sha256(img).hexdigest()
+        cache_key = compute_cache_key(digest, "english", "greek", engine="gemini_comic_vision_v2")
+        db_set_cached_translation(cache_key, digest, json.dumps([GREEKLISH]), "english", "greek",
+                                  engine="gemini_comic_vision_v2")
+        session = Session(answer([BALLOON]))
+        items, status, _key_off, _trip = self.detect(session, img)
+        self.assertEqual((status["succeeded"], session.sent), (True, 1))
+        self.assertEqual(items[0]["translated_text"], BALLOON["translated_text"])
+        self.assertIn(BALLOON["translated_text"], db_get_cached_translation(cache_key))  # the new answer replaced it
+
+
+class TestScriptsAndNames(unittest.TestCase):
+    def test_latin_letters_instead_of_greek_are_found(self):
+        found = ct._comic_items_in_latin_letters
+        self.assertTrue(found([GREEKLISH]))
+        # one-word balloons count together across the page
+        self.assertTrue(found([{"original_text": w, "translated_text": t}
+                               for w, t in (("YES!", "NAI!"), ("NO!", "OXI!"), ("MAYBE.", "ISOS."))]))
+        # Latin words the original has too are not Greeklish
+        self.assertFalse(found([{"original_text": "USS ATLAS, 4 JULY 2031.", "translated_text": "USS ATLAS, 4 ΙΟΥΛΙΟΥ 2031."},
+                                {"original_text": "BLAM! BLAM!", "translated_text": "BLAM! BLAM!"},
+                                {"original_text": "Call the KGB and the CIA.", "translated_text": "ΚΑΛΕΣΕ ΤΗΝ KGB ΚΑΙ ΤΗ CIA."}]))
+        self.assertFalse(found([GREEKLISH], "english"))
+        self.assertEqual(ct._comic_items_problem([GREEKLISH]), "Latin letters instead of Greek")
+        self.assertEqual(ct._comic_items_problem([BALLOON]), "")
+
+    def pages(self):
+        def balloon(text, **names):
+            return {"box_2d": [100, 100, 300, 700], "translated_text": text, "names": names}
+        return {
+            0: [balloon("ΚΑΛΗΜΕΡΑ, ΚΟΒΑΛΣΚΙ!", KOWALSKY="ΚΟΒΑΛΣΚΙ")],
+            1: [balloon("ΠΟΥ ΕΙΝΑΙ Ο ΚΟΟΥΑΛΣΚΙ;", Kowalsky="ΚΟΟΥΑΛΣΚΙ")],
+            2: [balloon("ΑΚΟΥ, ΚΟΒΑΛΣΚΙ.", KOWALSKY="ΚΟΒΑΛΣΚΙ"),
+                balloon("ΜΑΛΙΣΤΑ, ΔΙΟΙΚΗΤΗ!", COMMANDER="ΔΙΟΙΚΗΤΗ")],
+            3: [balloon("ΕΥΧΑΡΙΣΤΩ, ΔΙΟΙΚΗΤΑ.", COMMANDER="ΔΙΟΙΚΗΤΑ"), {"box_2d": [1, 1, 9, 9]}],
+        }
+
+    def test_a_name_gets_the_spelling_of_most_pages(self):
+        pages = self.pages()
+        self.assertEqual(ct._harmonize_comic_names(pages, {}), 1)
+        self.assertEqual(pages[1][0]["translated_text"], "ΠΟΥ ΕΙΝΑΙ Ο ΚΟΒΑΛΣΚΙ;")
+        # a Greek case ending is grammar, not another spelling
+        self.assertEqual([pages[2][1]["translated_text"], pages[3][0]["translated_text"]],
+                         ["ΜΑΛΙΣΤΑ, ΔΙΟΙΚΗΤΗ!", "ΕΥΧΑΡΙΣΤΩ, ΔΙΟΙΚΗΤΑ."])
+
+    def test_the_glossary_decides_first(self):
+        pages = self.pages()
+        ct._harmonize_comic_names(pages, {"KOWALSKY": "Καβάλσκι"})
+        self.assertEqual([pages[0][0]["translated_text"], pages[1][0]["translated_text"], pages[2][0]["translated_text"]],
+                         ["ΚΑΛΗΜΕΡΑ, ΚΑΒΑΛΣΚΙ!", "ΠΟΥ ΕΙΝΑΙ Ο ΚΑΒΑΛΣΚΙ;", "ΑΚΟΥ, ΚΑΒΑΛΣΚΙ."])
+
+    def test_only_the_whole_name_is_replaced(self):
+        # tonos and case don't hide a name; capitals stay capitals; a longer name that starts alike stays
+        self.assertEqual(ct._replace_name("ΝΤΑΝ ΚΑΙ ΝΤΑΝΙΕΛ, Ντάν.", "Νταν", "Ντόνοβαν"),
+                         "ΝΤΟΝΟΒΑΝ ΚΑΙ ΝΤΑΝΙΕΛ, Ντόνοβαν.")
+
+
+class TestBookPages(unittest.TestCase):
+    """A whole scanned book: what the next page is told, which names are aligned, and what the notes say."""
+
+    def run_book(self, answers, glossary=None, checkpoint=None):
+        calls, notes = [], []
+
+        async def detect(_img, *_a, status_out=None, known_names=None, **_k):
+            ok, result = answers[len(calls)]
+            calls.append(dict(known_names or {}))
+            status_out["succeeded"], status_out["error"] = ok, "" if ok else result
+            return [dict(i) for i in result] if ok else []
+
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.pdf"
+            doc = pymupdf.open()
+            for n in range(4):
+                doc.new_page(width=300, height=420).insert_image(pymupdf.Rect(0, 0, 300, 420), stream=picture(shade=160 + 20 * n))
+            doc.save(str(src))
+            doc.close()
+            if checkpoint is not None:
+                (Path(td) / "out").mkdir()
+                (Path(td) / "out" / ".comic_vision_checkpoint.json").write_text(
+                    json.dumps(dict(checkpoint, _languages="english>greek"), ensure_ascii=False), encoding="utf-8")
+            job = job_manager.create_job(str(src), src.name, "pdf")
+            try:
+                with mock.patch.object(ct, "_detect_comic_balloons_vision_async", detect), \
+                        mock.patch.object(ct, "_ai_polish_comic_balloons", mock.AsyncMock(return_value=[])), \
+                        mock.patch("backend.glossary.load_glossary", return_value=glossary or {}), \
+                        mock.patch("backend.gemini_key_pool.resolve_gemini_api_key", return_value=KEY):
+                    out = asyncio.run(ct.translate_comic_document(
+                        job.job_id, str(src), "pdf", "english", "greek", str(Path(td) / "out" / "c.txt"),
+                        api_key=KEY, quota_behavior="fallback", notes=notes))
+                with pymupdf.open(out) as done:
+                    texts = [" ".join(p.get_text().split()) for p in done]
+            finally:
+                job_manager._jobs.pop(job.job_id, None)
+                db_delete_job(job.job_id)
+        return calls, notes, texts
+
+    @staticmethod
+    def said(text, **names):
+        return [{"box_2d": [100, 100, 300, 700], "original_text": "Hi there", "translated_text": text, "names": names}]
+
+    def test_the_notes_name_the_reason_and_the_pages_without_text(self):
+        _calls, notes, _texts = self.run_book([
+            (True, self.said("ΓΕΙΑ ΣΟΥ!")),
+            (False, "gemini-3-flash-preview: HTTP 503 (overloaded)"),
+            (True, []),
+            (True, self.said("ΑΝΤΙΟ!")),
+        ])
+        self.assertEqual(notes, [
+            "1 page(s) left untranslated (2): Vision AI failed (gemini-3-flash-preview: HTTP 503 (overloaded)); "
+            "translate again to retry them.",
+            "No text found on 1 page(s) (3): artwork only? If one of them has balloons, translate again to retry it.",
+        ])
+
+    def test_later_pages_reuse_a_name_and_the_book_spells_it_once(self):
+        calls, _notes, texts = self.run_book([
+            (True, self.said("ΚΑΛΗΜΕΡΑ, ΚΟΒΑΛΣΚΙ!", KOWALSKY="ΚΟΒΑΛΣΚΙ")),
+            (True, self.said("ΠΟΥ ΕΙΝΑΙ Ο ΚΟΟΥΑΛΣΚΙ;", KOWALSKY="ΚΟΟΥΑΛΣΚΙ")),
+            (True, self.said("ΑΚΟΥ, ΚΟΒΑΛΣΚΙ.", KOWALSKY="ΚΟΒΑΛΣΚΙ")),
+            (True, self.said("ΤΕΛΟΣ.")),
+        ])
+        self.assertEqual(calls[0], {})
+        self.assertEqual(calls[1], {"KOWALSKY": "ΚΟΒΑΛΣΚΙ"})
+        self.assertIn("ΚΟΒΑΛΣΚΙ", texts[1])
+        self.assertNotIn("ΚΟΟΥΑΛΣΚΙ", texts[1])
+
+    def test_the_glossary_spells_a_name_for_the_whole_book(self):
+        calls, _notes, texts = self.run_book([
+            (True, self.said("ΚΑΛΗΜΕΡΑ, ΚΟΒΑΛΣΚΙ!", KOWALSKY="ΚΟΒΑΛΣΚΙ")),
+            (True, self.said("ΠΟΥ ΕΙΝΑΙ Ο ΚΟΟΥΑΛΣΚΙ;", KOWALSKY="ΚΟΟΥΑΛΣΚΙ")),
+            (True, self.said("ΓΕΙΑ.")),
+            (True, self.said("ΤΕΛΟΣ.")),
+        ], glossary={"Kowalsky": "Καβάλσκι"})
+        self.assertEqual(calls[1], {"KOWALSKY": "Καβάλσκι"})
+        self.assertIn("ΚΑΒΑΛΣΚΙ", texts[0])
+        self.assertIn("ΚΑΒΑΛΣΚΙ", texts[1])
+
+    def test_an_empty_or_greeklish_page_of_an_earlier_run_is_asked_again(self):
+        calls, notes, texts = self.run_book(
+            [(True, self.said("ΑΠΟ ΠΟΥ ΕΡΧΕΤΑΙ ΤΟ ΣΗΜΑ;")), (True, self.said("ΕΔΩ ΕΙΜΑΣΤΕ."))],
+            checkpoint={"0": [GREEKLISH], "1": [], "2": [BALLOON], "3": [BALLOON]})
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ΣΗΜΑ;", texts[0])
+        self.assertNotIn("ERXETAI", texts[0])
+        self.assertEqual(notes, [])
 
 
 class TestCover(unittest.TestCase):

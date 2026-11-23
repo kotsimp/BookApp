@@ -141,6 +141,11 @@ The application includes a specialized pipeline for illustrated publications:
 5. **Permitted Comic Export Formats:**
    - **PDF**, **CBZ** (Comic Book Zip), **CBR** (Comic Book RAR, a real RAR archive), and **EPUB** (Fixed-Layout).
    - Plain text formats (TXT and DOCX) are automatically disabled for comics to protect users from artwork loss.
+6. **Checks on scanned pages:**
+   - A page that comes back in Latin letters (Greeklish, such as `KALIMERA`) or with mixed alphabets goes to the next Gemini model. Greeklish is never kept.
+   - A page that comes back empty is checked by a second model, so a page full of balloons is not skipped.
+   - **A name is spelled one way through the whole book.** Each page is told how the earlier pages wrote the names, and before the PDF is drawn every name gets the spelling most pages used. To choose a spelling yourself, add the name to the **Glossary** (for example `Kowalsky` → `Κοβάλσκι`): the glossary always wins. Greek case endings (`ΔΙΟΙΚΗΤΑ` / `ΔΙΟΙΚΗΤΗΣ`) are left as they are.
+   - When the job finishes, the progress card lists the pages left untranslated, with the reason, and the scanned pages where no text was found (see the FAQ below).
 
 ### 💡 Auto-Genre & Document Style Detection
 Upon uploading a document, the system automatically analyzes the opening pages:
@@ -501,7 +506,12 @@ The **Session History** panel at the bottom of the page tracks all jobs (with us
 * **Yes!** Open the **Direct Editor**, paste your text, and click **✨ AI Polish**. The system processes your text and lets you download it as TXT, DOCX, PDF, or EPUB.
 
 #### ❓ How are scanned PDF comics translated?
-* The upload analyzer automatically detects scanned comics (`🎨 Graphic Novel / Comic Auto-Detected`) and locks the interface to comic-safe options. The **Gemini Vision AI** reads speech balloons across 4 parallel workers, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact.
+* The upload analyzer automatically detects scanned comics (`🎨 Graphic Novel / Comic Auto-Detected`) and locks the interface to comic-safe options. The **Gemini Vision AI** reads speech balloons, 3 pages at a time, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact.
+
+#### ❓ A comic job says "page(s) left untranslated" or "No text found on page(s)". What do I do?
+* **Left untranslated (with a reason in brackets):** Gemini Vision could not read those pages, for example `HTTP 429 (rate limit)`, `HTTP 503 (overloaded)` or a timeout. Translate the file again: the pages already done come from the cache, so only the listed pages are sent again.
+* **No text found:** usually the cover or full-page artwork. If one of those pages has balloons, translate again: a page found empty is always asked again, never reused.
+* Pages that an older version saved in Latin letters (Greeklish) are translated again automatically.
 
 #### ❓ How does Single-Pass Direct AI Translation speed up processing?
 * Enabling **✨ AI Polish** with a Gemini API key translates and polishes in **one single parallel pass** (5 concurrent workers). It is **4x–8x faster**, avoids Google Translate 429 limits, and preserves glossary terms, entity consistency dossiers, and cover art.
