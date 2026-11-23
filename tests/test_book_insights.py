@@ -408,6 +408,78 @@ class TestAnalysisAndLanguage(InsightsBase):
         self.assertIn("<strong>bold</strong>", out)
         self.assertIn("<ul><li>", out)
 
+    def test_session_history_click_loads_into_active_insights_tab(self):
+        """Clicking a Session History item while Book Insights is open must load it there, not in Translation."""
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js not installed")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, dataset: {},
+    style: { display: '' }, attrs: {}, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
+    closest: () => null, addEventListener() {}, focus() {}, pause() {}, play: () => Promise.resolve(),
+    querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const fetched = [];
+const reply = (body) => ({ ok: true, status: 200, json: async () => body });
+const fetchImpl = async (url) => {
+  fetched.push(String(url));
+  if (/\/insights\/job42\/analysis$/.test(url)) return reply({ meaningful_words: 5000, estimated_pages: 20,
+    detected_language: 'english', can_summary: true, can_synopsis: true, has_api_key: true, file_name: 'Novel.pdf' });
+  if (/\/insights\/job42$/.test(url)) return reply({ job_id: 'job42', insights: [
+    { insight_type: 'short_summary', language: 'english', word_count: 200, created_at: '2026-01-01T00:00:00', text: 'Old summary.', label: 'Summary', title: 'Novel' },
+    { insight_type: 'standard_synopsis', language: 'english', word_count: 900, created_at: '2026-02-01T00:00:00', text: 'Newest synopsis.', label: 'Synopsis', title: 'Novel' } ] });
+  return reply({ status: 'done', file_name: 'Novel.pdf' });
+};
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, confirm: () => true,
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: (...a) => fetchImpl(...a),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8') + '\nglobalThis.__x = { insState, state };', ctx);
+ctx.toast = () => {};
+(async () => {
+  const { insState, state } = ctx.__x;
+  // Book Insights tab active -> the job goes to Book Insights, Translation is untouched
+  getEl('tab-insights').classList.add('active');
+  await ctx.openHistoryJob('job42', 'translate', 'Novel.pdf');
+  assert.strictEqual(insState.jobId, 'job42');
+  assert.strictEqual(insState.fileName, 'Novel.pdf');
+  assert.strictEqual(state.tr.jobId, null);
+  assert.ok(!fetched.some((u) => u.includes('/status/')), 'must not use the translation loader');
+  assert.strictEqual(getEl('ins-file-name').textContent, 'Novel.pdf');
+  assert.ok(getEl('ins-selected-file').classList.contains('visible'));
+  assert.ok(getEl('ins-file-meta').textContent.includes('λέξεις'));
+  assert.strictEqual(insState.record.text, 'Newest synopsis.', 'latest saved insight is shown');
+  assert.strictEqual(getEl('ins-result-card').style.display, '');
+  // Translation tab active -> the normal loader still handles it
+  getEl('tab-insights').classList.remove('active');
+  getEl('tab-translate').classList.add('active');
+  fetched.length = 0;
+  await ctx.openHistoryJob('job42', 'translate', 'Novel.pdf');
+  assert.ok(fetched.some((u) => u.includes('/status/job42')));
+  assert.strictEqual(state.tr.jobId, 'job42');
+  process.stdout.write('OK');
+})().catch((e) => { process.stdout.write('FAIL ' + (e && e.stack || e)); });
+"""
+        res = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30,
+                             cwd=str(ROOT), encoding="utf-8")
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        js = (ROOT / "frontend" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('onclick="openHistoryJob(', js)
+        self.assertIn("await loadHistoryJob(job.job_id", js, "Smart Resume must keep using the translate/audiobook loader")
+
     def test_speech_text_matches_written_text(self):
         md = "## Premise\n\nElena keeps the **light**.\n\n- First point\n- Second point"
         self.assertEqual(bi.speech_text(md), "Premise.\n\nElena keeps the light.\n\nFirst point\nSecond point")

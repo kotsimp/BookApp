@@ -2235,7 +2235,7 @@ function renderHistory(jobs) {
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
 
   grid.innerHTML = displayJobs.map(j => `
-    <div class="history-item" data-job-id="${escHtml(j.job_id)}" data-mode="${escHtml(j.mode || '')}" onclick="loadHistoryJob(this.dataset.jobId, this.dataset.mode)">
+    <div class="history-item" data-job-id="${escHtml(j.job_id)}" data-mode="${escHtml(j.mode || '')}" data-file-name="${escHtml(j.file_name || '')}" onclick="openHistoryJob(this.dataset.jobId, this.dataset.mode, this.dataset.fileName)">
       <span class="history-icon">${modeIcon[j.mode] || '📄'}</span>
       <div class="history-info">
         <div class="history-name">${escHtml(j.file_name)}</div>
@@ -2292,6 +2292,16 @@ async function clearAllHistory() {
   } catch (err) {
     toast('Failed to clear history.', 'error');
   }
+}
+
+// A Session History click loads the job into the tab the user is looking at. Book Insights keeps
+// its own document slot; Smart Resume calls loadHistoryJob directly because it must translate/narrate.
+function openHistoryJob(jobId, mode, fileName) {
+  const onInsightsTab = document.getElementById('tab-insights')?.classList.contains('active');
+  if (onInsightsTab && typeof loadHistoryJobIntoInsights === 'function') {
+    return loadHistoryJobIntoInsights(jobId, fileName);
+  }
+  return loadHistoryJob(jobId, mode);
 }
 
 async function loadHistoryJob(jobId, mode) {

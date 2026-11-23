@@ -183,14 +183,52 @@ async function useCurrentDocumentForInsights() {
   await loadInsightsAnalysis();
 }
 
+// Session History click while the Book Insights tab is open: load that document here (not into
+// Translation) and show its most recent saved summary/synopsis, if any.
+async function loadHistoryJobIntoInsights(jobId, fileName) {
+  if (!jobId) return false;
+  if (insState.busy) {
+    toast('Περιμένετε να ολοκληρωθεί η τρέχουσα δημιουργία.', 'info');
+    return false;
+  }
+  insState.jobId = jobId;
+  insState.fileName = fileName || '';
+  insState.analysis = null;
+  insState.record = null;
+  document.getElementById('ins-result-card').style.display = 'none';
+  setInsightsProgress(null);
+  showInsightsError('');
+  _insShowDocument(insState.fileName || 'Έγγραφο', 'Φόρτωση από το Ιστορικό…');
+  const card = document.getElementById('ins-selected-file');
+  if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  await loadInsightsAnalysis();
+  if (insState.jobId !== jobId) return false;   // another item was clicked meanwhile
+  if (!fileName && insState.fileName) _insShowDocument(insState.fileName, document.getElementById('ins-file-meta').textContent);
+
+  try {
+    const res = await fetch(`${API}/insights/${encodeURIComponent(jobId)}`);
+    if (res.ok && insState.jobId === jobId) {
+      const data = await res.json();
+      const saved = (Array.isArray(data.insights) ? data.insights : []).filter((r) => r && r.text);
+      saved.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      if (saved.length) renderInsightResult(saved[0]);
+    }
+  } catch (_) {}
+  toast(`📄 Φορτώθηκε «${insState.fileName || 'έγγραφο'}» στο Book Insights.`, 'info');
+  return true;
+}
+
 async function loadInsightsAnalysis() {
   if (!insState.jobId) return;
+  const jobId = insState.jobId;
   showInsightsError('');
   document.getElementById('ins-file-meta').textContent = 'Ανάλυση κειμένου…';
   try {
-    const res = await fetch(`${API}/insights/${encodeURIComponent(insState.jobId)}/analysis`);
+    const res = await fetch(`${API}/insights/${encodeURIComponent(jobId)}/analysis`);
     if (!res.ok) throw new Error(await parseApiError(res, 'Η ανάλυση του εγγράφου απέτυχε'));
     const a = await res.json();
+    if (insState.jobId !== jobId) return;   // a different document was loaded while this one was analysed
     insState.analysis = a;
     if (a.file_name && !insState.fileName) insState.fileName = a.file_name;
     const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
@@ -199,6 +237,7 @@ async function loadInsightsAnalysis() {
     if (!a.can_summary) showInsightsError(a.reasons?.summary || 'Το έγγραφο δεν περιέχει αρκετό κείμενο.');
     else if (!a.detected_language) showInsightsError('Δεν εντοπίστηκε η γλώσσα του εγγράφου. Στην Προχωρημένη Λειτουργία μπορείτε να επιλέξετε γλώσσα εξόδου.');
   } catch (err) {
+    if (insState.jobId !== jobId) return;
     insState.analysis = null;
     showInsightsError(_insFriendlyNetworkError(err));
     document.getElementById('ins-file-meta').textContent = 'Σφάλμα ανάλυσης';
