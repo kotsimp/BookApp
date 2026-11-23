@@ -303,10 +303,11 @@ async function processFile(file, prefix) {
   await uploadFile(prefix, file);
 }
 
+const FILE_ICONS = { pdf: '📕', docx: '📘', epub: '📗', cbz: '🎨', cbr: '🎨', zip: '🎨' };
+
 function showSelectedFile(prefix, file) {
-  const iconMap = { pdf: '📕', docx: '📘', epub: '📗', cbz: '🎨', zip: '🎨' };
   const ext = file.name.split('.').pop().toLowerCase();
-  const icon = iconMap[ext] || '📄';
+  const icon = FILE_ICONS[ext] || '📄';
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
 
   document.getElementById(`${prefix}-file-icon`).textContent = icon;
@@ -4615,9 +4616,62 @@ async function toggleQueueAutoStart() {
 
 async function removeQueueItem(jobId) {
   try {
-    await fetch(`${API}/queue/${jobId}`, { method: 'DELETE' });
+    const res = await fetch(`${API}/queue/${jobId}`, { method: 'DELETE' });
+    const q = res.ok ? await res.json().catch(() => null) : null;
+    if (q && await returnLoneQueuedFileToCard(q)) return;
     await refreshBatchQueue();
   } catch (_) {}
+}
+
+// One file left in a queue that hasn't started is a single document again: it goes back to the Upload Card, where it
+// gets the style recommendation ("Εφαρμογή Προτεινόμενου"), the cover check and the single-file buttons.
+async function returnLoneQueuedFileToCard(q) {
+  const items = (q && q.items) || [];
+  if (items.length !== 1 || q.is_running || state.tr.jobId) return false;
+  const item = items[0];
+  if (item.status !== 'queued') return false;
+  const res = await fetch(`${API}/queue/${item.job_id}`, { method: 'DELETE' });
+  if (!res.ok) return false;
+  const emptied = await res.json().catch(() => null);
+
+  let info = {};
+  try {
+    const sRes = await fetch(`${API}/status/${item.job_id}`);
+    if (sRes.ok) info = await sRes.json();
+  } catch (_) {}
+
+  state.tr.jobId = item.job_id;  // set first: the emptied queue then leaves the Upload Card to this file
+  state.tr.file = null;
+  state.tr.estimatedPages = Number(info.total_pages || 0);
+  _keepQueuedSettings = false;
+  renderBatchQueue(emptied || { items: [] });
+
+  const ext = (item.file_type || (item.file_name || '').split('.').pop() || '').toLowerCase();
+  const pages = state.tr.estimatedPages > 0 ? `~${state.tr.estimatedPages} pages · ` : '';
+  document.getElementById('tr-file-icon').textContent = FILE_ICONS[ext] || '📄';
+  document.getElementById('tr-file-name').textContent = item.file_name || '';
+  document.getElementById('tr-file-meta').textContent = `${pages}${ext.toUpperCase()} · Ready`;
+  const selEl = document.getElementById('tr-selected-file');
+  selEl.style.display = '';
+  selEl.classList.add('visible');
+  document.getElementById('tr-upload-zone').style.display = 'none';
+
+  restoreQueueForm(item);
+  setGraphicNovelLock(Boolean(item.is_comic), '', Boolean(item.is_scanned));
+  const startBtn = document.getElementById('tr-start-btn');
+  if (startBtn) {
+    startBtn.disabled = false;
+    startBtn.textContent = currentAppMode === 'basic' ? '✨ Μετάφραση Βιβλίου με AI (1-Click)' : '🌐 Start Translation';
+  }
+  if (!item.is_comic) {
+    updateFormatAvailability(document.getElementById('tr-layout-mode')?.value || 'standard', ext);
+    const directBtn = document.getElementById('tr-direct-polish-btn');
+    if (directBtn) directBtn.disabled = false;
+    checkCoverImage(item.job_id);
+    detectDocumentGenre(item.job_id, item.file_type || ext);
+  }
+  if (typeof onMaxQualityToggle === 'function') onMaxQualityToggle();
+  return true;
 }
 
 async function clearBatchQueue() {

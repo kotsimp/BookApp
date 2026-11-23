@@ -529,6 +529,7 @@ The **Session History** panel at the bottom of the page tracks all jobs (with us
 
 #### ❓ How do I use the Smart Batch Queue?
 * Drop **up to 20 files** into the Upload Card. Configure your Translation Settings below and click **▶️ Start Batch Translation**. The queue runs serially with parallel internal workers, per-item retry, pause/resume, individual download buttons, and a master **📦 Download All (ZIP)** button once all jobs finish.
+* If you remove files before starting until only one is left, that file goes back to the normal Upload Card, with its style recommendation (**Εφαρμογή Προτεινόμενου**), cover check and single-file buttons.
 
 #### ❓ What do the "🔄 Refresh" and "🔑 Gemini API Key" buttons do?
 * **🔄 Refresh** (icon at the right end of the tab bar): Instantly refreshes page state, session history, and server settings.

@@ -593,6 +593,88 @@ process.stdout.write('OK');
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Locked Auto-Start reason visible: OK")
 
+    def test_7_lone_queued_file_returns_to_upload_card(self):
+        """Removing one of two queued, unstarted files puts the other back in the Upload Card with its style
+        recommendation ("Εφαρμογή Προτεινόμενου"); a queue whose last file is already done stays a queue."""
+        print("-> 7. Testing a lone queued file returning to the Upload Card...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', dataset: {},
+    style: { display: '' }, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const item = (name, status) => ({ job_id: name, file_name: name, file_type: 'pdf', status, is_comic: false,
+  is_scanned: false, layout_mode: 'standard', output_format: 'pdf', source_lang: 'english', target_lang: 'greek',
+  ai_polish: true, reading_direction: 'ltr', quota_behavior: 'wait', progress: 0, current_step: '' });
+const base = { is_running: false, paused: false, paused_for_quota: false, done_count: 0, max_items: 20,
+  is_mixed: false, auto_start: false };
+let remaining = 'queued';
+const calls = [];
+const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+async function fakeFetch(url, opts = {}) {
+  const method = opts.method || 'GET';
+  calls.push(`${method} ${url}`);
+  if (method === 'DELETE' && url.endsWith('/queue/Blindsight.pdf'))
+    return reply(Object.assign({}, base, { items: [item('Echopraxia.pdf', remaining)], queued_count: 1, total_count: 1 }));
+  if (method === 'DELETE' && url.endsWith('/queue/Echopraxia.pdf'))
+    return reply(Object.assign({}, base, { items: [], queued_count: 0, total_count: 0 }));
+  if (url.includes('/status/Echopraxia.pdf')) return reply({ total_pages: 120, file_name: 'Echopraxia.pdf' });
+  if (url.includes('/preview/Echopraxia.pdf')) return reply({ preview_text: 'It began with a storm at sea.', subjects: [] });
+  if (url.includes('/detect-genre')) return reply({ genre: 'literature', confidence: 0.9, reason: 'Narrative prose.' });
+  return reply({});
+}
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: fakeFetch,
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+vm.runInContext("currentAppMode = 'advanced'", ctx);
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+
+(async () => {
+  ctx.renderBatchQueue(Object.assign({}, base, { items: [item('Blindsight.pdf', 'queued'), item('Echopraxia.pdf', 'queued')],
+    queued_count: 2, total_count: 2 }));
+  await ctx.removeQueueItem('Blindsight.pdf');
+  await settle();
+  assert.strictEqual(vm.runInContext('state.tr.jobId', ctx), 'Echopraxia.pdf', 'the last file is the single document');
+  const leftQueue = () => calls.some((c) => c.startsWith('DELETE ') && c.endsWith('/queue/Echopraxia.pdf'));
+  assert.ok(leftQueue(), 'it leaves the queue');
+  assert.strictEqual(getEl('tr-queue-card').style.display, 'none');
+  assert.strictEqual(getEl('tr-upload-zone').style.display, 'none');
+  assert.strictEqual(getEl('tr-file-name').textContent, 'Echopraxia.pdf');
+  assert.ok(getEl('tr-file-meta').textContent.includes('~120 pages'));
+  assert.strictEqual(getEl('tr-start-btn').disabled, false);
+  const hint = getEl('tr-genre-hint');
+  assert.strictEqual(hint.style.display, 'flex', 'style recommendation shown');
+  assert.ok(hint.innerHTML.includes('Εφαρμογή Προτεινόμενου'), hint.innerHTML);
+
+  // the last file already translated: the queue stays as it is
+  vm.runInContext('state.tr.jobId = null', ctx);
+  calls.length = 0;
+  remaining = 'done';
+  await ctx.removeQueueItem('Blindsight.pdf');
+  await settle();
+  assert.strictEqual(vm.runInContext('state.tr.jobId', ctx), null);
+  assert.ok(!leftQueue(), 'a finished file stays in the queue');
+  process.stdout.write('OK');
+})().catch((e) => { process.stdout.write(String(e && e.stack || e)); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Lone queued file back in the Upload Card: OK")
+
 
 if __name__ == "__main__":
     unittest.main()
