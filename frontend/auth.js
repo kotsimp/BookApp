@@ -19,20 +19,23 @@ const AUTH_ROLE_LABELS = { admin: 'Διαχειριστής', user: 'Χρήστ�
   const originalFetch = window.fetch.bind(window);
   window.__bookappAuthGuard = true;
   let redirecting = false;
+  // also used by requests that cannot go through fetch (the upload with progress in app.js)
+  window.__bookappAuthRedirect = async (res) => {
+    if (redirecting || !res || (res.status !== 401 && res.status !== 403)) return;
+    try {
+      const data = await res.clone().json();
+      if (data && (data.auth_required || data.password_change_required)) {
+        redirecting = true;
+        const here = window.location.pathname + window.location.search;
+        window.location.href = data.password_change_required
+          ? '/login?change=1'
+          : (data.setup_required ? '/setup' : `/login?next=${encodeURIComponent(here)}`);
+      }
+    } catch (_) {}
+  };
   window.fetch = async (...args) => {
     const res = await originalFetch(...args);
-    if (!redirecting && res && (res.status === 401 || res.status === 403)) {
-      try {
-        const data = await res.clone().json();
-        if (data && (data.auth_required || data.password_change_required)) {
-          redirecting = true;
-          const here = window.location.pathname + window.location.search;
-          window.location.href = data.password_change_required
-            ? '/login?change=1'
-            : (data.setup_required ? '/setup' : `/login?next=${encodeURIComponent(here)}`);
-        }
-      } catch (_) {}
-    }
+    await window.__bookappAuthRedirect(res);
     return res;
   };
 })();

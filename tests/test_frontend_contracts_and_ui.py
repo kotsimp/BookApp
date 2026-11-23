@@ -675,6 +675,100 @@ const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) 
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Lone queued file back in the Upload Card: OK")
 
+    def test_8_upload_progress_and_batch_failures(self):
+        """An upload shows its percent and a bar, then 'processing' until the server answers; a file removed while
+        uploading is cancelled without an error; a batch upload names the files that failed and why."""
+        print("-> 8. Testing upload progress and the batch upload summary...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        for el in ('id="tr-upload-bar"', 'id="tr-upload-bar-fill"', 'id="ab-upload-bar"', 'id="tr-batch-upload"'):
+            self.assertIn(el, html)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', dataset: {},
+    style: { display: '' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; },
+    removeAttribute() {}, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+    toggle() {} }, closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const xhrs = [];
+class FakeXHR {
+  constructor() { this.upload = {}; this.status = 0; this.responseText = ''; this.aborted = false; xhrs.push(this); }
+  open(method, url) { this.url = url; }
+  getResponseHeader() { return 'application/json'; }
+  send(body) { this.body = body; }
+  abort() { this.aborted = true; if (this.onabort) this.onabort(); }
+  progress(loaded, total) { this.upload.onprogress({ loaded, total, lengthComputable: true }); }
+  respond(status, obj) { this.status = status; this.responseText = JSON.stringify(obj); this.onload(); }
+}
+const toasts = [];
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, XMLHttpRequest: FakeXHR, Response, DOMException,
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({ items: [], total_count: 0 }) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = (msg, kind) => toasts.push([kind, msg]);
+const settle = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); };
+const MB = 1024 * 1024;
+const ok = (name) => ({ job_id: name, file_name: name, file_type: 'pdf', estimated_pages: 12, is_comic: false,
+  is_scanned: false, detected_language: 'english' });
+
+(async () => {
+  // one file: percent and bar, then processing, then Ready with the bar gone
+  const meta = getEl('tr-file-meta'), bar = getEl('tr-upload-bar'), fill = getEl('tr-upload-bar-fill');
+  const done = ctx.processFile({ name: 'Book.pdf', size: 10 * MB }, 'tr');
+  await settle();
+  assert.strictEqual(bar.style.display, '', 'bar shown at once');
+  xhrs[0].progress(5 * MB, 10 * MB);
+  assert.ok(meta.textContent.includes('Ανέβασμα 50%'), meta.textContent);
+  assert.strictEqual(fill.style.width, '50%');
+  xhrs[0].upload.onload();
+  assert.ok(meta.textContent.includes('επεξεργασία'), meta.textContent);
+  xhrs[0].respond(200, ok('J1'));
+  await done; await settle();
+  assert.ok(meta.textContent.includes('Ready'), meta.textContent);
+  assert.strictEqual(bar.style.display, 'none', 'bar hidden once uploaded');
+  assert.strictEqual(vm.runInContext('state.tr.jobId', ctx), 'J1');
+
+  // removed while uploading: the upload stops, no error
+  ctx.removeFile('tr');
+  const second = ctx.processFile({ name: 'Other.pdf', size: 4 * MB }, 'tr');
+  await settle();
+  ctx.removeFile('tr');
+  await second; await settle();
+  assert.strictEqual(xhrs[1].aborted, true, 'upload cancelled');
+  assert.ok(!toasts.some(([kind]) => kind === 'error'), JSON.stringify(toasts));
+  assert.strictEqual(bar.style.display, 'none');
+
+  // several files: overall progress, then a summary naming the one that failed
+  const box = getEl('tr-batch-upload'), text = getEl('tr-batch-upload-text');
+  const batch = ctx.enqueueMultipleFiles([{ name: 'A.pdf', size: 2 * MB }, { name: 'B.pdf', size: 2 * MB }]);
+  await settle();
+  xhrs[2].progress(1 * MB, 2 * MB);
+  assert.strictEqual(box.style.display, '');
+  assert.ok(text.textContent.includes('1/2') && text.textContent.includes('σύνολο 25%'), text.textContent);
+  xhrs[2].respond(200, ok('JA'));
+  await settle();
+  xhrs[3].respond(500, { detail: "Δεν ήταν δυνατή η αποθήκευση του αρχείου 'B.pdf' στον server (No space left)." });
+  await batch; await settle();
+  assert.strictEqual(box.style.display, '', 'summary stays visible');
+  assert.ok(text.innerHTML.includes('Ανέβηκαν 1 από 2') && text.innerHTML.includes('B.pdf')
+    && text.innerHTML.includes('No space left'), text.innerHTML);
+  process.stdout.write('OK');
+})().catch((e) => { process.stdout.write(String(e && e.stack || e)); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Upload progress and batch summary: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

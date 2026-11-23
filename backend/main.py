@@ -374,8 +374,22 @@ _WINDOWS_RESERVED_NAMES = {
 }
 
 
+_MAX_STEM_CHARS = 100  # outputs add "_translated_greek.pdf" etc.; Windows paths stop at 260, Linux names at 255 bytes
+
+
+def _shorten_stem(stem: str, limit: int = _MAX_STEM_CHARS) -> str:
+    """A stem of at most `limit` characters, cut at a word boundary where one is near the end."""
+    if len(stem) <= limit:
+        return stem
+    cut = stem[:limit]
+    boundary = max(cut.rfind(" "), cut.rfind("_"), cut.rfind("-"))
+    if boundary >= limit * 0.6:
+        cut = cut[:boundary]
+    return cut.rstrip(" .-_,(") or stem[:limit]
+
+
 def _sanitize_filename(filename: Optional[str]) -> str:
-    """Sanitizes uploaded filenames for Windows/POSIX filesystem safety."""
+    """Sanitizes uploaded filenames for Windows/POSIX filesystem safety (characters, reserved names, length)."""
     raw = (filename or "document").replace("\\", "/").split("/")[-1]
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip(" .")
     if not cleaned:
@@ -383,6 +397,12 @@ def _sanitize_filename(filename: Optional[str]) -> str:
     p = Path(cleaned)
     if p.stem.upper() in _WINDOWS_RESERVED_NAMES:
         cleaned = f"file_{p.stem}{p.suffix}"
+    p = Path(cleaned)
+    suffix = p.suffix if len(p.suffix) <= 10 else ""
+    stem = cleaned[: len(cleaned) - len(suffix)] if suffix else cleaned
+    if len(stem) > _MAX_STEM_CHARS:
+        # downloaded books often carry 200+ character names (authors, ISBN, hash): too long for the disk paths
+        cleaned = _shorten_stem(stem) + suffix
     return cleaned
 
 
@@ -446,7 +466,7 @@ async def upload_file(file: UploadFile = File(...)):
     # Stream upload to temp file while enforcing max size to prevent OOM
     job_dir = UPLOAD_DIR / "tmp"
     job_dir.mkdir(exist_ok=True)
-    tmp_path = job_dir / f"{uuid.uuid4().hex}_{safe_filename}"
+    tmp_path = job_dir / f"{uuid.uuid4().hex}{ext}"  # the name waits for the job directory: no length to spare here
     header_bytes = bytearray()
     total_bytes = 0
     try:
@@ -514,11 +534,15 @@ async def upload_file(file: UploadFile = File(...)):
         final_path = job_upload_dir / stored_name
         shutil.move(str(tmp_path), str(final_path))
         update_job(job.job_id, file_path=str(final_path))
-    except Exception:
+    except Exception as e:
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
+        if isinstance(e, OSError):  # disk full, permissions, a path the system refuses: say so, not "error 500"
+            logger.error(f"Upload of '{safe_filename}' could not be stored: {e}")
+            raise HTTPException(500, f"Δεν ήταν δυνατή η αποθήκευση του αρχείου '{safe_filename}' στον server "
+                                     f"({e.strerror or e}).")
         raise
 
     # Extract and cache cover image from original input if present

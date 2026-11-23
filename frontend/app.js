@@ -305,20 +305,92 @@ async function processFile(file, prefix) {
 
 const FILE_ICONS = { pdf: '📕', docx: '📘', epub: '📗', cbz: '🎨', cbr: '🎨', zip: '🎨' };
 
+const _mb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
+
+// POST /upload reporting its progress (fetch cannot), answered like fetch with a Response.
+// onProgress(loaded, total, sent): `sent` once every byte is out and the server is reading the file.
+// The returned promise has .abort(); an aborted upload rejects with an AbortError.
+function uploadWithProgress(file, onProgress) {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (typeof XMLHttpRequest === 'undefined') {
+    const p = fetch(`${API}/upload`, { method: 'POST', body: fd });
+    p.abort = () => {};
+    return p;
+  }
+  const xhr = new XMLHttpRequest();
+  const p = new Promise((resolve, reject) => {
+    xhr.open('POST', `${API}/upload`);
+    xhr.upload.onprogress = (e) => { if (onProgress) onProgress(e.loaded, e.lengthComputable ? e.total : file.size, false); };
+    xhr.upload.onload = () => { if (onProgress) onProgress(file.size, file.size, true); };
+    xhr.onload = () => {
+      const noBody = [204, 205, 304].includes(xhr.status);
+      const res = new Response(noBody ? null : xhr.responseText, {
+        status: xhr.status,
+        headers: { 'Content-Type': xhr.getResponseHeader('Content-Type') || 'application/json' },
+      });
+      if (typeof window.__bookappAuthRedirect === 'function') window.__bookappAuthRedirect(res);
+      resolve(res);
+    };
+    xhr.onerror = () => reject(new TypeError('Network error while uploading'));
+    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+    xhr.send(fd);
+  });
+  p.abort = () => xhr.abort();
+  return p;
+}
+
+// The bar and line under the selected file while it uploads: percent and MB sent, then the server's reading of it
+function showUploadProgress(prefix, file, loaded, total, sent = false) {
+  const ext = file.name.split('.').pop().toUpperCase();
+  const pct = sent ? 100 : Math.min(100, Math.round((loaded / Math.max(total, 1)) * 100));
+  const meta = document.getElementById(`${prefix}-file-meta`);
+  if (meta) {
+    meta.textContent = sent
+      ? `${_mb(file.size)} MB · ${ext} · ⏳ Ανέβηκε· επεξεργασία αρχείου…`
+      : `${_mb(file.size)} MB · ${ext} · ⬆️ Ανέβασμα ${pct}% (${_mb(loaded)} / ${_mb(total)} MB)`;
+  }
+  const bar = document.getElementById(`${prefix}-upload-bar`);
+  const fill = document.getElementById(`${prefix}-upload-bar-fill`);
+  if (bar) {
+    bar.style.display = '';
+    bar.setAttribute('aria-valuenow', String(pct));
+  }
+  if (fill) {
+    fill.style.width = `${pct}%`;
+    if (sent) fill.classList.add('shimmer'); else fill.classList.remove('shimmer');
+  }
+}
+
+function hideUploadProgress(prefix) {
+  const bar = document.getElementById(`${prefix}-upload-bar`);
+  const fill = document.getElementById(`${prefix}-upload-bar-fill`);
+  if (bar) bar.style.display = 'none';
+  if (fill) {
+    fill.style.width = '0%';
+    fill.classList.remove('shimmer');
+  }
+}
+
 function showSelectedFile(prefix, file) {
   const ext = file.name.split('.').pop().toLowerCase();
   const icon = FILE_ICONS[ext] || '📄';
-  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
 
   document.getElementById(`${prefix}-file-icon`).textContent = icon;
   document.getElementById(`${prefix}-file-name`).textContent = file.name;
-  document.getElementById(`${prefix}-file-meta`).textContent = `${sizeMB} MB · ${ext.toUpperCase()} · Uploading...`;
+  showUploadProgress(prefix, file, 0, file.size);
   document.getElementById(`${prefix}-selected-file`).classList.add('visible');
   document.getElementById(`${prefix}-upload-zone`).style.display = 'none';
 }
 
 function removeFile(prefix) {
   stopJobTracking(prefix);
+  if (state[prefix].upload) {  // removed while still uploading: stop sending it
+    const upload = state[prefix].upload;
+    state[prefix].upload = null;
+    upload.abort();
+  }
+  hideUploadProgress(prefix);
   state[prefix].file = null;
   state[prefix].jobId = null;
   if (prefix === 'tr') {
@@ -452,12 +524,16 @@ function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
 }
 
 async function uploadFile(prefix, file) {
-  const formData = new FormData();
-  formData.append('file', file);
   const selected = state[prefix].file; // what was selected when this upload began
+  if (state[prefix].upload) state[prefix].upload.abort();  // a newer file replaces one still uploading
+  const upload = uploadWithProgress(file, (loaded, total, sent) => {
+    if (state[prefix].file === selected) showUploadProgress(prefix, file, loaded, total, sent);
+  });
+  state[prefix].upload = upload;
 
   try {
-    const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
+    const res = await upload;
+    if (state[prefix].upload === upload) state[prefix].upload = null;
     if (!res.ok) {
       throw new Error(await parseApiError(res, 'Upload failed'));
     }
@@ -466,6 +542,7 @@ async function uploadFile(prefix, file) {
       console.log(`[Upload] File was swapped while upload was in flight; ignoring job ${data.job_id}`);
       return;
     }
+    hideUploadProgress(prefix);
     state[prefix].jobId = data.job_id;
     state[prefix].estimatedPages = Number(data.estimated_pages || 0);
     if (prefix === 'tr' && typeof onMaxQualityToggle === 'function') onMaxQualityToggle();
@@ -550,6 +627,10 @@ async function uploadFile(prefix, file) {
       }
     }
   } catch (err) {
+    if (state[prefix].upload === upload) state[prefix].upload = null;
+    // removed or replaced while uploading: that was the user's choice, not an error
+    if (err && err.name === 'AbortError') return;
+    if (state[prefix].file !== selected) return;
     toast(`❌ Upload error: ${err.message}`, 'error');
     removeFile(prefix);
   }
@@ -4093,6 +4174,42 @@ function syncPrimaryStartButtonWithQueue(q) {
   }
 }
 
+// The line and bar above the queue while several files upload: which file, its percent, and the batch's bytes overall
+function showBatchUploadProgress(index, count, file, fileLoaded, batchLoaded, batchTotal, sent) {
+  const box = document.getElementById('tr-batch-upload');
+  const text = document.getElementById('tr-batch-upload-text');
+  const fill = document.getElementById('tr-batch-upload-fill');
+  if (!box || !text || !fill) return;
+  box.style.display = '';
+  const filePct = sent ? 100 : Math.min(100, Math.round((fileLoaded / Math.max(file.size, 1)) * 100));
+  const overall = Math.min(100, Math.round((batchLoaded / Math.max(batchTotal, 1)) * 100));
+  text.textContent = sent
+    ? `⏳ Αρχείο ${index}/${count}: "${file.name}" ανέβηκε· επεξεργασία… (σύνολο ${overall}%)`
+    : `⬆️ Ανέβασμα ${index}/${count}: "${file.name}" ${filePct}% (σύνολο ${overall}%, ${_mb(batchLoaded)} / ${_mb(batchTotal)} MB)`;
+  fill.style.width = `${overall}%`;
+  if (sent) fill.classList.add('shimmer'); else fill.classList.remove('shimmer');
+}
+
+// After the uploads: the box goes away when all went up, or stays with the files that did not and why
+function finishBatchUpload(uploaded, count, failed) {
+  const box = document.getElementById('tr-batch-upload');
+  const text = document.getElementById('tr-batch-upload-text');
+  const fill = document.getElementById('tr-batch-upload-fill');
+  if (!box || !text || !fill) return;
+  fill.classList.remove('shimmer');
+  if (!failed.length) {
+    box.style.display = 'none';
+    fill.style.width = '0%';
+    return;
+  }
+  box.style.display = '';
+  fill.style.width = `${Math.round((uploaded / Math.max(count, 1)) * 100)}%`;
+  text.innerHTML = `⚠️ Ανέβηκαν ${uploaded} από ${count} αρχεία. Δεν ανέβηκαν:<br>`
+    + failed.map(([name, reason]) => `• <strong>${escHtml(name)}</strong>: ${escHtml(reason)}`).join('<br>')
+    + ` <button type="button" class="btn-sm btn-outline" style="margin-left:6px; padding:1px 8px"`
+    + ` onclick="document.getElementById('tr-batch-upload').style.display='none'">✕</button>`;
+}
+
 async function enqueueMultipleFiles(files) {
   if (_isEnqueuing) {
     toast('Παρακαλώ περιμένετε να ολοκληρωθεί η προηγούμενη προσθήκη αρχείων...', 'info');
@@ -4158,19 +4275,23 @@ async function enqueueMultipleFiles(files) {
 
   let added = 0;
   const uploadedPayloads = [];
-  for (const file of filesToUpload) {
+  const failedUploads = [];  // [name, reason]: listed under the queue when the uploads end, not only in toasts
+  const uploadable = filesToUpload.filter((file) => {
+    const ok = allowed.includes('.' + file.name.split('.').pop().toLowerCase());
+    if (!ok) failedUploads.push([file.name, 'μη υποστηριζόμενο format']);
+    return ok;
+  });
+  const totalBytes = uploadable.reduce((sum, f) => sum + f.size, 0);
+  let doneBytes = 0;
+  for (const [i, file] of uploadable.entries()) {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!allowed.includes(ext)) {
-      toast(`⚠️ Παράλειψη "${file.name}" (μη υποστηριζόμενο format).`, 'error');
-      continue;
-    }
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const upRes = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+      const upRes = await uploadWithProgress(file, (loaded, total, sent) =>
+        showBatchUploadProgress(i + 1, uploadable.length, file, loaded, doneBytes + loaded, totalBytes, sent));
       if (!upRes.ok) {
-        const upErr = await upRes.json().catch(() => ({}));
-        toast(`❌ Αποτυχία φόρτωσης "${file.name}": ${upErr.detail || upRes.statusText}`, 'error');
+        const reason = await parseApiError(upRes, upRes.statusText || `HTTP ${upRes.status}`);
+        failedUploads.push([file.name, reason]);
+        toast(`❌ Αποτυχία φόρτωσης "${file.name}": ${reason}`, 'error');
         continue;
       }
       const upData = await upRes.json();
@@ -4178,9 +4299,13 @@ async function enqueueMultipleFiles(files) {
       const isScanned = Boolean(upData.is_scanned);
       uploadedPayloads.push({ file, ext, upData, isComic, isScanned });
     } catch (err) {
+      failedUploads.push([file.name, err.message]);
       toast(`❌ Σφάλμα φόρτωσης "${file.name}": ${err.message}`, 'error');
+    } finally {
+      doneBytes += file.size;
     }
   }
+  finishBatchUpload(uploadedPayloads.length, filesToUpload.length, failedUploads);
 
   // Detect mixed queue (Books + Graphic Novels) BEFORE enqueueing so Auto-Start is safely disabled upfront
   const existingHasComic = (_batchQueueState.items || []).some((it) => it.is_comic);

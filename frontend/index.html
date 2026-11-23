@@ -161,6 +161,7 @@
         <div class="file-info">
           <div class="file-info-name" id="tr-file-name">filename.pdf</div>
           <div class="file-info-meta" id="tr-file-meta">Loading...</div>
+          <div class="upload-bar" id="tr-upload-bar" style="display:none" role="progressbar" aria-label="Ανέβασμα αρχείου" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="tr-upload-bar-fill" style="width:0%"></div></div>
         </div>
         <button type="button" class="btn-sm btn-outline" id="btn-single-add-more" onclick="document.getElementById('tr-file-input').click()" title="Προσθέστε κι άλλα αρχεία για μαζική μετάφραση (έως 20)" style="border-color:rgba(16,185,129,0.45); color:var(--emerald); white-space:nowrap">
           ➕ Add More
@@ -168,6 +169,10 @@
         <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
       </div>
       <div id="tr-genre-hint" class="genre-badge-hint" style="display:none"></div>
+      <div id="tr-batch-upload" class="batch-upload-status" style="display:none" aria-live="polite">
+        <div class="file-info-meta" id="tr-batch-upload-text"></div>
+        <div class="upload-bar" role="progressbar" aria-label="Ανέβασμα αρχείων" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="tr-batch-upload-fill" style="width:0%"></div></div>
+      </div>
 
       <!-- Embedded Smart Batch Queue (shown automatically when 2+ files are selected or queue has items) -->
       <div id="tr-queue-card" style="display:none; margin-top:4px; padding-top:4px">
@@ -614,6 +619,7 @@
         <div class="file-info">
           <div class="file-info-name" id="ab-file-name">filename.pdf</div>
           <div class="file-info-meta" id="ab-file-meta">Loading...</div>
+          <div class="upload-bar" id="ab-upload-bar" style="display:none" role="progressbar" aria-label="Ανέβασμα αρχείου" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="ab-upload-bar-fill" style="width:0%"></div></div>
         </div>
         <button class="remove-file-btn" onclick="removeFile('ab')" aria-label="Remove file">✕</button>
       </div>

@@ -190,6 +190,19 @@ class TestSecurityAndInputValidation(unittest.TestCase):
                 for ch in '<>:"|?*':
                     self.assertNotIn(ch, Path(job.file_path).name)
 
+            # Downloaded books often carry 200+ character names: once too long for the disk paths (upload failed)
+            long_name = ("Wool_ The Graphic Novel Omnibus -- Hugh Howey, Jimmy Palmotti, Justin Gray, Jimmy Broxton -- "
+                         "1st, 2014 -- Jet City Comics -- isbn13 9781477849125 -- 43ec5dd2a482ad8ebdbb0ddeaeefc75b -- "
+                         "Reader’s Copy Δοκιμή.docx")
+            st, data = http_upload("/upload", long_name, valid_docx)
+            self.assertEqual(st, 200, f"Upload of a {len(long_name)}-character name failed: {st} {data}")
+            created_jobs.append(data["job_id"])
+            stored = Path(get_job(data["job_id"]).file_path)
+            self.assertTrue(stored.exists())
+            self.assertLessEqual(len(stored.stem), 100)
+            self.assertEqual(stored.suffix, ".docx")
+            self.assertTrue(stored.stem.startswith("Wool_ The Graphic Novel Omnibus"))
+
             # Corrupt headers & unsupported extensions & 0-byte file
             st_empty, _ = http_upload("/upload", "empty.pdf", b"")
             self.assertEqual(st_empty, 400)
