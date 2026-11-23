@@ -2074,7 +2074,7 @@ async def get_gemini_pool_status():
 
 @app.post("/api/gemini/pool")
 async def update_gemini_pool_keys(payload: dict):
-    """Sets or updates the pool keys (list of up to 4 keys)."""
+    """Sets or updates the pool keys (list of up to MAX_KEYS = 8 keys)."""
     keys = payload.get("keys", [])
     if not isinstance(keys, list):
         raise HTTPException(400, "'keys' must be a list of API key strings.")
@@ -2112,14 +2112,34 @@ async def delete_app_setting(key: str):
 # AI Polish via Gemini
 # ---------------------------------------------------------------------------
 
+def _jobs_waiting_for_quota(limit: int = 5, max_age_hours: float = 48.0) -> list[dict]:
+    """The viewer's recent jobs that wait for the Gemini limit to renew (stopped on quota or queued for it)."""
+    since = time.time() - max_age_hours * 3600
+    waiting = []
+    try:
+        for job in sorted(list_jobs(), key=lambda j: j.updated_at or 0, reverse=True):
+            if (job.updated_at or 0) < since:
+                break
+            if job.status == "waiting_quota" or is_quota_stop(job):
+                waiting.append({"job_id": job.job_id, "file_name": job.file_name, "mode": job.mode,
+                                "status": job.status})
+                if len(waiting) >= limit:
+                    break
+    except Exception as e:  # the status must answer even if the job list cannot be read
+        logger.debug(f"Waiting jobs not listed: {e}")
+    return waiting
+
+
 @app.get("/api/gemini/status")
 async def get_gemini_status():
-    """Returns current Gemini daily quota exhaustion status and cooldown info."""
+    """Current Gemini quota state: the daily circuit breaker, models at their limit on the pool's keys, and the
+    viewer's jobs that wait for a renewal."""
     from backend.ai_polisher import get_gemini_quota_info, get_daily_gemini_usage
     info = dict(get_gemini_quota_info())
     info["usage_today"] = get_daily_gemini_usage()
     if "pool" in info and not _may_see_keys():
         info["pool"] = _redact_pool(info["pool"])
+    info["waiting_jobs"] = _jobs_waiting_for_quota()
     return info
 
 

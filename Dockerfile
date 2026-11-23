@@ -45,4 +45,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)" || exit 1
 
 # Start Uvicorn bound to 0.0.0.0
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+# --timeout-graceful-shutdown: open pages keep progress streams open; without a limit "docker stop" waits
+# for them until Docker kills the app (10 s), skipping its clean shutdown
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "5", "--log-level", "info"]

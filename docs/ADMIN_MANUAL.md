@@ -317,6 +317,7 @@ sudo rm -rf /opt/BookApp       # deletes every book, user and setting: back up f
 | `docker compose ps` shows `Restarting` or `unhealthy` | `docker logs --tail 100 bookapp` shows the reason. |
 | A comic job says `page(s) left untranslated` | `docker logs bookapp 2>&1 \| grep "left untranslated"` shows each page with its Vision error. A rate limit, an overloaded model or a timeout passes: translate the file again, and only those pages are sent again. |
 | A book job says `page(s) still contain text in the original language` | `docker logs bookapp 2>&1 \| grep -E "untranslated\(copied_words\|batch .* failed"` shows the pages the model handed back unchanged and how they were split. Translate the file again: refused answers are never cached, so those pages are really asked again. |
+| The app stops answering after an update, a restart or (with `run.py`) a code change | Older versions waited without limit for open pages' progress streams (SSE) to close before stopping. `run.py`, `start_bookapp.bat` and the Docker image now pass `--timeout-graceful-shutdown 5`: after 5 s the streams are closed, running jobs are marked interrupted (resume them), and the pages reconnect. On an older install restart it (`docker compose restart`, or stop and start `run.py`). |
 | Some files of a multi-file upload don't upload | The line above the queue lists each one with its reason. `Δεν ήταν δυνατή η αποθήκευση…` names the disk error (`docker logs bookapp 2>&1 \| grep "could not be stored"`): free space under `./temp`, or the folder's permissions. A `413` comes from a file over 250 MB, or from a reverse proxy's body limit (`client_max_body_size 250M;` in nginx). |
 | A Maximum-quality job says `The second AI pass … did not complete` | The reason is in brackets (`quota_exhausted`, `revision_unusable`, …) and in `revision_report`; `docker logs bookapp 2>&1 \| grep -i revision` shows it. The exported book is the first-pass translation. |
 | `failed to solve: DeadlineExceeded … load metadata for docker.io/library/python:3.11-slim` | Docker Hub didn't answer in time, so the build stopped and the old container keeps running unchanged. Run the command again later. A changed `.env` (port, sign-in) needs no build: `docker compose up -d` applies it with the image you already have. |
@@ -551,7 +552,7 @@ For HTTPS with Caddy, bind BookApp to the server itself: `--host 127.0.0.1` in `
    * the password has at least 10 characters.
 
    You are now the first administrator. The setup code stops working.
-2. **Add the Gemini key.** Click **🔑 Gemini API Key** in the top menu (only administrators see it) and paste up to 4 keys, then save. Without a key, BookApp uses the free translation engines.
+2. **Add the Gemini key.** Click **🔑 Gemini API Key** in the top menu (only administrators see it) and paste up to 8 keys, then save. Without a key, BookApp uses the free translation engines.
 3. **Create the other accounts.** Click **👥 Χρήστες** and create an account for each person. Leave the password empty to get a temporary one, which is shown once: give it to that person. Everyone chooses their own password at the first sign-in. **⭐ Κάνε διαχειριστή** gives someone the same rights as you.
 4. **Share the address.** Give everyone the address `http://<server-ip>:<port>`.
 
@@ -780,7 +781,7 @@ BookApp/
 │   ├── pdf_text_names.py    # Names shared glyphs in exported PDFs as the book's characters (copy, search)
 │   ├── glossary.py          # Categorized domain glossary management
 │   ├── settings_manager.py  # Local persistent settings manager (config/settings.json)
-│   ├── gemini_key_pool.py   # Multi-Key Gemini API Pool & Failover Manager (up to 4 keys)
+│   ├── gemini_key_pool.py   # Multi-Key Gemini API Pool & Failover Manager (up to 8 keys, MAX_KEYS)
 │   ├── translator.py        # Core translation engine (Google GTX POST + 429 Circuit Breaker)
 │   ├── tts_engine.py        # Neural edge-tts voice synthesis & M4B audiobook assembly
 │   ├── job_manager.py       # Task lifecycle manager, SQLite sync & file healing
@@ -814,7 +815,7 @@ The backend provides **75 routes** (REST endpoints plus the `/login`, `/setup` a
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Reads, saves, and deletes configuration parameters.
 * `GET /api/gemini/pool`: Returns detailed Multi-Key Pool status (total keys, active keys, individual slot health, and cooldown timestamps).
 * `POST /api/gemini/pool`: Configures or updates the pool keys (`{"keys": ["AIzaSy...", ...]}`), clearing quota cooldowns.
-* `GET /api/gemini/status`: Returns circuit breaker status, remaining cooldown seconds, and local reset time.
+* `GET /api/gemini/status`: Returns circuit breaker status, remaining cooldown seconds, and local reset time; `pool.cooling_models` (each model at its daily limit on some keys: `model`, `keys`, `reset_timestamp`, `remaining_sec`), and `waiting_jobs` (the viewer's jobs from the last 48 h stopped on quota or queued for it). Jobs stop with `All Gemini candidate models are in cooldown` without tripping the circuit breaker when only models ran out, so the keys window reads both; it refreshes them every 5 s while open and shows reset times in the browser's clock.
 * `POST /api/gemini/reset-quota`: Instantly resets the quota circuit breaker and per-key cooldown timers.
 * `GET/HEAD /api/cover/{job_id}`: Inspects and retrieves active cover art.
 * `POST /api/cover/{job_id}`: Uploads custom cover artwork (`multipart/form-data`). Refreshes generated exports; `preserved_files` in the response lists the files deliberately left untouched.
@@ -907,7 +908,7 @@ The master runner automatically executes all test suites:
 37. `test_frontend_contracts_and_ui.py`: HTTP route validation against FastAPI `app.routes`, Pydantic schema validation, and Node.js VM runtime UI tests (incl. a lone queued file returning to the Upload Card, upload progress and the batch upload summary), the app icon files, links and open paths, and the Greek / English interface (every page text has a pair; numbers switch with the text).
 38. `test_gemini_quota_warning.py`: Gemini quota exhaustion detection, circuit breaker lifecycle, and reset verification.
 39. `test_quota_behavior_choice.py`: Prior quota routing choice (`wait` vs `fallback`), Free Mode defaults, and session history hygiene.
-40. `test_gemini_key_pool.py`: Multi-Key Pool verification (up to 4 keys, rotation, thread-safety, masking, and REST endpoints).
+40. `test_gemini_key_pool.py`: Multi-Key Pool verification (up to 8 keys, rotation, thread-safety, masking, and REST endpoints).
 41. `test_gemini_diagnostics.py`: Dedicated API Key Diagnostics & Stress-Test Suite (CRUD, error parsing, sliding-window rate limiting, per-model isolation, E2E 4-key rotation simulation, pool exhaustion, cooldown recovery, transient backoff/retry, concurrency, and live key diagnostics).
 42. `test_scripted_editorial_pass.py`: Dedicated Sanitization & Scripted Editorial Pass Suite (verifying automated remediation of subword token bleed, code leaks, comedic calques, double accents, and stutters).
 43. `test_output_refinement.py`: Final Output Refinement stage (49 tests). `_call_gemini_api` tests cover the size-aware timeout and the cache gate. The stage tests cover: Covers: automatic triggering at the end of the translation and audiobook workflows; correction of injected errors; no-op on clean text; meaning safety for ambiguous phrasing and emphatic repetition; poetry, French and code-like spacing; idempotency; empty, malformed and undecodable inputs; rollback on re-export, document-swap and write failures; inspection-only behaviour for format-preserved DOCX; audio header, truncation and missing-section detection; healing of failed sections; rejection of corrupt re-assembly and timeouts; metadata added only when missing; disabled-stage pass-through; settings, env and per-job toggles; a no-network guarantee; and API security (path traversal, foreign files, running jobs).

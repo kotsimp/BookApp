@@ -17,7 +17,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo Starting BookApp backend server on http://localhost:8000 ...
-start /b "" ".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+start /b "" ".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
 
 echo Waiting for server to initialize...
 timeout /t 2 /nobreak >nul

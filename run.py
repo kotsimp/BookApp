@@ -118,6 +118,9 @@ def main():
         "--host", host,
         "--port", str(port),
         "--reload",
+        # An open page keeps its progress stream (SSE) open: without a limit a reload or stop waits for it forever
+        # and the server stops answering. Running jobs are marked interrupted and resume as usual.
+        "--timeout-graceful-shutdown", "5",
         "--log-level", "info",
     ])
 

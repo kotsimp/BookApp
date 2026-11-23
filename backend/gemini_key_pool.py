@@ -1,6 +1,6 @@
 """
 backend/gemini_key_pool.py - Multi-Key Gemini API Pool, Quota & Rate Limit Manager.
-Supports configuring up to 4 Google Gemini API keys with:
+Supports configuring up to 8 Google Gemini API keys with:
 - Automatic failover and rotation across keys upon daily quota exhaustion or auth errors.
 - Per-model quota isolation (e.g. one model's 20 RPD limit never kills the key for its other models).
 - Independent sliding-window Rate Limiter (RPM & TPM) per key and model to prevent burst 429 stampedes.
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _pool_lock = threading.RLock()
 _KEY_COOLDOWNS: Dict[str, float] = {}  # key -> timestamp until which it is exhausted
 _MODEL_COOLDOWNS: Dict[Tuple[str, str], float] = {}  # (key, model) -> timestamp until which this model is cooling down
-MAX_KEYS = 4
+MAX_KEYS = 8  # each from another Google account adds its own daily allowance per model
 
 # Known default quotas for Google Gemini Free Tier
 # Google sets and changes them per project and model: the quota in its 429 answer decides, these are only defaults.
@@ -367,7 +367,7 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
 
 class GeminiKeyPool:
     """
-    Thread-safe pool of up to 4 Gemini API keys with:
+    Thread-safe pool of up to 8 Gemini API keys with:
     - Automatic per-key and per-model cooldowns
     - Seamless failover across keys
     - Circuit breaker coordination
@@ -671,9 +671,22 @@ class GeminiKeyPool:
                 else ""
             )
 
+            # Models at their limit across the pool: a job that may use only these waits although no key is spent
+            models: Dict[str, Dict[str, Any]] = {}
+            for (k, m), until in _MODEL_COOLDOWNS.items():
+                if k in keys and now < until:
+                    entry = models.setdefault(m, {"model": m, "keys": 0, "reset_timestamp": until})
+                    entry["keys"] += 1
+                    entry["reset_timestamp"] = min(entry["reset_timestamp"], until)
+            cooling_models = []
+            for entry in sorted(models.values(), key=lambda e: e["model"]):
+                entry["remaining_sec"] = int(max(0, entry["reset_timestamp"] - now))
+                cooling_models.append(entry)
+
             return {
                 "total_keys": len(keys),
                 "max_keys": MAX_KEYS,
+                "cooling_models": cooling_models,
                 "available_keys": available_count,
                 "active_key_index": active_idx,
                 "all_exhausted": (len(keys) > 0 and available_count == 0),
@@ -685,7 +698,7 @@ class GeminiKeyPool:
 
 def resolve_gemini_api_key(explicit_key: Optional[str] = None) -> str:
     """
-    Resolves an active Gemini API key from explicit argument, the 4-key pool,
+    Resolves an active Gemini API key from explicit argument, the key pool,
     legacy setting, or environment variable. Returns empty string if none configured.
     """
     k = (explicit_key or "").strip()

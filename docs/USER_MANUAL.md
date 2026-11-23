@@ -325,9 +325,9 @@ Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After
 * It isn't applied to Smart Batch Queue items, and switching to Basic Mode turns it off.
 
 ### 🔑 Gemini Multi-Key API Pool & Auto-Failover
-* **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
+* **Connect up to 8 Free Gemini API Keys:** Enter keys in Slots 1 through 8 (Slot 1 Primary + Slots 2–8 Backups) from different Google accounts. Slots 5–8 are under **➕ Κλειδιά 5–8** and open by themselves once one of them holds a key.
 * **Free daily allowance, per model:** Google gives each free key a daily allowance for each Gemini model, and it can be small (for example 20 requests a day for `gemini-3.5-flash`). Every key from another Google account adds its own allowance, and when one model's allowance is used up BookApp moves on to other models and keys. Google AI Studio shows your current limits.
-* **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress.
+* **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, and so on up to Slot 8** without pausing or losing progress.
 * **Keys stay on the server:** keys are stored only in the server configuration (`config/settings.json`) and shown masked in the page (e.g. `AIzaSy...4f2D`). The browser keeps no copy; keys saved in the browser by older versions are moved to the server once. Saving the window without typing a new key keeps your existing keys, so they're never accidentally wiped or duplicated when you switch tabs or refresh.
 * **Auto-Resume on Save:** If a translation was waiting on quota, clicking **«💾 Save Pool»** with new keys immediately resumes the job automatically without requiring a manual resume click!
 * **Navbar Pool Status Indicator:**
@@ -584,7 +584,8 @@ Open BookApp in Safari, tap **Share** (the square with the arrow) and then **Add
 
 #### ❓ What happens if the Gemini daily quota is reached?
 * The application distinguishes momentary burst limits (15 RPM) from daily exhaustion. If daily quota is reached:
-  * With **Gemini Multi-Key Pool**, it automatically rotates to backup keys (Slots 2–4).
+  * With **Gemini Multi-Key Pool**, it automatically rotates to backup keys (Slots 2–8).
+  * **The Gemini key window says what is waiting:** a box at the bottom shows whether the daily limit is used up on every key and when it renews, which models reached their limit on how many keys (for example `gemini-3.5-flash: daily limit on 2 of 3 keys — again at 10:00`), and which of your jobs wait for the renewal. Each slot badge also shows `🟡 Active · 2 models at their limit`. The times are in your own clock, and the box updates every few seconds while the window is open.
   * If all keys in the pool are exhausted:
     - By default (`quota_behavior="wait"`), translation and audiobook generation **pause cleanly at disk checkpoint** (`.direct_ai_checkpoint.json` / `.comic_vision_checkpoint.json`) and **wait for quota reset**.
     - The system displays a live countdown timer in the UI.

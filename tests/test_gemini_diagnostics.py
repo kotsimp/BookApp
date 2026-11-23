@@ -74,11 +74,11 @@ class TestGeminiDiagnosticsAndRotation(unittest.TestCase):
         cleanup_test_jobs()
 
     def test_01_api_key_validity_masking_and_crud(self):
-        """Verifies API key pool storage, deduplication, 4-key limit, and masking."""
-        keys = ["KeyA123456789", "KeyB123456789", "KeyC123456789", "KeyD123456789", "KeyE123456789"]
+        """Verifies API key pool storage, deduplication, the 8-key limit (MAX_KEYS), and masking."""
+        keys = [f"Key{c}123456789" for c in "ABCDEFGHI"]  # 9 keys provided
         saved = GeminiKeyPool.set_keys(keys)
-        self.assertEqual(len(saved), 4)
-        self.assertEqual(saved, ["KeyA123456789", "KeyB123456789", "KeyC123456789", "KeyD123456789"])
+        self.assertEqual(len(saved), MAX_KEYS)
+        self.assertEqual(saved, keys[:8])
 
         # Masking
         self.assertEqual(mask_api_key("KeyA123456789"), "KeyA12...6789")
@@ -87,8 +87,8 @@ class TestGeminiDiagnosticsAndRotation(unittest.TestCase):
 
         # Pool retrieval
         status = GeminiKeyPool.get_pool_status()
-        self.assertEqual(status["total_keys"], 4)
-        self.assertEqual(status["available_keys"], 4)
+        self.assertEqual(status["total_keys"], 8)
+        self.assertEqual(status["available_keys"], 8)
         self.assertFalse(status["all_exhausted"])
         self.assertEqual(status["active_key_index"], 0)
 

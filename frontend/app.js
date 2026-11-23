@@ -3003,8 +3003,11 @@ function dismissSmartResume() {
 let _polishPollTimer = null;
 let _polishRunning = false;
 
+// The key slots of the Gemini pool, in order (slots 5-8 sit in a fold-out section)
+const GEMINI_SLOT_IDS = ['gemini-api-key', ...Array.from({ length: 7 }, (_, i) => `gemini-api-key-${i + 2}`)];
+
 function toggleApiKeyVisibility() {
-  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const slotIds = GEMINI_SLOT_IDS;
   const firstInput = document.getElementById('gemini-api-key');
   const isHidden = firstInput && (firstInput.type === 'password' || firstInput.style.webkitTextSecurity !== 'none');
   const labelEl = document.getElementById('toggle-key-label');
@@ -3027,6 +3030,71 @@ function toggleApiKeyVisibility() {
   }
 }
 
+// A reset time in the viewer's own clock (the server's clock may be UTC inside Docker)
+function localClock(timestamp) {
+  try {
+    return new Date(Number(timestamp) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch (_) {
+    return '';
+  }
+}
+
+// The keys window says what waits for Gemini and until when: the daily limit on every key, models that used up
+// their daily allowance on some keys, and the viewer's jobs waiting for the renewal.
+function renderGeminiWaitStatus(q) {
+  const box = document.getElementById('ai-polish-quota-warning-banner');
+  const title = document.getElementById('ai-polish-quota-warning-title');
+  const body = document.getElementById('ai-polish-quota-warning-text');
+  if (!box || !body) return;
+  const pool = (q && q.pool) || {};
+  const totalKeys = pool.total_keys || 0;
+  const models = pool.cooling_models || [];
+  const jobs = (q && q.waiting_jobs) || [];
+  const left = (sec) => formatMinutesEl(Math.max(1, Math.ceil(Number(sec || 0) / 60)));
+  const lines = [];
+  if (q && q.exhausted) {
+    lines.push(`Εξαντλήθηκε το ημερήσιο όριο σε όλα τα κλειδιά. Έτοιμο ξανά στις ${localClock(q.reset_timestamp)} (σε ${left(q.remaining_seconds)}).`);
+  }
+  for (const m of models) {
+    lines.push(`${m.model}: όριο ημέρας σε ${m.keys} από ${totalKeys} κλειδιά — ξανά στις ${localClock(m.reset_timestamp)} (σε ${left(m.remaining_sec)}).`);
+  }
+  const waiting = (q && q.exhausted) || jobs.length > 0;
+  if (jobs.length) {
+    lines.push(`Περιμένουν την ανανέωση: ${jobs.map((j) => `«${j.file_name || 'έγγραφο'}»`).join(', ')}.`);
+  }
+  if (!lines.length) {
+    box.style.display = 'none';
+    return;
+  }
+  lines.push(waiting
+    ? 'Ένα κλειδί από άλλον λογαριασμό Google συνεχίζει αμέσως την εργασία.'
+    : 'Η εφαρμογή συνεχίζει με τα άλλα μοντέλα και κλειδιά όσο υπάρχει διαθέσιμο όριο.');
+  if (title) title.textContent = waiting ? '⏳ Αναμονή για ανανέωση του ορίου Gemini' : 'ℹ️ Μοντέλα Gemini στο όριό τους';
+  body.innerHTML = lines.map((line) => `<div>${escHtml(line)}</div>`).join('');
+  box.style.display = 'block';
+}
+
+let _geminiWaitTimer = null;
+
+async function refreshGeminiWaitStatus() {
+  try {
+    const res = await fetch(`${API}/gemini/status`);
+    if (!res.ok) return;
+    const q = await res.json();
+    renderGeminiWaitStatus(q);
+    if (q.pool) renderGeminiPoolStatus(q.pool);
+  } catch (_) {}
+}
+
+// While the keys window is open its status follows the server (a limit ends, a job starts waiting)
+function watchGeminiWaitStatus(on) {
+  if (_geminiWaitTimer) {
+    clearInterval(_geminiWaitTimer);
+    _geminiWaitTimer = null;
+  }
+  if (on) _geminiWaitTimer = setInterval(refreshGeminiWaitStatus, 5000);
+}
+
 function renderGeminiPoolStatus(poolData) {
   if (!poolData) return;
   const slots = poolData.slots || [];
@@ -3034,19 +3102,28 @@ function renderGeminiPoolStatus(poolData) {
   const avail = poolData.available_keys || 0;
   const allExh = Boolean(poolData.all_exhausted);
 
-  for (let i = 1; i <= 4; i++) {
+  for (let i = 1; i <= GEMINI_SLOT_IDS.length; i++) {
     const badge = document.getElementById(`pool-slot-status-${i}`);
     if (!badge) continue;
     const slotInfo = slots[i - 1];
+    badge.title = '';
     if (!slotInfo) {
       badge.textContent = '⚪ Κενό';
       badge.style.background = 'rgba(255,255,255,0.06)';
       badge.style.color = 'var(--text-muted)';
       continue;
     }
+    const cooling = slotInfo.cooling_models || [];
     if (slotInfo.is_exhausted) {
-      badge.textContent = `⏳ Όριο (${slotInfo.reset_time_str || 'σε αναμονή'})`;
+      const at = slotInfo.reset_timestamp ? localClock(slotInfo.reset_timestamp) : 'σε αναμονή';
+      badge.textContent = `⏳ Όριο (${at})`;
       badge.style.background = 'rgba(245,158,11,0.18)';
+      badge.style.color = 'var(--amber)';
+    } else if (cooling.length) {
+      // the key works, but some of its models used up their daily allowance
+      badge.textContent = `🟡 ${slotInfo.is_active ? 'Ενεργό' : 'Εφεδρικό'} · ${cooling.length} μοντέλα στο όριο`;
+      badge.title = cooling.join(', ');
+      badge.style.background = 'rgba(245,158,11,0.14)';
       badge.style.color = 'var(--amber)';
     } else if (slotInfo.is_active) {
       badge.textContent = '🟢 Ενεργό (Active)';
@@ -3149,7 +3226,7 @@ async function openAiPolishModal(mode = 'polish') {
     if (typeof loadPairingPanel === 'function') loadPairingPanel();
     loadGeminiUsageToday();
     if (modalTitle) modalTitle.innerHTML = '🔑 Gemini Multi-Key Pool &amp; Ρυθμίσεις API';
-    if (modalDesc) modalDesc.innerHTML = 'Διαχειριστείτε τα δωρεάν Google Gemini API Keys (έως 4 κλειδιά) για αυτόματη εναλλαγή (auto-failover) και αδιάλειπτη ροή χωρίς διακοπές:';
+    if (modalDesc) modalDesc.innerHTML = 'Διαχειριστείτε τα δωρεάν Google Gemini API Keys (έως 8 κλειδιά) για αυτόματη εναλλαγή (auto-failover) και αδιάλειπτη ροή χωρίς διακοπές:';
     if (toneGroup) toneGroup.style.display = 'none';
     if (bilingualGroup) bilingualGroup.style.display = 'none';
     if (btnRunPolish) btnRunPolish.style.display = 'none';
@@ -3177,13 +3254,15 @@ async function openAiPolishModal(mode = 'polish') {
   if (sData && sData.pool) renderGeminiPoolStatus(sData.pool);
   const poolKeys = [...geminiKeyState.masked];
 
-  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const slotIds = GEMINI_SLOT_IDS;
   slotIds.forEach((id, idx) => {
     const input = document.getElementById(id);
     if (input) {
       input.value = poolKeys[idx] || '';
     }
   });
+  const moreSlots = document.getElementById('gemini-more-slots');
+  if (moreSlots && poolKeys.length > 4) moreSlots.open = true;
 
   const hasAnyKey = poolKeys.length > 0;
   const badge = document.getElementById('gemini-key-saved-badge');
@@ -3208,28 +3287,15 @@ async function openAiPolishModal(mode = 'polish') {
   const cancelBtn = document.getElementById('btn-cancel-polish');
   if (cancelBtn && _currentAiModalMode === 'polish') cancelBtn.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
 
-  // Check Gemini daily quota status and display warning if exhausted
-  const mBanner = document.getElementById('ai-polish-quota-warning-banner');
-  const mText = document.getElementById('ai-polish-quota-warning-text');
-  try {
-    const qRes = await fetch(`${API}/gemini/status`);
-    if (qRes.ok) {
-      const qData = await qRes.json();
-      if (mBanner) {
-        if (qData.exhausted) {
-          mBanner.style.display = 'block';
-          if (mText) mText.textContent = qData.message || 'Το ημερήσιο όριο του Gemini API έχει εξαντληθεί.';
-        } else {
-          mBanner.style.display = 'none';
-        }
-      }
-    }
-  } catch (_) {}
+  // What waits for Gemini and until when; kept current while the keys window is open
+  await refreshGeminiWaitStatus();
+  watchGeminiWaitStatus(_currentAiModalMode === 'settings');
 }
 
 function closeAiPolishModal() {
   document.getElementById('ai-polish-modal').style.display = 'none';
   _currentAiModalMode = 'polish';
+  watchGeminiWaitStatus(false);
   if (!_polishRunning) {
     if (_polishPollTimer) {
       clearInterval(_polishPollTimer);
@@ -3481,7 +3547,7 @@ function onGeminiQuotaRestored() {
 }
 
 async function saveGeminiKeyOnly() {
-  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const slotIds = GEMINI_SLOT_IDS;
   const keys = [];
   const seen = new Set();
   let hasDuplicate = false;
@@ -3610,7 +3676,7 @@ async function clearGeminiKey() {
   try { localStorage.removeItem('gemini_api_key'); localStorage.removeItem('gemini_api_keys'); } catch (_) {}
   geminiKeyState.hasKey = false;
   geminiKeyState.masked = [];
-  const slotIds = ['gemini-api-key', 'gemini-api-key-2', 'gemini-api-key-3', 'gemini-api-key-4'];
+  const slotIds = GEMINI_SLOT_IDS;
   slotIds.forEach((id) => {
     const input = document.getElementById(id);
     if (input) input.value = '';

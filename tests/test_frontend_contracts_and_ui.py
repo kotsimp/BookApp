@@ -949,6 +949,74 @@ process.stdout.write('OK');
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Main download button follows a quick download: OK")
 
+    def test_12_gemini_keys_window_eight_slots_and_waiting_status(self):
+        """The keys window has 8 slots (5-8 fold out), and says what waits for Gemini: models at their limit on how
+        many keys and until when, and the viewer's waiting jobs; nothing when all is well."""
+        print("-> 12. Testing the Gemini keys window: 8 slots and the waiting status...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        for n in range(1, 9):
+            self.assertIn(f'id="pool-slot-status-{n}"', html)
+        self.assertIn('id="gemini-api-key-8"', html)
+        self.assertIn('id="gemini-more-slots"', html)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', open: false,
+    dataset: {}, style: { display: '' }, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+assert.strictEqual(vm.runInContext('GEMINI_SLOT_IDS.length', ctx), 8);
+assert.strictEqual(vm.runInContext('GEMINI_SLOT_IDS[7]', ctx), 'gemini-api-key-8');
+const now = Date.now() / 1000;
+const pool = { total_keys: 6, available_keys: 6, all_exhausted: false,
+  slots: Array.from({ length: 6 }, (_, i) => ({ slot: i + 1, is_active: i === 0, is_exhausted: false,
+    cooling_models: i < 2 ? ['gemini-3.5-flash'] : [] })),
+  cooling_models: [{ model: 'gemini-3.5-flash', keys: 2, reset_timestamp: now + 3 * 3600, remaining_sec: 3 * 3600 }] };
+ctx.renderGeminiPoolStatus(pool);
+assert.ok(getEl('pool-slot-status-1').textContent.includes('1 μοντέλα στο όριο'), getEl('pool-slot-status-1').textContent);
+assert.strictEqual(getEl('pool-slot-status-3').textContent, '🟡 Εφεδρικό (Standby)');
+assert.strictEqual(getEl('pool-slot-status-7').textContent, '⚪ Κενό', 'slots 7-8 are empty but drawn');
+const box = getEl('ai-polish-quota-warning-banner');
+const body = getEl('ai-polish-quota-warning-text');
+const title = getEl('ai-polish-quota-warning-title');
+// only a model at its limit: the app goes on with the others
+ctx.renderGeminiWaitStatus({ exhausted: false, pool, waiting_jobs: [] });
+assert.strictEqual(box.style.display, 'block');
+assert.ok(title.textContent.startsWith('ℹ️'), title.textContent);
+assert.ok(body.innerHTML.includes('gemini-3.5-flash: όριο ημέρας σε 2 από 6 κλειδιά'), body.innerHTML);
+// a job waits for it
+ctx.renderGeminiWaitStatus({ exhausted: false, pool, waiting_jobs: [{ file_name: 'Blindsight.pdf' }] });
+assert.ok(title.textContent.startsWith('⏳'), title.textContent);
+assert.ok(body.innerHTML.includes('Περιμένουν την ανανέωση: «Blindsight.pdf»'), body.innerHTML);
+assert.ok(body.innerHTML.includes('άλλον λογαριασμό Google'));
+// every key spent
+ctx.renderGeminiWaitStatus({ exhausted: true, reset_timestamp: now + 600, remaining_seconds: 600,
+  pool: { total_keys: 2, cooling_models: [] }, waiting_jobs: [] });
+assert.ok(body.innerHTML.includes('Εξαντλήθηκε το ημερήσιο όριο σε όλα τα κλειδιά') && body.innerHTML.includes('10 λεπτά'), body.innerHTML);
+// all well: no box
+ctx.renderGeminiWaitStatus({ exhausted: false, pool: { total_keys: 2, cooling_models: [] }, waiting_jobs: [] });
+assert.strictEqual(box.style.display, 'none');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Gemini keys window (8 slots, waiting status): OK")
+
 
 if __name__ == "__main__":
     unittest.main()

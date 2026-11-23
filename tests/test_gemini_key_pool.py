@@ -73,15 +73,16 @@ class TestGeminiKeyPool(unittest.TestCase):
         self.assertEqual(mask_api_key("abc"), "***")
 
     def test_02_set_get_and_limit_keys(self):
-        # Setting up to 4 keys
-        keys = ["KeyA", "KeyB", "KeyC", "KeyD", "KeyE"]  # 5 keys provided
+        # Setting up to 8 keys
+        keys = [f"Key{c}" for c in "ABCDEFGHI"]  # 9 keys provided
         saved = GeminiKeyPool.set_keys(keys)
+        self.assertEqual(MAX_KEYS, 8)
         self.assertEqual(len(saved), MAX_KEYS)
-        self.assertEqual(saved, ["KeyA", "KeyB", "KeyC", "KeyD"])
+        self.assertEqual(saved, keys[:8])
 
         # Check retrieval
         current = GeminiKeyPool.get_keys()
-        self.assertEqual(current, ["KeyA", "KeyB", "KeyC", "KeyD"])
+        self.assertEqual(current, keys[:8])
 
         # Primary key mirrored to legacy single setting
         self.assertEqual(get_setting("gemini_api_key"), "KeyA")
@@ -205,6 +206,33 @@ class TestGeminiKeyPool(unittest.TestCase):
         self.assertEqual(status["pool"]["available_keys"], 2)
         self.assertFalse(status["pool"]["all_exhausted"])
         self.assertFalse(status["exhausted"])
+
+    def test_07b_status_names_models_at_their_limit_and_waiting_jobs(self):
+        # A job may wait although no key is spent: only the models it may use reached their daily limit
+        from backend.main import get_gemini_status
+        from backend.job_manager import create_job, update_job, cleanup_test_jobs
+        GeminiKeyPool.set_keys(["KeyAlpha", "KeyBeta", "KeyGamma"])
+        GeminiKeyPool.mark_model_exhausted("KeyAlpha", "gemini-3.5-flash", cooldown_seconds=3600)
+        GeminiKeyPool.mark_model_exhausted("KeyBeta", "gemini-3.5-flash", cooldown_seconds=1800)
+        GeminiKeyPool.mark_model_exhausted("KeyAlpha", "gemini-3.8-flash", cooldown_seconds=600)
+        job = create_job("test_waiting_book.pdf", "test_waiting_book.pdf", "pdf")
+        try:
+            update_job(job.job_id, status="error",
+                       error="All Gemini candidate models are in cooldown across configured keys. (quota)")
+            status = asyncio.run(get_gemini_status())
+            models = {m["model"]: m for m in status["pool"]["cooling_models"]}
+            self.assertEqual(set(models), {"gemini-3.5-flash", "gemini-3.8-flash"})
+            self.assertEqual(models["gemini-3.5-flash"]["keys"], 2)
+            self.assertLessEqual(models["gemini-3.5-flash"]["remaining_sec"], 1800, "the first key back counts")
+            self.assertEqual(models["gemini-3.8-flash"]["keys"], 1)
+            self.assertFalse(status["exhausted"], "the keys themselves are not spent")
+            waiting = [j["file_name"] for j in status["waiting_jobs"]]
+            self.assertIn("test_waiting_book.pdf", waiting)
+            slot1 = status["pool"]["slots"][0]
+            self.assertEqual(sorted(slot1["cooling_models"]), ["gemini-3.5-flash", "gemini-3.8-flash"])
+        finally:
+            GeminiKeyPool.reset_quota()
+            cleanup_test_jobs()
 
     def test_08_resolve_gemini_api_key(self):
         # Explicit key takes priority

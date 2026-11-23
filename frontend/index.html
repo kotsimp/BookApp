@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <link rel="stylesheet" href="style.css?v=2.10.4" />
-  <script src="i18n.js?v=1.1.0"></script>
+  <script src="i18n.js?v=1.2.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -1124,7 +1124,7 @@
       <div class="form-group">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
           <label class="form-label" style="margin:0; font-weight:600; font-size:0.92rem; display:flex; align-items:center; gap:6px">
-            <span>🔑 Gemini Multi-Key Pool (Έως 4 Δωρεάν Κλειδιά)</span>
+            <span>🔑 Gemini Multi-Key Pool (Έως 8 Δωρεάν Κλειδιά)</span>
           </label>
           <div style="display:flex; align-items:center; gap:10px">
             <button type="button" onclick="toggleApiKeyVisibility()" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.85rem; display:flex; align-items:center; gap:4px" title="Show / Hide Keys" id="btn-toggle-key">
@@ -1163,13 +1163,48 @@
           </div>
 
           <!-- Slot 4 (Backup 3) -->
-          <div>
+          <div style="margin-bottom:8px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.78rem">
               <span style="font-weight:600; color:var(--text-secondary)">Slot 4 (Εφεδρικό Key #3 — Backup)</span>
               <span id="pool-slot-status-4" class="badge" style="font-size:0.7rem; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-muted)">⚪ Κενό</span>
             </div>
             <input type="text" id="gemini-api-key-4" name="gemini_slot_4" class="form-input gemini-pool-slot" data-slot="4" placeholder="AIzaSy... (Google Account #4)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="font-family:monospace; font-size:0.82rem; padding:8px 10px; -webkit-text-security:disc; text-security:disc" />
           </div>
+          <details id="gemini-more-slots" style="margin-top:2px">
+            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text-secondary); margin-bottom:8px">➕ Κλειδιά 5–8</summary>
+          <!-- Slot 5 (Backup 4) -->
+          <div style="margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.78rem">
+              <span style="font-weight:600; color:var(--text-secondary)">Slot 5 (Εφεδρικό Key #4 — Backup)</span>
+              <span id="pool-slot-status-5" class="badge" style="font-size:0.7rem; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-muted)">⚪ Κενό</span>
+            </div>
+            <input type="text" id="gemini-api-key-5" name="gemini_slot_5" class="form-input gemini-pool-slot" data-slot="5" placeholder="AIzaSy... (Google Account #5)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="font-family:monospace; font-size:0.82rem; padding:8px 10px; -webkit-text-security:disc; text-security:disc" />
+          </div>
+          <!-- Slot 6 (Backup 5) -->
+          <div style="margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.78rem">
+              <span style="font-weight:600; color:var(--text-secondary)">Slot 6 (Εφεδρικό Key #5 — Backup)</span>
+              <span id="pool-slot-status-6" class="badge" style="font-size:0.7rem; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-muted)">⚪ Κενό</span>
+            </div>
+            <input type="text" id="gemini-api-key-6" name="gemini_slot_6" class="form-input gemini-pool-slot" data-slot="6" placeholder="AIzaSy... (Google Account #6)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="font-family:monospace; font-size:0.82rem; padding:8px 10px; -webkit-text-security:disc; text-security:disc" />
+          </div>
+          <!-- Slot 7 (Backup 6) -->
+          <div style="margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.78rem">
+              <span style="font-weight:600; color:var(--text-secondary)">Slot 7 (Εφεδρικό Key #6 — Backup)</span>
+              <span id="pool-slot-status-7" class="badge" style="font-size:0.7rem; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-muted)">⚪ Κενό</span>
+            </div>
+            <input type="text" id="gemini-api-key-7" name="gemini_slot_7" class="form-input gemini-pool-slot" data-slot="7" placeholder="AIzaSy... (Google Account #7)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="font-family:monospace; font-size:0.82rem; padding:8px 10px; -webkit-text-security:disc; text-security:disc" />
+          </div>
+          <!-- Slot 8 (Backup 7) -->
+          <div style="margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.78rem">
+              <span style="font-weight:600; color:var(--text-secondary)">Slot 8 (Εφεδρικό Key #7 — Backup)</span>
+              <span id="pool-slot-status-8" class="badge" style="font-size:0.7rem; padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.06); color:var(--text-muted)">⚪ Κενό</span>
+            </div>
+            <input type="text" id="gemini-api-key-8" name="gemini_slot_8" class="form-input gemini-pool-slot" data-slot="8" placeholder="AIzaSy... (Google Account #8)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" style="font-family:monospace; font-size:0.82rem; padding:8px 10px; -webkit-text-security:disc; text-security:disc" />
+          </div>
+          </details>
         </div>
 
         <!-- Pool Actions & Status Summary -->
@@ -1190,11 +1225,12 @@
         </div>
 
         <div id="ai-polish-quota-warning-banner" style="display:none; margin-top:10px; padding:10px 14px; background:rgba(245,158,11,0.14); border:1.5px solid rgba(245,158,11,0.6); border-radius:10px; font-size:0.84rem; color:var(--text-primary); line-height:1.4">
-          ⚠️ <strong>Εξαντλημένο Όριο Gemini:</strong> <span id="ai-polish-quota-warning-text"></span>
+          <strong id="ai-polish-quota-warning-title">⏳ Αναμονή για ανανέωση του ορίου Gemini</strong>
+          <div id="ai-polish-quota-warning-text" style="margin-top:4px"></div>
         </div>
 
         <div style="margin-top:10px; padding:8px 12px; background:rgba(124,58,237,0.06); border:1px solid rgba(124,58,237,0.2); border-radius:8px; font-size:0.78rem; color:var(--text-secondary); line-height:1.4">
-          💡 <strong>Αυτόματη Εναλλαγή Χωρίς Κόστος ($0):</strong> Συνδέστε δωρεάν API Keys από έως 4 διαφορετικούς λογαριασμούς Google. Η Google ορίζει <strong>ημερήσιο όριο ανά μοντέλο</strong> (σε ορισμένα μόνο 20 αιτήματα/ημέρα). Όταν ένα όριο εξαντληθεί (429 / Quota), η εφαρμογή συνεχίζει αυτόματα με άλλο μοντέλο ή με το επόμενο εφεδρικό κλειδί, όσο υπάρχει διαθέσιμο όριο.
+          💡 <strong>Αυτόματη Εναλλαγή Χωρίς Κόστος ($0):</strong> Συνδέστε δωρεάν API Keys από έως 8 διαφορετικούς λογαριασμούς Google. Η Google ορίζει <strong>ημερήσιο όριο ανά μοντέλο</strong> (σε ορισμένα μόνο 20 αιτήματα/ημέρα). Όταν ένα όριο εξαντληθεί (429 / Quota), η εφαρμογή συνεχίζει αυτόματα με άλλο μοντέλο ή με το επόμενο εφεδρικό κλειδί, όσο υπάρχει διαθέσιμο όριο.
         </div>
 
         <!-- Device pairing (only shown when BOOKAPP_PAIRING=1) -->
@@ -1432,7 +1468,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.13.0"></script>
+<script src="app.js?v=2.14.0"></script>
 <script src="insights.js?v=2.9.1"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
