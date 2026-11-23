@@ -58,10 +58,9 @@ You will see the main user interface with two primary tabs at the top:
 * 🎧 **Generate Audiobook**
 
 ### 🌐 Interface Language: Ελληνικά / English
-The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the sign-in page) shows the whole interface in Greek or in English: menus, tabs, buttons, settings, tooltips, notifications and the progress lines of the page. The choice is remembered in your browser. The first time, BookApp follows your browser's language.
+The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the sign-in page) shows the whole interface in Greek or in English: menus, tabs, buttons, settings, tooltips, notifications, a job's progress steps, its final notes and error messages. The choice is remembered in your browser. The first time, BookApp follows your browser's language. Each person sees their own choice, also on a shared server.
 * Your books, file names, glossary terms and the reader's text are never translated by the switch.
-* Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…).
-* Some messages that come from the server, for example a job's detailed progress step or an error reason, can still be in the language they were written in.
+* Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
 
 ### 🔐 Signing In & Your Account
 

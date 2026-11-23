@@ -872,6 +872,19 @@ assert.strictEqual(t('▶️ Start Batch Translation (12 files)', 'el'), '▶️
 assert.strictEqual(t('4.0 MB · ~340 pages · PDF · Ready', 'el'), '4.0 MB · ~340 σελίδες · PDF · Έτοιμο');
 assert.strictEqual(t('15 λεπτά – 1 ώρα 5 λεπτά', 'en'), '15 minutes – 1 hour 5 minutes');
 assert.strictEqual(t('Ready in 5 minutes', 'el'), 'Ready in 5 minutes', 'unknown text is left alone');
+// messages written by the server: progress steps, joined end-of-job notes, errors
+assert.strictEqual(t('Single-Pass AI Translation & Polish: batch 12/152 (36/336 pages)...', 'el'),
+  'Μετάφραση & επιμέλεια με AI: παρτίδα 12/152 (36/336 σελίδες)...');
+assert.strictEqual(t('🏆 Αναθεώρηση με το πρωτότυπο (πολύ αργή διαδικασία): τμήμα 3/50 · απομένουν ~1 ώρα 12 λεπτά…', 'en'),
+  '🏆 Revision against the original (very slow): part 3/50 · ~1 hour 12 minutes left…');
+assert.strictEqual(t('⚠️ 1 page(s) still contain text in the original language (pages 7 of the original): translate again to retry them. ' +
+  '2 word(s) contain letters of another alphabet (ποгда, Ίσות): please check them.', 'el'),
+  '⚠️ 1 σελίδες έχουν ακόμη κείμενο στη γλώσσα του πρωτοτύπου (σελίδες 7 του πρωτοτύπου): μεταφράστε ξανά για νέα προσπάθεια. ' +
+  '2 λέξεις έχουν γράμματα άλλου αλφαβήτου (ποгда, Ίσות): ελέγξτε τες.', 'joined notes are switched one by one');
+assert.ok(t('⚠️ Audiobook ready! 3 part(s) in a script this voice cannot read were skipped; 2 part(s) read by Nestoras, ' +
+  'because Athina returned no audio.', 'el').includes('παραλείφθηκαν· 2 τμήματα'), "';' is a question mark in Greek: '·'");
+assert.strictEqual(t('Λάθος όνομα χρήστη ή κωδικός.', 'en'), 'Wrong username or password.');
+assert.strictEqual(t('⚠️ Something unknown. Another unknown sentence.', 'el'), '⚠️ Something unknown. Another unknown sentence.');
 process.stdout.write('OK');
 """
         res = subprocess.run([node_bin, "-e", harness], input=json.dumps([texts, sorted(same)]), capture_output=True,

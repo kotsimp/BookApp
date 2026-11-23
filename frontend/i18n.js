@@ -814,6 +814,214 @@ const I18N_PAIRS = [
   ['✅ Ο κωδικός αποθηκεύτηκε.', '✅ The password was saved.'],
   ['Δεν υπάρχει σύνδεση με τον διακομιστή.', 'No connection to the server.'],
   ['Κάτι πήγε στραβά (HTTP {n}).', 'Something went wrong (HTTP {n}).'],
+
+  // ══ Messages written by the server (progress steps, notes, errors) ══
+  // ── Book translation steps ──
+  ['⚠️ {a}', '⚠️ {a}'],
+  ['Ανάγνωση εγγράφου για μετάφραση με AI...', 'Reading document for Single-Pass AI Translation...'],
+  ['Μετάφραση με AI ({b} παράλληλες παρτίδες, {p} σελίδες)...', 'Single-Pass AI Translation ({b} parallel batches, {p} pages)...'],
+  ['Συνέχιση μετάφρασης με AI: παρτίδα {c}/{t} ({p}/{tp} σελίδες)...', 'Resuming Single-Pass AI Translation & Polish: batch {c}/{t} ({p}/{tp} pages)...'],
+  ['Μετάφραση & επιμέλεια με AI: παρτίδα {c}/{t} ({p}/{tp} σελίδες)...', 'Single-Pass AI Translation & Polish: batch {c}/{t} ({p}/{tp} pages)...'],
+  ['⚠️ Όριο Gemini: αυτόματη συνέχιση με δωρεάν μηχανή (παρτίδα {c}/{t})...', '⚠️ Gemini limit: continuing automatically with the free engine (batch {c}/{t})...', '⚠️ Όριο Gemini: Αυτόματη συνέχιση με δωρεάν μηχανή (batch {c}/{t})...'],
+  ['Εξαγωγή μητρώου χαρακτήρων & όρων...', 'Extracting character & terminology dossier...'],
+  ['Διόρθωση λέξεων με γράμματα άλλου αλφαβήτου...', 'Correcting words with letters of another alphabet...'],
+  ['Ολοκλήρωση του μεταφρασμένου εγγράφου...', 'Finalizing AI translated document...'],
+  ['✨ Μετάφραση με AI: τμήμα {d} από {t} (διατήρηση μορφοποίησης)...', '✨ AI translation: segment {d} of {t} (preserving formatting)...'],
+  ['Μετάφραση παραγράφου {d} από {t} (διατήρηση στυλ)...', 'Translating paragraph {d} of {t} (preserving styles)...'],
+  ['Μετάφραση τμήματος {d} από {t} (διατήρηση HTML/CSS)...', 'Translating block {d} of {t} (preserving HTML/CSS)...'],
+  ['Εξαγωγή {f} με επιμέλεια AI...', 'Exporting AI-polished {f}...'],
+  ['Εξαγωγή σε {f}...', 'Exporting to {f}...'],
+  ['Εξήχθη {f} (με διατήρηση μορφοποίησης)', 'Exported {f} (Formatting Preserved)'],
+  ['Εξήχθη {f}', 'Exported {f}'],
+  ['🔍 Τελικός έλεγχος ποιότητας & βελτίωση κειμένου...', '🔍 Final quality check & text refinement...'],
+  ['🏆 Αναθεώρηση της μετάφρασης με το πρωτότυπο (2ο πέρασμα AI, πολύ αργή διαδικασία)· ο χρόνος που απομένει φαίνεται μετά το πρώτο τμήμα…', '🏆 Revising the translation against the original (2nd AI pass, very slow); the time left shows after the first part…'],
+  ['🏆 Αναθεώρηση με το πρωτότυπο (πολύ αργή διαδικασία): τμήμα {d}/{t} · {left}…', '🏆 Revision against the original (very slow): part {d}/{t} · {left}…'],
+  ['🏆 Αναθεώρηση με το πρωτότυπο (πολύ αργή διαδικασία): τμήμα {d}/{t}…', '🏆 Revision against the original (very slow): part {d}/{t}…'],
+  ['απομένει λιγότερο από 1 λεπτό', 'less than 1 minute left'],
+  ['απομένουν ~{#n} λεπτά', '~{#n} minutes left'],
+  ['απομένουν ~{#h} ώρα', '~{#h} hour left'],
+  ['απομένουν ~{#h} ώρες', '~{#h} hours left'],
+  ['απομένουν ~{#h} ώρα {#m} λεπτά', '~{#h} hour {#m} minutes left'],
+  ['απομένουν ~{#h} ώρες {#m} λεπτά', '~{#h} hours {#m} minutes left'],
+  ['Ανάγνωση εγγράφου...', 'Reading document...'],
+  ['Μετάφραση {n} σελίδων (παράλληλη μηχανή)...', 'Translating {n} pages (parallel engine)...'],
+  ['Μετάφραση σελίδας {d} από {t}...', 'Translating page {d} of {t}...'],
+  ['Η Google αρνείται τα αιτήματα: το Gemini μεταφράζει σε παρτίδες ({d}/{t})...', 'Google refuses requests: Gemini translates in batches ({d}/{t})...'],
+  ['Εγγραφή μεταφρασμένου αρχείου...', 'Writing translated file...'],
+  ['Αποτυχία ανάγνωσης εγγράφου: {r}', 'Failed to read document: {r}'],
+  ['Αναμονή για έναρξη...', 'Waiting to start...'],
+  ['🛑 Ακυρώθηκε από τον χρήστη.', '🛑 Cancelled by user.'],
+  ['Έτοιμο για συνέχιση (αποθηκευμένο checkpoint)', 'Ready to resume (saved checkpoint)'],
+  ['⚠️ Σταμάτησε: εξαντλήθηκε το ημερήσιο όριο Gemini API', '⚠️ Stopped: the Gemini API daily limit is used up', '⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API'],
+  ['⚠️ Σταμάτησε: όριο αιτημάτων Gemini (429)· συνεχίστε σε ένα λεπτό', '⚠️ Stopped: Gemini request limit (429) — resume in a minute'],
+  ['⏳ Σε αναμονή στην παρτίδα...', '⏳ Queued in batch...'],
+  ['⏳ Σε αναμονή στην παρτίδα (επαναφέρθηκε μετά από επανεκκίνηση)...', '⏳ Queued in batch (restored after restart)...'],
+  ['⏳ Σε αναμονή για νέα προσπάθεια...', '⏳ Queued for retry...'],
+  ['🔄 Συνέχιση από checkpoint μετά από ανανέωση ορίου Gemini API...', '🔄 Resuming from the checkpoint after the Gemini API limit renewed...'],
+  ['⏳ Αναμονή ανανέωσης ορίου Gemini (αυτόματη συνέχιση μόλις γίνει reset)', '⏳ Waiting for the Gemini limit to renew (resumes by itself after the reset)', '⏳ Αναμονή ανανέωσης ορίου Gemini (Αυτόματη συνέχιση μόλις γίνει reset)'],
+
+  // ── End-of-job notes ──
+  ['Η δωρεάν μετάφραση της Google αρνήθηκε τα αιτήματα, οπότε μετέφρασε το Gemini (χρησιμοποιεί το όριο Gemini σας).', 'Google\'s free translation refused the requests, so Gemini translated (this uses your Gemini allowance).'],
+  ['Μέρος του κειμένου μεταφράστηκε από το MyMemory, μια απλούστερη δωρεάν υπηρεσία, επειδή η Google αρνήθηκε: ελέγξτε το.', 'Some text was translated by MyMemory, a simpler free service, because Google refused: please check it.'],
+  ['{#n} μπλοκ προμορφοποιημένου κειμένου έμειναν αμετάφραστα επειδή μοιάζουν με κώδικα: ελέγξτε τα.', '{#n} preformatted block(s) kept untranslated because they look like program code: please check them.'],
+  ['{#n} σελίδες έχουν ακόμη κείμενο στη γλώσσα του πρωτοτύπου (σελίδες {p} του πρωτοτύπου): μεταφράστε ξανά για νέα προσπάθεια.', '{#n} page(s) still contain text in the original language (pages {p} of the original): translate again to retry them.'],
+  ['{#n} λέξεις έχουν γράμματα άλλου αλφαβήτου ({w}): ελέγξτε τες.', '{#n} word(s) contain letters of another alphabet ({w}): please check them.'],
+  ['Το 2ο πέρασμα AI (Μέγιστη ποιότητα) δεν ολοκληρώθηκε ({r}): κρατήθηκε η μετάφραση του 1ου περάσματος.', 'The second AI pass (Maximum quality) did not complete ({r}); the first-pass translation was kept.'],
+  ['Μέγιστη ποιότητα: {#n} σελίδες κράτησαν τη μετάφραση του 1ου περάσματος, επειδή η αναθεώρησή τους δεν ήταν αξιοποιήσιμη.', 'Maximum quality: {#n} page(s) kept the first-pass translation because the revision of those pages was unusable.'],
+  ['{#n} σελίδες έμειναν αμετάφραστες ({p}): {r}.', '{#n} page(s) left untranslated ({p}): {r}.'],
+  ['το Vision AI απέτυχε{why}· μεταφράστε ξανά για νέα προσπάθεια', 'Vision AI failed{why}; translate again to retry them'],
+  ['οι σελίδες με μόνο εικόνες χρειάζονται κλειδί Gemini API', 'image-only pages need a Gemini API key'],
+  ['Δεν βρέθηκε κείμενο σε {#n} σελίδες ({p}): μόνο εικόνα; Αν κάποια έχει μπαλόνια, μεταφράστε ξανά για νέα προσπάθεια.', 'No text found on {#n} page(s) ({p}): artwork only? If one of them has balloons, translate again to retry it.'],
+
+  // ── Graphic novels ──
+  ['Άνοιγμα graphic novel...', 'Opening graphic novel...'],
+  ['Εξαγωγή αρχείου κόμικ (CBZ)...', 'Extracting comic archive (CBZ)...'],
+  ['Μετάφραση {n} σελίδων κόμικ (παράλληλη μηχανή Vision)...', 'Translating {n} comic pages (parallel Vision engine)...'],
+  ['Μετάφραση σελίδας graphic novel {d} από {t} (⚠️ Χωρίς AI Polish: εξαντλήθηκε το ημερήσιο όριο Gemini)...', 'Translating graphic novel page {d} of {t} (⚠️ without AI Polish: the Gemini daily limit is used up)...', 'Translating graphic novel page {d} of {t} (⚠️ Χωρίς AI Polish: εξαντλήθηκε το ημερήσιο όριο Gemini)...'],
+  ['Μετάφραση σελίδας graphic novel {d} από {t}...', 'Translating graphic novel page {d} of {t}...'],
+  ['Το AI Vision μετέφρασε τη σελίδα {d} από {t}...', 'AI Vision translated graphic novel page {d} of {t}...'],
+  ['Η μετάφραση του graphic novel ολοκληρώθηκε! Προετοιμασία εξαγωγής...', 'Graphic novel translation complete! Preparing export...'],
+  ['Το PDF του κόμικ έχει 0 σελίδες και δεν μπορεί να μεταφραστεί.', 'Comic PDF contains 0 pages and cannot be translated.'],
+  ['Αυτό το graphic novel / σαρωμένο κόμικ έχει σελίδες μόνο με εικόνες και χρειάζεται κλειδί Gemini API για να εντοπιστούν και να μεταφραστούν τα μπαλόνια (Vision AI).', 'This graphic novel / scanned comic contains image-only pages and requires a Gemini API key for Vision AI balloon detection and translation.'],
+  ['Δεν βρέθηκαν εικόνες σελίδων στο αρχείο CBZ.', 'No comic page images found in uploaded CBZ archive.'],
+  ['Το αρχείο κόμικ είναι πολύ μεγάλο όταν αποσυμπιεστεί (πάνω από 2 GB).', 'The comic archive is too large when unpacked (over 2 GB).'],
+  ['Η μετάφραση Vision AI απέτυχε σε {f}/{t} σελίδες ({r}). Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Έναρξη μετάφρασης για συνέχιση!', 'Vision AI translation failed on {f}/{t} pages ({r}). The pages done are saved — wait a few seconds and press Start Translation again to continue!', 'Η μετάφραση Vision AI απέτυχε σε {f}/{t} σελίδες ({r}). Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Start Translation για συνέχιση!'],
+  ['Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. Η πρόοδος ({n} σελίδες) αποθηκεύτηκε σε checkpoint! Αλλάξτε Gemini API key στις Ρυθμίσεις ή δοκιμάστε ξανά αργότερα.', 'Vision AI translation stopped: the Gemini free tier daily limit is used up. The progress ({n} pages) is saved at a checkpoint! Change the Gemini API key in Settings or try again later.'],
+  ['Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. Η πρόοδος ({n} σελίδες) αποθηκεύτηκε σε checkpoint! (quota_behavior=\'wait\').', 'Vision AI translation stopped: the Gemini free tier daily limit is used up. The progress ({n} pages) is saved at a checkpoint! (waiting for the reset).'],
+  ['Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. Απομένουν {n} σελίδες· η πρόοδος αποθηκεύτηκε σε checkpoint!', 'Vision AI translation stopped: the Gemini free tier daily limit is used up. {n} pages are left; the progress is saved at a checkpoint!'],
+  ['Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior=\'wait\').', 'The Gemini API daily limit ran out during Comic AI Polish. The job stopped to wait for the limit to renew.'],
+
+  // ── Audiobook steps ──
+  ['🎙️ Δημιουργία νευρωνικού ήχου σε {#n} τμήματα ({#k} έτοιμα ήδη) με {v} ({s})...', '🎙️ Generating neural audio in {#n} parts ({#k} already narrated) using {v} ({s})...'],
+  ['🎙️ Δημιουργία νευρωνικού ήχου σε {#n} τμήματα με {v} ({s})...', '🎙️ Generating neural audio in {#n} parts using {v} ({s})...'],
+  ['🎙️ Δημιουργήθηκε το τμήμα ήχου {d} από {t}...', '🎙️ Generated audio part {d} of {t}...'],
+  ['🎙️ Σύνθεση ήχου (τμήμα {d}/{t})...', '🎙️ Synthesizing audio (part {d}/{t})...'],
+  ['Συναρμολόγηση του τελικού audiobook...', 'Assembling final audiobook...'],
+  ['✨ Επιμέλεια του κειμένου εκφώνησης με AI...', '✨ AI polishing script for spoken narration...'],
+  ['✨ Επιμέλεια του κειμένου εκφώνησης με AI ({d}/{t})...', '✨ AI polishing audio script ({d}/{t})...'],
+  ['ℹ️ Δωρεάν μοντέλο: εκφώνηση με νευρωνικές φωνές Edge-TTS...', 'ℹ️ Free model: narration with Edge-TTS neural voices...', 'ℹ️ Δωρεάν μοντέλο: Εκφώνηση με νευρωνικές φωνές Edge-TTS...'],
+  ['⚠️ Όριο Gemini: η εκφώνηση συνεχίζει με το αρχικό κείμενο...', '⚠️ Gemini limit: narration continues with the original text...', '⚠️ Όριο Gemini: Συνέχιση εκφώνησης με αρχικό κείμενο...'],
+  ['🔍 Τελικός έλεγχος ποιότητας ηχητικού βιβλίου...', '🔍 Final quality check of the audiobook...'],
+  ['Το audiobook είναι έτοιμο!', 'Audiobook ready!'],
+  ['⚠️ Το audiobook είναι έτοιμο! {n}.', '⚠️ Audiobook ready! {n}.'],
+  ['{#n} τμήματα σε γραφή που δεν διαβάζει αυτή η φωνή παραλείφθηκαν', '{#n} part(s) in a script this voice cannot read were skipped'],
+  ['{#n} τμήματα διαβάστηκαν από τη φωνή {a}, επειδή η {b} δεν έδωσε ήχο', '{#n} part(s) read by {a}, because {b} returned no audio'],
+  ['Δεν βρέθηκε κείμενο για μετατροπή σε ήχο.', 'No text found to convert to audio.'],
+  ['Δεν υπάρχουν έγκυρα τμήματα ήχου για ένωση.', 'No valid audio chunks to concatenate.'],
+
+  // ── AI Polish (editor) ──
+  ['Σύνδεση με το Gemini Flash AI...', 'Connecting to Gemini Flash AI...'],
+  ['ℹ️ Εφαρμογή δωρεάν τυπογραφικών κανόνων & γλωσσαρίου (Free Mode)...', 'ℹ️ Applying the free typography rules & glossary (Free Mode)...'],
+  ['Επιμέλεια παρτίδας {d} από {t}...', 'Polishing batch {d} of {t}...'],
+  ['Το AI Polish ολοκληρώθηκε!', 'AI Polishing complete!'],
+
+  // ── Book Insights (server) ──
+  ['Ανάλυση ενότητας {d}/{t}…', 'Analysing section {d}/{t}…'],
+  ['Συμπύκνωση σημειώσεων…', 'Condensing notes…'],
+  ['Έτοιμο (αποθηκευμένο αποτέλεσμα)', 'Ready (saved result)'],
+  ['Προετοιμασία κειμένου…', 'Preparing the text…'],
+  ['Συγγραφή κειμένου…', 'Writing the text…'],
+  ['Διόρθωση & επανέλεγχος…', 'Correcting & re-checking…'],
+  ['Γλωσσική επιμέλεια ελληνικού κειμένου…', 'Language editing of the Greek text…'],
+  ['Εκφώνηση τμήματος {d}/{t}…', 'Narrating part {d}/{t}…'],
+  ['Ο ήχος είναι έτοιμος', 'The audio is ready'],
+  ['Αυτός ο τύπος αρχείου δεν υποστηρίζεται για Book Insights. Χρησιμοποιήστε PDF, DOCX ή EPUB με κείμενο (όχι κόμικ/εικόνες).', 'This file type is not supported for Book Insights. Use a PDF, DOCX or EPUB with text (not comics/images).'],
+  ['Δεν ήταν δυνατή η ανάγνωση κειμένου από το έγγραφο. Το αρχείο μπορεί να είναι κατεστραμμένο ή προστατευμένο.', 'The text of the document could not be read. The file may be damaged or protected.'],
+  ['Το έγγραφο δεν περιέχει αρκετό αναγνώσιμο κείμενο για αξιόπιστη περίληψη. Αν είναι σαρωμένο (εικόνες), δεν υπάρχει εξαγώγιμο κείμενο.', 'The document does not contain enough readable text for a reliable summary. If it is scanned (images), there is no text to extract.'],
+  ['Το έγγραφο είναι πολύ μικρό για σύνοψη: χρειάζεται τουλάχιστον ~1,5 σελίδα ουσιαστικού κειμένου.', 'The document is too short for a synopsis: it needs at least ~1.5 pages of real text.'],
+  ['Δεν ήταν δυνατός ο εντοπισμός της γλώσσας του εγγράφου. Επιλέξτε γλώσσα εξόδου στην Προχωρημένη Λειτουργία.', 'The document\'s language could not be detected. Choose the output language in Advanced Mode.'],
+  ['Για τα Book Insights απαιτείται κλειδί Google Gemini API. Προσθέστε ένα δωρεάν κλειδί από το κουμπί «🔑 Gemini API Key».', 'Book Insights needs a Google Gemini API key. Add a free key with the «🔑 Gemini API Key» button.'],
+  ['Εξαντλήθηκε το ημερήσιο όριο του Gemini API. Δοκιμάστε αργότερα ή προσθέστε άλλο κλειδί.', 'The Gemini API daily limit is used up. Try later or add another key.'],
+  ['Πάρα πολλά αιτήματα προς το Gemini αυτή τη στιγμή. Περιμένετε λίγο και δοκιμάστε ξανά.', 'Too many requests to Gemini right now. Wait a moment and try again.'],
+  ['Το κλειδί Gemini API απορρίφθηκε. Ελέγξτε ότι είναι σωστό στις Ρυθμίσεις.', 'The Gemini API key was rejected. Check that it is correct in Settings.'],
+  ['Πρόβλημα σύνδεσης με την υπηρεσία AI. Ελέγξτε τη σύνδεσή σας στο διαδίκτυο και δοκιμάστε ξανά.', 'A connection problem with the AI service. Check your internet connection and try again.'],
+  ['Η δημιουργία κειμένου από το AI απέτυχε. Δοκιμάστε ξανά σε λίγο.', 'The AI could not create the text. Try again in a moment.'],
+  ['Το AI παρήγαγε κείμενο που δεν πέρασε τον έλεγχο ποιότητας (π.χ. λάθος γλώσσα ή στοιχεία που δεν υπάρχουν στο βιβλίο), οπότε δεν εμφανίζεται. Δοκιμάστε ξανά.', 'The AI wrote a text that failed the quality check (e.g. the wrong language, or details not in the book), so it is not shown. Try again.'],
+  ['Η δημιουργία ήχου απέτυχε. Ελέγξτε τη σύνδεσή σας και δοκιμάστε ξανά.', 'The audio creation failed. Check your connection and try again.'],
+  ['Ο ήχος είναι διαθέσιμος μόνο για ελληνικό ή αγγλικό κείμενο.', 'Audio is available only for Greek or English text.'],
+  ['Η αποθήκευση του αρχείου απέτυχε. Δοκιμάστε άλλη μορφή ή ελέγξτε τον ελεύθερο χώρο στον δίσκο.', 'Saving the file failed. Try another format or check the free disk space.'],
+  ['Δεν υπάρχει ακόμη αυτό το κείμενο. Δημιουργήστε το πρώτα.', 'This text does not exist yet. Create it first.'],
+  ['Μη έγκυρη επιλογή.', 'Invalid choice.'],
+  ['Το έγγραφο δεν βρέθηκε. Ανεβάστε το ξανά.', 'The document was not found. Upload it again.'],
+  ['Η εργασία δεν βρέθηκε.', 'The job was not found.'],
+  ['Η εργασία δεν βρέθηκε (ίσως έγινε επανεκκίνηση του διακομιστή). Δοκιμάστε ξανά.', 'The job was not found (the server may have restarted). Try again.'],
+  ['Το αρχείο δεν βρέθηκε.', 'The file was not found.'],
+
+  // ── Errors: quota, free engine, documents ──
+  ['⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). Έτοιμο ξανά στις {c} (απομένουν ~{t}). Αλλάξτε API Key στις Ρυθμίσεις ή περιμένετε την αντίστροφη μέτρηση για αυτόματη συνέχιση.', '⚠️ The Gemini API daily limit (free tier) is used up. Ready again at {c} (~{t} left). Change the API key in Settings or wait for the countdown to resume automatically.'],
+  ['⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). Η πρόοδος αποθηκεύτηκε σε checkpoint στο δίσκο. Έτοιμο ξανά στις {c} (απομένουν ~{t}). Παρακαλούμε περιμένετε ή αλλάξτε API Key στις Ρυθμίσεις (Settings).', '⚠️ The Gemini API daily limit (free tier) is used up. The progress is saved at a checkpoint on disk. Ready again at {c} (~{t} left). Please wait or change the API key in Settings.'],
+  ['Η δωρεάν μετάφραση δεν είναι διαθέσιμη τώρα: η Google αρνείται τα αιτήματα και το MyMemory δέχεται μόνο λίγο κείμενο την ημέρα. Προσθέστε δωρεάν κλειδί Gemini ή δοκιμάστε αργότερα. Δεν αποθηκεύτηκε αμετάφραστο κείμενο· πατήστε Συνέχιση (όσα μεταφράστηκαν διατηρούνται).', 'Free translation is not available now: Google refuses the requests and MyMemory accepts only a little text a day. Add a free Gemini key or try later. No untranslated text was saved; press Resume (what was translated is kept).'],
+  ['Λείπει το κλειδί Gemini API. Προσθέστε ένα στις Ρυθμίσεις ή επιλέξτε τα δωρεάν μοντέλα (fallback).', 'Missing Gemini API Key. Please provide a key in settings or select free models (fallback).'],
+  ['Όλα τα διαθέσιμα μοντέλα Gemini είναι σε αναμονή σε όλα τα κλειδιά.', 'All Gemini candidate models are in cooldown across configured keys.'],
+  ['Δεν βρέθηκε αναγνώσιμο κείμενο στο έγγραφο.', 'No readable text found in document.'],
+  ['Το PDF προστατεύεται με κωδικό / είναι κρυπτογραφημένο και δεν διαβάζεται χωρίς κωδικό.', 'PDF file is password-protected / encrypted and cannot be read without a password.'],
+  ['Μη υποστηριζόμενος τύπος αρχείου: {e}', 'Unsupported file type: {e}'],
+  ['Μη υποστηριζόμενος τύπος αρχείου \'{e}\'. Υποστηρίζονται: PDF, DOCX, EPUB, CBZ, CBR, ZIP.', 'Unsupported file type \'{e}\'. Supported: PDF, DOCX, EPUB, CBZ, CBR, ZIP.'],
+  ['Το παλιό format .doc δεν υποστηρίζεται. Αποθηκεύστε το αρχείο ως .docx με το Microsoft Word ή το LibreOffice.', 'Legacy .doc format is not supported. Please save/convert your file as .docx using Microsoft Word or LibreOffice.'],
+  ['Το αρχείο \'{f}\' είναι κενό (0 bytes) και δεν περιέχει δεδομένα.', 'The file \'{f}\' is empty (0 bytes) and holds no data.'],
+  ['Το αρχείο \'{f}\' δεν είναι έγκυρο αρχείο {t} (ενδέχεται να είναι κατεστραμμένο ή παλιό .doc που μετονομάστηκε). Ανοίξτε το και αποθηκεύστε το ξανά ως {e}.', 'The file \'{f}\' is not a valid {t} file (it may be damaged, or an old .doc renamed). Open it and save it again as {e}.'],
+  ['Το αρχείο \'{f}\' δεν είναι έγκυρο αρχείο PDF (κατεστραμμένη επικεφαλίδα).', 'The file \'{f}\' is not a valid PDF file (damaged header).'],
+  ['Το αρχείο \'{f}\' δεν είναι έγκυρο αρχείο CBR.', 'The file \'{f}\' is not a valid CBR file.'],
+  ['Το αρχείο \'{f}\' ({s} MB) υπερβαίνει το μέγιστο όριο των 250 MB.', 'The file \'{f}\' ({s} MB) is over the 250 MB limit.'],
+  ['Δεν ήταν δυνατή η αποθήκευση του αρχείου \'{f}\' στον server ({r}).', 'The file \'{f}\' could not be stored on the server ({r}).'],
+  ['Μια εργασία εκτελείται ήδη για αυτό το έγγραφο.', 'A task is already running for this job.'],
+  ['Η γλώσσα πρωτοτύπου και μετάφρασης πρέπει να διαφέρουν.', 'Source and target languages must be different.'],
+  ['Μη υποστηριζόμενη μορφή εξόδου \'{f}\'.', 'Unsupported output format \'{f}\'.'],
+  ['Μη υποστηριζόμενη μορφή λήψης \'{f}\'.', 'Unsupported download format \'{f}\'.'],
+  ['Οι μορφές TXT και DOCX είναι απενεργοποιημένες για Graphic Novels. Επιλέξτε PDF, CBZ, CBR ή EPUB.', 'TXT and DOCX formats are disabled for Graphic Novels. Please choose PDF, CBZ, CBR, or EPUB.'],
+  ['Η μορφή \'{f}\' υποστηρίζεται μόνο για Graphic Novels / Comics.', 'Format \'{f}\' is only supported for Graphic Novels / Comics.'],
+  ['Δεν βρέθηκε το αρχείο σε μορφή \'{f}\' για την εργασία \'{j}\'.', 'Output file in format \'{f}\' for job \'{j}\' not found.'],
+  ['Δεν βρέθηκε το αποτέλεσμα της εργασίας \'{j}\'.', 'Output file for job \'{j}\' not found.'],
+  ['Δεν βρέθηκε το αποτέλεσμα της εργασίας.', 'Job output not found.'],
+  ['Μια εργασία εκτελείται για αυτό το έγγραφο: το αποτέλεσμά της θα έσβηνε αυτές τις διορθώσεις.', 'A task is running for this job: its output would overwrite these edits.'],
+  ['Δεν βρέθηκε η εργασία \'{j}\' ή το αρχείο της.', 'Job \'{j}\' or its source file not found.'],
+  ['Δεν βρέθηκε εξώφυλλο για αυτό το βιβλίο.', 'No cover image found for this book.'],
+  ['Κενό αρχείο εικόνας.', 'Empty image file.'],
+  ['Η εικόνα εξωφύλλου ξεπερνά το όριο των 25 MB.', 'Cover image exceeds maximum size of 25 MB.'],
+  ['Μη έγκυρο ή κατεστραμμένο αρχείο εικόνας. Ανεβάστε μια έγκυρη εικόνα JPEG, PNG ή WEBP.', 'Invalid or corrupt image file. Please upload a valid JPEG, PNG, or WEBP image.'],
+  ['Το κλειδί Gemini API απαιτείται για το AI Audiobook Polish. Επιλέξτε \'Αυτόματη μετάβαση σε δωρεάν μοντέλο\' για εκφώνηση χωρίς κλειδί.', 'A Gemini API key is required for AI Audiobook Polish. Choose \'Switch to the free model automatically\' to narrate without a key.', 'Gemini API key is required for AI Audiobook Polish. Επιλέξτε \'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο\' για εκφώνηση χωρίς κλειδί.'],
+  ['Οι αλλαγές δεν μπόρεσαν να εφαρμοστούν στο έγγραφο χωρίς απώλεια μορφοποίησης, γι\' αυτό δεν άλλαξε κανένα αρχείο. Αν το έγγραφο είναι ανοιχτό σε άλλο πρόγραμμα, κλείστε το και δοκιμάστε ξανά. Αλλιώς κατεβάστε το και διορθώστε το απευθείας.', 'The changes could not be applied to the document without losing formatting, so no file was changed. If the document is open in another program, close it and try again. Otherwise download it and correct it directly.'],
+  ['Το AI Polish απέτυχε: {r}', 'AI Polishing failed: {r}'],
+  ['Η προεπισκόπηση απέτυχε: {r}', 'Preview extraction failed: {r}'],
+  ['Η δοκιμή φωνής απέτυχε: {r}', 'Voice preview failed: {r}'],
+  ['Δεν βρέθηκε έγγραφο ή κείμενο για επιμέλεια.', 'No document or text found to polish.'],
+  ['Δεν ήταν δυνατή η ανάγνωση κειμένου από το έγγραφο που ανεβάσατε.', 'Could not extract readable text from the uploaded document.'],
+  ['Μη έγκυρο αναγνωριστικό φωνής \'{v}\'.', 'Invalid voice identifier \'{v}\'.'],
+  ['Δεν υπάρχουν ολοκληρωμένα έγγραφα στην ουρά για λήψη.', 'No completed documents in the queue to download.'],
+  ['Πρέπει να ολοκληρωθούν όλες οι μεταφράσεις πριν τη λήψη ({d}/{t} ολοκληρώθηκαν).', 'All translations must be completed before downloading ({d}/{t} completed).'],
+  ['Δεν βρέθηκαν αρχεία για λήψη στις ολοκληρωμένες εργασίες της ουράς.', 'No downloadable output files found for completed queue jobs.'],
+  ['Η εργασία \'{j}\' δεν βρέθηκε στην ουρά.', 'Job \'{j}\' not found in queue.'],
+  ['Η εργασία \'{j}\' εκτελείται ήδη στην ουρά.', 'Job \'{j}\' is already running in the queue.'],
+  ['Η εργασία \'{j}\' εκτελείται ήδη.', 'Job \'{j}\' is already running.', 'Job \'{j}\' is currently running.'],
+  ['Το όριο της ουράς είναι {n} αρχεία ανά παρτίδα. Καθαρίστε ή αφαιρέστε κάποια ολοκληρωμένα αρχεία για να προσθέσετε νέα.', 'The queue holds at most {n} files per batch. Clear or remove some finished files to add new ones.'],
+  ['Οι διασυνοριακές αιτήσεις δεν επιτρέπονται.', 'Cross-site requests are not allowed.'],
+  ['Αυτή η συσκευή δεν είναι συνδεδεμένη με το BookApp. Ανοίξτε πρώτα έναν σύνδεσμο σύζευξης.', 'This device is not paired with BookApp. Open a pairing link first.'],
+  ['Η συσκευή δεν βρέθηκε.', 'Device not found.'],
+  ['Ο όρος του πρωτοτύπου δεν μπορεί να είναι κενός.', 'Source term cannot be empty.'],
+  ['Η μετάφραση του όρου δεν μπορεί να είναι κενή.', 'Target term cannot be empty.'],
+  ['Συμπληρώθηκε το μέγιστο των {n} κλειδιών Gemini API.', 'Maximum limit of {n} Gemini API keys reached.'],
+
+  // ── Sign-in and accounts (server) ──
+  ['Συνδεθείτε για να συνεχίσετε.', 'Sign in to continue.'],
+  ['Η εφαρμογή χρειάζεται αρχική ρύθμιση (/setup).', 'The app needs its first setup (/setup).'],
+  ['Αλλάξτε πρώτα τον προσωρινό κωδικό σας.', 'Change your temporary password first.'],
+  ['Μόνο οι διαχειριστές έχουν πρόσβαση σε αυτή τη λειτουργία.', 'Only administrators can use this.'],
+  ['Λάθος όνομα χρήστη ή κωδικός.', 'Wrong username or password.'],
+  ['Πολλές αποτυχημένες προσπάθειες. Δοκιμάστε ξανά σε {n} λεπτά.', 'Too many failed attempts. Try again in {n} minutes.'],
+  ['Ο λογαριασμός έχει απενεργοποιηθεί. Επικοινωνήστε με τον διαχειριστή.', 'The account is disabled. Contact the administrator.'],
+  ['Το όνομα χρήστη πρέπει να έχει 2–32 λατινικά γράμματα, αριθμούς ή . _ - (χωρίς κενά).', 'The username needs 2–32 Latin letters, digits or . _ - (no spaces).'],
+  ['Ο κωδικός πρέπει να έχει τουλάχιστον {n} χαρακτήρες (και όχι τον ίδιο χαρακτήρα ξανά και ξανά).', 'The password needs at least {n} characters (and not the same character again and again).'],
+  ['Ο κωδικός δεν μπορεί να είναι ίδιος με το όνομα χρήστη.', 'The password cannot be the same as the username.'],
+  ['Ο νέος κωδικός πρέπει να διαφέρει από τον τρέχοντα.', 'The new password must differ from the current one.'],
+  ['Ο τρέχων κωδικός δεν είναι σωστός.', 'The current password is not correct.'],
+  ['Υπάρχει ήδη χρήστης με αυτό το όνομα.', 'A user with this name already exists.'],
+  ['Ο χρήστης δεν βρέθηκε.', 'The user was not found.'],
+  ['Πρέπει να υπάρχει πάντα τουλάχιστον ένας ενεργός διαχειριστής.', 'There must always be at least one active administrator.'],
+  ['Δεν μπορείτε να απενεργοποιήσετε ή να διαγράψετε τον δικό σας λογαριασμό.', 'You cannot disable or delete your own account.'],
+  ['Άγνωστος ρόλος (επιτρέπονται: admin, user).', 'Unknown role (allowed: admin, user).'],
+  ['Η αρχική ρύθμιση έχει ήδη ολοκληρωθεί. Συνδεθείτε με τον λογαριασμό σας.', 'The first setup is already done. Sign in with your account.'],
+  ['Λάθος κωδικός ρύθμισης. Θα τον βρείτε στο αρχείο καταγραφής (log) του διακομιστή ή στο data/setup_code.txt.', 'Wrong setup code. You will find it in the server log or in data/setup_code.txt.'],
+  ['Σφάλμα λογαριασμού.', 'Account error.'],
 ];
 
 const I18N = (() => {
@@ -833,20 +1041,28 @@ const I18N = (() => {
         return;
       }
       const names = [];
-      let re = '^';
+      let strict = '^';
+      let loose = '^';
       let hint = '';
       let literal = 0;
       key.split(/\{(#?\w+)\}/).forEach((part, k) => {
         if (k % 2) {
           names.push(part.replace('#', ''));
-          re += part.startsWith('#') ? '([\\d.,]+)' : '(.*?)';  // {#n}: a number only
+          if (part.startsWith('#')) {  // {#n}: a number only
+            strict += '([\\d.,]+)';
+            loose += '([\\d.,]+)';
+          } else {
+            strict += '((?:(?![.!?…;] )[\\s\\S])*?)';  // within one sentence
+            loose += '([\\s\\S]*?)';
+          }
         } else {
-          re += escapeRe(part);
+          strict += escapeRe(part);
+          loose += escapeRe(part);
           literal += part.length;
           if (part.trim().length > hint.length) hint = part.trim();
         }
       });
-      patterns.push({ re: new RegExp(re + '$', 's'), names, pair: index, hint, literal });
+      patterns.push({ strict: new RegExp(strict + '$'), loose: new RegExp(loose + '$'), names, pair: index, hint, literal });
     });
   });
   patterns.sort((a, b) => b.literal - a.literal);  // the most specific wording wins
@@ -854,15 +1070,48 @@ const I18N = (() => {
   let lang = 'el';
   const memory = new WeakMap();  // node or attribute owner -> {key: last text we wrote, pair, vars}
 
-  // Which pair (and the changing parts) a text is, or null
-  function identify(text) {
-    const key = norm(text);
-    if (!key || !LETTER.test(key)) return null;
-    const index = exact.get(key);
-    if (index !== undefined) return { pair: index, vars: null };
+  // Sentences of a text ('A. B; C' -> [['A.', ''], ['B', ';'], ['C', '']]): the server joins its notes this way
+  function pieces(key) {
+    const out = [];
+    let start = 0;
+    for (let i = 0; i < key.length - 1; i++) {
+      const ch = key[i];
+      if (key[i + 1] !== ' ' || !'.!?…;'.includes(ch)) continue;
+      out.push(ch === ';' ? [key.slice(start, i), ';'] : [key.slice(start, i + 1), '']);
+      start = i + 2;
+    }
+    out.push([key.slice(start), '']);
+    return out.filter(([t]) => t.trim());
+  }
+
+  // A text made of known sentences, each switched on its own; null unless every part is known
+  function composite(key) {
+    const parts = pieces(key);
+    const n = parts.length;
+    if (n < 2 || n > 8) return null;
+    const memo = new Map();
+    const solve = (i) => {  // the parts from i on, as known phrases (longest first, backing off when stuck)
+      if (i === n) return [];
+      if (memo.has(i)) return memo.get(i);
+      let result = null;
+      for (let j = n; j > i && !result; j--) {
+        if (i === 0 && j === n) continue;  // the whole text was tried already
+        const span = parts.slice(i, j).map(([t, sep], k) => (k < j - i - 1 ? t + sep : t)).join(' ');
+        const hit = identify(span, false);
+        const rest = hit && solve(j);
+        if (rest) result = [{ found: hit, sep: parts[j - 1][1] }, ...rest];
+      }
+      memo.set(i, result);
+      return result;
+    };
+    const found = solve(0);
+    return found ? { parts: found } : null;
+  }
+
+  function matchPatterns(key, strict) {
     for (const p of patterns) {
       if (p.hint && !key.includes(p.hint)) continue;
-      const m = p.re.exec(key);
+      const m = (strict ? p.strict : p.loose).exec(key);
       if (!m) continue;
       const vars = {};
       p.names.forEach((name, k) => { vars[name] = m[k + 1]; });
@@ -871,7 +1120,21 @@ const I18N = (() => {
     return null;
   }
 
+  // Which pair (and the changing parts) a text is, or null. A changing part first stays within one sentence, so
+  // several joined notes are recognised one by one; only then may it span sentences (a long error reason).
+  function identify(text, allowParts = true) {
+    const key = norm(text);
+    if (!key || !LETTER.test(key)) return null;
+    const index = exact.get(key);
+    if (index !== undefined) return { pair: index, vars: null };
+    return matchPatterns(key, true) || (allowParts && composite(key)) || matchPatterns(key, false);
+  }
+
   function render(found, target) {
+    // ';' between joined notes is a question mark in Greek: there it becomes '·'
+    if (found.parts) {
+      return found.parts.map((p) => render(p.found, target) + (p.sep === ';' && target === 'el' ? '·' : p.sep)).join(' ');
+    }
     const wording = I18N_PAIRS[found.pair][target === 'en' ? 1 : 0];
     if (!found.vars) return wording;
     // a changing part may itself be a phrase ("Ready", "English"): it is switched too
