@@ -892,6 +892,63 @@ process.stdout.write('OK');
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print(f"   Interface language switch ({len(texts)} texts with both languages): OK")
 
+    def test_11_quick_download_updates_the_main_button(self):
+        """After a finished translation, a quick-download button (DOCX next to 'Download PDF') makes DOCX the chosen
+        format: the main button then says DOCX and downloads DOCX."""
+        print("-> 11. Testing the main download button after a quick download...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        self.assertNotIn("</span> File", Path("frontend/index.html").read_text(encoding="utf-8"),
+                         "the caption is 'Download PDF', which also reads right in Greek ('Λήψη PDF')")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', href: '', dataset: {},
+    style: { display: '' }, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const win = { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} };
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, Notification: undefined, Audio: class { play() { return Promise.resolve(); } },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: win,
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+ctx.playCompletionNotification = () => {};
+vm.runInContext("state.tr.jobId = 'J1'; state.tr.status = 'done';", ctx);
+getEl('tr-layout-mode').value = 'standard';
+getEl('tr-output-format').value = 'pdf';
+ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'standard' });
+const label = getEl('tr-format-label');
+assert.strictEqual(label.textContent, 'PDF');
+ctx.downloadOutput('tr', 'docx');
+assert.ok(win.location.href.includes('format=docx'), 'the quick button downloads DOCX');
+assert.strictEqual(label.textContent, 'DOCX', 'the main button now says DOCX');
+assert.ok(getEl('tr-download-btn').href.includes('format=docx'));
+assert.ok(getEl('tr-result-meta').textContent.includes('DOCX'));
+assert.ok(getEl('fmt-docx').classList.contains('active'), 'the settings show DOCX as chosen');
+win.location.href = '';
+ctx.downloadOutput('tr');
+assert.ok(win.location.href.includes('format=docx'), 'the main button downloads DOCX');
+// a graphic novel keeps its caption form
+getEl('tr-layout-mode').value = 'comic';
+ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'comic' });
+ctx.downloadOutput('tr', 'epub');
+assert.strictEqual(label.textContent, 'Graphic Novel (EPUB)');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Main download button follows a quick download: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,9 @@ from backend.ai_polisher import (
     get_gemini_quota_info,
 )
 from backend.queue_manager import add_to_queue, get_queue_state, clear_queue
+from backend.settings_manager import get_setting, save_setting, delete_setting
+
+_KEY_SETTINGS = ("gemini_api_keys", "gemini_api_key")
 
 API = "http://127.0.0.1:8000/api"
 
@@ -48,6 +51,17 @@ def api_post_json(path, data):
 
 class TestGeminiQuotaWarning(unittest.TestCase):
     def setUp(self):
+        # No Gemini key during these tests: with a usable key the server's 3-second monitor clears a tripped quota
+        # (GeminiKeyPool.check_cooldowns), so a check made just after it ran failed now and then. test_02 saves one.
+        # The server keeps a key it was given in its own environment, so it is removed through the server too.
+        self._orig_keys = {k: get_setting(k) for k in _KEY_SETTINGS}
+        for k in _KEY_SETTINGS:
+            delete_setting(k)
+        try:
+            req = urllib.request.Request(f"{API}/settings/gemini_api_key", method="DELETE")
+            urllib.request.urlopen(req, timeout=5).close()
+        except Exception:
+            pass
         reset_gemini_quota_exhaustion()
         try:
             api_post_json("/gemini/reset-quota", {})
@@ -64,6 +78,11 @@ class TestGeminiQuotaWarning(unittest.TestCase):
             pass
         clear_queue()
         cleanup_test_jobs()
+        for k, value in self._orig_keys.items():
+            if value:
+                save_setting(k, value)
+            else:
+                delete_setting(k)
 
     def test_01_gemini_quota_info_helper(self):
         reset_gemini_quota_exhaustion()

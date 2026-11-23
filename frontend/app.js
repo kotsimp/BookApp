@@ -835,23 +835,35 @@ function selectFormat(fmt, btn, byUser = false) {
   btn.classList.add('active');
   if (byUser) _formatChosenByUser = true;
   document.getElementById('tr-output-format').value = fmt;
-  // Update download button label immediately
+  syncResultDownload(fmt);
+}
+
+// The result card's main download button names, describes and fetches the format currently chosen
+function syncResultDownload(fmt, layout = document.getElementById('tr-layout-mode')?.value || 'standard') {
   const label = fmt.toUpperCase();
   const labelEl = document.getElementById('tr-format-label');
-  if (labelEl) labelEl.textContent = label;
-
-  // Also update result card text if already completed
+  if (labelEl) labelEl.textContent = layout === 'comic' ? `Graphic Novel (${label})` : label;
   const metaEl = document.getElementById('tr-result-meta');
-  if (metaEl) {
+  if (metaEl && layout !== 'comic') {
     metaEl.textContent = `Your document has been translated. Click below to download the ${label} file.`;
   }
-
-  // Update download button href directly
-  const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
   const dlBtn = document.getElementById('tr-download-btn');
   if (dlBtn && state.tr.jobId) {
     dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
   }
+}
+
+// A quick-download button (PDF / DOCX / EPUB / TXT next to the main one) makes its format the chosen one
+function chooseResultFormat(fmt) {
+  const input = document.getElementById('tr-output-format');
+  if (!input || input.value === fmt) return;
+  input.value = fmt;
+  const btn = document.getElementById(`fmt-${fmt}`);
+  if (btn && !btn.disabled && !btn.classList.contains('format-btn-disabled')) {
+    document.querySelectorAll('#tr-format-selector .format-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+  syncResultDownload(fmt);
 }
 
 function selectLayout(layout, btn) {
@@ -1953,14 +1965,9 @@ function showResult(prefix, data) {
     } else {
       meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
     }
-    // Keep format label in download button in sync
-    const labelEl = document.getElementById('tr-format-label');
-    if (labelEl) {
-      labelEl.textContent = layout === 'comic' ? `Graphic Novel (${fmt.toUpperCase()})` : label;
-    }
+    syncResultDownload(fmt, layout);  // the main download button's format label and link
     const dlBtn = document.getElementById('tr-download-btn');
     if (dlBtn && state.tr.jobId) {
-      dlBtn.href = `${API}/download/${state.tr.jobId}?format=${fmt}&layout=${layout}`;
       dlBtn.setAttribute('aria-disabled', 'false');
       dlBtn.setAttribute('tabindex', '0');
       dlBtn.style.opacity = '';
@@ -2181,6 +2188,7 @@ async function downloadOutput(prefix, overrideFmt = null) {
     return;
   }
   if (prefix === 'tr') {
+    if (overrideFmt) chooseResultFormat(overrideFmt);  // the main button then names and fetches this format too
     const fmt = overrideFmt || document.getElementById('tr-output-format')?.value || 'txt';
     const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
     const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;

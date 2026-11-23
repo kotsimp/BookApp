@@ -241,7 +241,8 @@ All translated text passes automatically through the built-in publishing typogra
    - The live progress bar reflects exact completion metrics (e.g. `Completed 12 of 103 AI batches (45 / 340 pages)`).
 
 8. **Downloading Result & Copying Text:**
-   - Click **⬇️ Download [FORMAT] File** to save your translated book.
+   - Click **⬇️ Download [FORMAT]** to save your translated book.
+   - The **📄 PDF · 📝 DOCX · 📱 EPUB · 📃 TXT** buttons next to it download another format, and that format becomes the chosen one: the main button then says, for example, **⬇️ Download DOCX** and downloads DOCX.
    - **📋 1-Click Copy Text:** Copies all translated text directly to your clipboard with visual confirmation (`✅ Copied!`).
    - **🔔 Completion Chime & Notification:** Plays a gentle synthesizer chime and delivers an OS desktop notification when long tasks finish in the background.
 
