@@ -541,6 +541,58 @@ process.stdout.write('OK');
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Voice preview stop button: OK")
 
+    def test_6_mixed_queue_lock_reason_is_visible(self):
+        """A mixed (books + comics) queue keeps Auto-Start locked and says why under the switch, not only on hover."""
+        print("-> 6. Testing the visible reason for the locked Auto-Start...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="queue-auto-start-note"', html)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', dataset: {},
+    style: { display: '' }, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const label = makeEl('label');
+getEl('queue-auto-start-toggle').closest = () => label;
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+const item = (name, comic) => ({ job_id: name, file_name: name, file_type: comic ? 'cbz' : 'pdf', status: 'queued',
+  is_comic: comic, layout_mode: comic ? 'comic' : 'standard', output_format: 'pdf', progress: 0, current_step: '' });
+const base = { is_running: false, paused: false, paused_for_quota: false, done_count: 0, max_items: 20 };
+const note = getEl('queue-auto-start-note');
+const toggle = getEl('queue-auto-start-toggle');
+note.style.display = 'none';
+ctx.renderBatchQueue(Object.assign({}, base, { items: [item('Blindsight.pdf', false), item('Nebraska.cbz', true)],
+  is_mixed: true, auto_start: false, queued_count: 2, total_count: 2 }));
+assert.strictEqual(note.style.display, '', 'reason shown for a mixed queue');
+assert.strictEqual(toggle.disabled, true, 'Auto-Start stays locked');
+assert.strictEqual(toggle.checked, false);
+ctx.renderBatchQueue(Object.assign({}, base, { items: [item('Blindsight.pdf', false), item('Echopraxia.pdf', false)],
+  is_mixed: false, auto_start: true, queued_count: 2, total_count: 2 }));
+assert.strictEqual(note.style.display, 'none', 'no note for a books-only queue');
+assert.strictEqual(toggle.disabled, false);
+assert.strictEqual(toggle.checked, true);
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Locked Auto-Start reason visible: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

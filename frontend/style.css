@@ -1935,3 +1935,15 @@ body.auth-on:not(.auth-admin) .auth-admin-only { display: none !important; }
   .auth-create-row { grid-template-columns: 1fr; }
   .auth-bar { justify-content: center; margin-bottom: 0.4rem; }
 }
+
+/* Batch queue: why Auto-Start is locked (mixed books + comics), shown on its own line under the switch */
+.queue-auto-start-note {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}

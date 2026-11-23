@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.10.0" />
+  <link rel="stylesheet" href="style.css?v=2.10.1" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -191,6 +191,9 @@
             <input type="checkbox" id="queue-auto-start-toggle" onchange="toggleQueueAutoStart()" style="width:15px; height:15px; accent-color:var(--emerald)" />
             <span>⚡ Auto-Start</span>
           </label>
+          <div id="queue-auto-start-note" class="queue-auto-start-note" style="display:none">
+            🔒 <strong>Το Auto-Start είναι κλειδωμένο</strong>, επειδή η ουρά έχει μαζί βιβλία και comics: ελέγξτε τις ρυθμίσεις από κάτω και πατήστε <strong>▶️ Start Batch Translation</strong>.
+          </div>
         </div>
 
         <div id="tr-queue-list" class="queue-list"></div>
@@ -1410,7 +1413,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.12.2"></script>
+<script src="app.js?v=2.12.3"></script>
 <script src="insights.js?v=2.9.1"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.0"></script>

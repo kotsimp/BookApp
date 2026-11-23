@@ -4368,6 +4368,9 @@ function renderBatchQueue(q) {
         ? 'Απενεργοποιημένο σε μικτή ουρά (Βιβλία + Graphic Novels) ώστε να ελέγχετε τις ρυθμίσεις πριν την εκκίνηση.'
         : 'Αυτόματη έναρξη μετάφρασης μόλις προστεθούν αρχεία';
     }
+    // The reason is written under the switch, not only in the hover tooltip (touch screens have no hover)
+    const autoNote = document.getElementById('queue-auto-start-note');
+    if (autoNote) autoNote.style.display = isMixed ? '' : 'none';
   }
 
   const quotaBanner = document.getElementById('queue-quota-warning-banner');

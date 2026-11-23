@@ -175,6 +175,7 @@ All translated text passes automatically through the built-in publishing typogra
    - Drag and drop **1 or multiple files (up to 20 files, max 250 MB per file)** onto the **"Drop your document(s) here"** upload card, or click to browse files.
    - For **1 file**: Displays the filename, size, estimated pages (e.g. `~340 pages · PDF · Ready`) and an **➕ Add More** button next to `✕` to seamlessly add more files.
    - For **2+ files**: The **Smart Batch Queue** view opens immediately inside the upload card (allowing you to add more files, enable **⚡ Auto-Start**, or remove individual items).
+   - **⚡ Auto-Start starts the queue as soon as files are added.** It is locked when the queue mixes books with comics or graphic novels, so you check the settings and press **▶️ Start Batch Translation** yourself. A note under the switch says so. Each file still keeps the settings of its kind: comics always get the Comic layout, and a scanned comic always gets AI Polish.
    - *(Validation check: empty 0-byte files or corrupted archives are rejected immediately with clear error alerts).*
 2. **Translation Direction:**
    - Default: **🇬🇧 English ➔ 🇬🇷 Greek**.
