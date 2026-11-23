@@ -22,6 +22,7 @@ try:
 except ImportError:
     from tests import _sandbox_guard  # noqa: F401
 
+import json
 import sys
 sys.path.insert(0, ".")
 import re
@@ -768,6 +769,35 @@ const ok = (name) => ({ job_id: name, file_name: name, file_type: 'pdf', estimat
         res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Upload progress and batch summary: OK")
+
+    def test_9_app_icon_for_every_browser_and_home_screen(self):
+        """Safari and iOS do not use an SVG tab icon: the pages link PNG/ICO icons and a 180 px apple-touch-icon
+        (an iPhone home-screen shortcut otherwise shows the first letter), all reachable before signing in."""
+        print("-> 9. Testing the app icon files and links...")
+        from PIL import Image
+        from backend import auth
+        front = Path("frontend")
+        for page in ("index.html", "login.html"):
+            html = (front / page).read_text(encoding="utf-8")
+            for tag in ('rel="icon" href="/favicon.ico"' if page == "login.html" else 'rel="icon" href="favicon.ico"',
+                        'type="image/svg+xml"', 'rel="apple-touch-icon"', 'rel="manifest"',
+                        'name="apple-mobile-web-app-title" content="BookApp"'):
+                self.assertIn(tag, html, f"{page}: {tag}")
+            self.assertNotIn("<text y='.9em'", html, f"{page}: the emoji-only SVG icon is gone")
+        apple = Image.open(front / "apple-touch-icon.png")
+        self.assertEqual((apple.size, apple.mode), ((180, 180), "RGB"), "square and opaque, iOS rounds it itself")
+        self.assertEqual(Image.open(front / "favicon.ico").info["sizes"], {(16, 16), (32, 32), (48, 48)})
+        manifest = json.loads((front / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["short_name"], "BookApp")
+        for icon in manifest["icons"]:
+            self.assertTrue((front / icon["src"]).is_file(), icon["src"])
+            if icon["type"] == "image/png":
+                w, h = Image.open(front / icon["src"]).size
+                self.assertEqual(f"{w}x{h}", icon["sizes"])
+        for path in ("/favicon.ico", "/icon.svg", "/icon-32.png", "/apple-touch-icon.png", "/manifest.json"):
+            self.assertTrue(auth.is_open_path(path), path)
+        self.assertFalse(auth.is_open_path("/app.js"), "only the icons are open, not the app")
+        print("   App icon files and links: OK")
 
 
 if __name__ == "__main__":

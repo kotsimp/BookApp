@@ -549,6 +549,9 @@ Only on the computer that runs BookApp. The page shows them masked (for example 
 #### ❓ Can I use BookApp from my phone or another computer safely?
 Yes. On a server shared by several people, your administrator switches on **user accounts**: you sign in with your username and password (see [Signing In & Your Account](#-signing-in--your-account)). For a single person at home, your administrator can instead turn on **device pairing**. Then, in 🔑 Gemini API Key → 📱 Συσκευές, create a link and open it once on the new device; after that it just works, with no password. Devices you haven't paired are refused, and you can revoke a device at any time.
 
+#### ❓ How do I put BookApp on my iPhone or iPad home screen?
+Open BookApp in Safari, tap **Share** (the square with the arrow) and then **Add to Home Screen**. The shortcut shows BookApp's icon (a stack of books) and the name **BookApp**, and opens the app in Safari. The same icon shows in the tabs of Chrome, Firefox, Safari and Edge, and on Android's home screen. A shortcut or bookmark made before the icon existed keeps its old letter: delete it and add it again. A browser may also need a reload (or a restart) to update the tab icon.
+
 #### ❓ Do I need to pay for an API key?
 * **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and scanned comics.
 
