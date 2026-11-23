@@ -38,6 +38,10 @@
   --shadow-lg:      0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px var(--border);
   --shadow-glow:    0 0 40px var(--violet-glow);
   --transition:     all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  --bg-table-head:  rgba(30, 32, 48, 0.9);
+  --text-table-head: var(--text-secondary);
+  --bg-toolbar:     rgba(30, 32, 48, 0.8);
 }
 
 /* ---- Light Theme Overrides ---- */
@@ -56,6 +60,9 @@
   --border-focus:   rgba(124, 58, 237, 0.8);
   --shadow-card:    0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px var(--border);
   --shadow-lg:      0 12px 32px rgba(0,0,0,0.1), 0 0 0 1px var(--border);
+  --bg-table-head:  #ede9fe;
+  --text-table-head: #5b21b6;
+  --bg-toolbar:     #f5f3ff;
 }
 
 [data-theme="light"] body::before,
@@ -1026,7 +1033,7 @@ select option:disabled {
   gap: 8px;
   align-items: center;
   padding: 10px 14px;
-  background: rgba(30, 32, 48, 0.8);
+  background: var(--bg-toolbar);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   margin-bottom: 12px;
@@ -1192,11 +1199,11 @@ select option:disabled {
   font-size: 0.85rem;
 }
 .glossary-table th {
-  background: rgba(30, 32, 48, 0.9);
+  background: var(--bg-table-head);
   padding: 10px 14px;
   text-align: left;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-table-head);
   border-bottom: 1px solid var(--border);
 }
 .glossary-table td {
