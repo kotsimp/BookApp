@@ -212,6 +212,7 @@ All translated text passes automatically through the built-in publishing typogra
    - Choose how the system behaves if the Google Gemini API daily limit is exceeded:
      * **⏳ Wait for Reset & Auto-Resume (Default with API Key):** Pauses safely at disk checkpoint (`.direct_ai_checkpoint.json` or `.comic_vision_checkpoint.json`). Displays a live countdown timer and **automatically resumes translation, audiobook generation, and queued batch items the moment the cooldown timer reaches zero or when a new key is added**, without requiring manual user intervention. **Preserves 100% Gemini literary quality and artwork**. Never downgrades or falls back to plain Google Translate unless explicitly requested.
      * **🔄 Auto-Fallback to Free Model (Explicit Opt-In Only):** Routes remaining batches to the free translation engine and Edge-TTS without stopping (only used if explicitly selected by the user).
+   - **Wait for Reset is selected every time the page opens** (whenever an API key exists), in both the Translate and the Audiobook tab. Choosing Auto-Fallback applies only until the page is reloaded, so a one-time choice never becomes the new default. Opening a job from Session History shows the choice that job was run with.
    - **🆓 Free Mode Default:** When no Gemini API key is configured anywhere in the pool, BookApp automatically operates in **Free Mode** (indicated by the `🆓 Free Mode` pill in the navbar). Translation, typography rules, and neural audiobooks run 100% free with zero keys or subscriptions.
 
 7. **Starting Translation:**
@@ -358,7 +359,8 @@ Convert any document into high-fidelity MP3 and M4B audiobooks with embedded cha
 * **English Neural Voices (🇬🇧 / 🇺🇸):**
   * 👩 Aria, Jenny, Emma
   * 👨 Guy, Brian, Ryan
-* 🔊 **Live Voice Audition:** Click **«🔊 Preview»** next to any voice card to hear a 2–3 second sample before generating your audiobook.
+* 🔊 **Live Voice Audition:** Click **«🔊 Preview»** next to any voice card to hear a 2–3 second sample before generating your audiobook. **🔊 Δοκιμή Φωνής** reads your own phrase (or the start of the book) with the selected voice.
+* ⏹️ **Stopping a sample:** while a sample plays, a **⏹️ Διακοπή** button appears next to *Δοκιμή Φωνής*. It stops the sound at once, without waiting for the passage to finish, and disappears when the sample ends.
 
 ### 🎭 Multi-Voice Dramatization
 Create a theatrical audio experience:

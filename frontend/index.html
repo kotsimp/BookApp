@@ -386,7 +386,7 @@
       <div class="form-group mode-advanced-only" style="margin-top:12px; padding:12px 14px; background:rgba(255,255,255,0.02); border:1.5px solid var(--border); border-radius:10px">
         <label class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
           <span>⚡ Σε εξάντληση ορίου Gemini (On Quota Limit)</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">Προεπιλογή: Δωρεάν Μοντέλο αν δεν υπάρχει API Key</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Προεπιλογή: Αναμονή για επαναφορά (χωρίς API Key: Δωρεάν Μοντέλο)</span>
         </label>
         <div style="display:flex; gap:16px; flex-wrap:wrap">
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
@@ -655,6 +655,9 @@
           <button type="button" class="btn btn-secondary btn-sm" onclick="playActiveVoiceCustomPreview()" title="Ακρόαση της επιλεγμένης φωνής με αυτό το κείμενο" style="white-space:nowrap; padding:6px 12px; font-size:0.82rem">
             🔊 Δοκιμή Φωνής
           </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="ab-preview-stop-btn" onclick="stopVoicePreview()" title="Διακοπή της ακρόασης" aria-label="Διακοπή της ακρόασης" style="display:none; white-space:nowrap; padding:6px 12px; font-size:0.82rem">
+            ⏹️ Διακοπή
+          </button>
         </div>
       </div>
 
@@ -734,7 +737,7 @@
       <div class="form-group mode-advanced-only" style="margin-top:12px; padding:12px 14px; background:rgba(255,255,255,0.02); border:1.5px solid var(--border); border-radius:10px">
         <label class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
           <span>⚡ Σε εξάντληση ορίου Gemini Script Polish (On Quota Limit)</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">Προεπιλογή: Δωρεάν Μοντέλο αν δεν υπάρχει API Key</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Προεπιλογή: Αναμονή για επαναφορά (χωρίς API Key: Δωρεάν Μοντέλο)</span>
         </label>
         <div style="display:flex; gap:16px; flex-wrap:wrap">
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.86rem">
@@ -1407,7 +1410,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.12.0"></script>
+<script src="app.js?v=2.12.2"></script>
 <script src="insights.js?v=2.9.1"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.0"></script>

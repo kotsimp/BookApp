@@ -1011,12 +1011,29 @@ function updateVoices() {
 }
 
 let currentAudioPreview = null;
+
+function _setVoicePreviewStopVisible(visible) {
+  const btn = document.getElementById('ab-preview-stop-btn');
+  if (btn) btn.style.display = visible ? '' : 'none';
+}
+
+// ⏹️ Διακοπή: stops a voice sample at once (also one still being generated) instead of waiting for its end
+function stopVoicePreview() {
+  const audio = currentAudioPreview;
+  currentAudioPreview = null;
+  if (audio) {
+    try {
+      audio.pause();
+      audio.removeAttribute('src');   // aborts the download of a sample that is still being generated
+      audio.load();
+    } catch (_) {}
+  }
+  _setVoicePreviewStopVisible(false);
+}
+
 function playVoicePreview(voiceCode, event, customText = null) {
   if (event) event.stopPropagation();
-  if (currentAudioPreview) {
-    currentAudioPreview.pause();
-    currentAudioPreview = null;
-  }
+  stopVoicePreview();
   const customInput = document.getElementById('ab-custom-preview-text')?.value?.trim();
   const sample = (customText || customInput || '').slice(0, 150);
   let url = `${API}/tts/preview?voice=${encodeURIComponent(voiceCode)}`;
@@ -1024,10 +1041,16 @@ function playVoicePreview(voiceCode, event, customText = null) {
     url += `&text=${encodeURIComponent(sample)}`;
   }
   if (typeof Audio !== 'undefined') {
-    currentAudioPreview = new Audio(url);
+    const audio = new Audio(url);
+    currentAudioPreview = audio;
+    const finished = () => { if (currentAudioPreview === audio) stopVoicePreview(); };
+    audio.addEventListener('ended', finished);
+    audio.addEventListener('error', finished);
+    _setVoicePreviewStopVisible(true);
     toast(`🔊 Παραγωγή δείγματος για ${voiceCode}...`, 'info');
-    currentAudioPreview.play().catch(e => {
+    audio.play().catch(e => {
       console.debug('Preview audio playback failed:', e);
+      finished();
     });
   }
 }
@@ -1188,18 +1211,18 @@ function onQuotaBehaviorChange(prefix) {
       }
     }
   }
-  try {
-    localStorage.setItem(`${prefix}_quota_behavior`, val);
-  } catch (_) {}
 }
 
 function initQuotaBehaviorSelectors() {
-  const hasKey = hasGeminiKey();
-  const defaultBehavior = hasKey ? 'wait' : 'fallback';
+  // Default: Wait for Reset (full Gemini quality) whenever a Gemini key exists; without a key only the free engine
+  // can run. A choice applies to the current page only: older versions remembered it, and a one-time Auto-Fallback
+  // (or a job loaded from history) then silently became the default.
+  const targetVal = hasGeminiKey() ? 'wait' : 'fallback';
   ['tr', 'ab'].forEach((prefix) => {
     try {
-      const saved = localStorage.getItem(`${prefix}_quota_behavior`);
-      const targetVal = saved || defaultBehavior;
+      localStorage.removeItem(`${prefix}_quota_behavior`);
+    } catch (_) {}
+    try {
       const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="${targetVal}"]`);
       if (radio) {
         radio.checked = true;
@@ -3388,7 +3411,9 @@ async function saveGeminiKeyOnly() {
       if (data.pool) renderGeminiPoolStatus(data.pool);
     }
     // Show the saved keys in masked form only
+    const hadKey = hasGeminiKey();
     await refreshGeminiKeyState();
+    if (!hadKey && hasGeminiKey()) initQuotaBehaviorSelectors();  // first key: back to the Wait for Reset default
     slotIds.forEach((id, idx) => {
       const input = document.getElementById(id);
       if (input) input.value = geminiKeyState.masked[idx] || '';
@@ -3479,9 +3504,8 @@ async function clearGeminiKey() {
   } catch (_) {}
   stopGeminiQuotaCountdown(false);
   renderGeminiPoolStatus({ total_keys: 0, available_keys: 0, slots: [] });
-  // Default selectors to free models (fallback) when key is removed
+  // Without a key only the free models can run (Wait for Reset returns as the default when a key is added)
   ['tr', 'ab'].forEach((prefix) => {
-    localStorage.setItem(`${prefix}_quota_behavior`, 'fallback');
     const radio = document.querySelector(`input[name="${prefix}-quota-behavior"][value="fallback"]`);
     if (radio) {
       radio.checked = true;

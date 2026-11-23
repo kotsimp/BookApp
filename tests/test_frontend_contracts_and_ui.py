@@ -487,6 +487,60 @@ ctx.toast = (msg, type) => toasts.push({ msg, type });
         self.assertIn("NODE_UI_HARNESS_OK", res.stdout)
         print("   Node.js runtime DOM & state tests (16 assertions): OK")
 
+    def test_5_voice_preview_can_be_stopped(self):
+        """The voice test has a stop button: visible while a sample plays, stops it at once, hides when it ends."""
+        print("-> 5. Testing the voice preview stop button...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="ab-preview-stop-btn"', html)
+        self.assertIn('onclick="stopVoicePreview()"', html)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+const getEl = (id) => { if (!els.has(id)) els.set(id, { id, value: '', style: { display: '' } }); return els.get(id); };
+const created = [];
+class FakeAudio {
+  constructor(src) { this.src = src; this.paused = true; this.listeners = {}; this.loads = 0; created.push(this); }
+  addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
+  play() { this.paused = false; return Promise.resolve(); }
+  pause() { this.paused = true; }
+  removeAttribute(name) { if (name === 'src') this.src = ''; }
+  load() { this.loads += 1; }
+  fire(ev) { (this.listeners[ev] || []).forEach((fn) => fn()); }
+}
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  Audio: FakeAudio, EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: getEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: getEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+const btn = getEl('ab-preview-stop-btn');
+btn.style.display = 'none';
+ctx.playVoicePreview('el-GR-NestorasNeural', null, 'Καλημέρα σας.');
+const first = created[created.length - 1];
+assert.strictEqual(first.paused, false);
+assert.strictEqual(btn.style.display, '', 'stop button shown while playing');
+ctx.stopVoicePreview();
+assert.strictEqual(first.paused, true, 'sound stops at once');
+assert.strictEqual(first.src, '', 'download of the sample aborted');
+assert.strictEqual(btn.style.display, 'none', 'stop button hidden again');
+ctx.playVoicePreview('el-GR-AthinaNeural', null, 'Δεύτερο δείγμα.');
+const second = created[created.length - 1];
+first.fire('ended');                              // a stale event of the stopped sample changes nothing
+assert.strictEqual(btn.style.display, '');
+second.fire('ended');                             // the sample played to its end
+assert.strictEqual(btn.style.display, 'none');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Voice preview stop button: OK")
+
 
 if __name__ == "__main__":
     unittest.main()
