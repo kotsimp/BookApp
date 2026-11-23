@@ -54,6 +54,7 @@ OPEN_PATHS = frozenset({
     "/login", "/setup", "/login.html", "/favicon.ico",
     # the app's icons and manifest: the sign-in page's tab and a phone's home-screen shortcut show them
     "/icon.svg", "/icon-32.png", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/manifest.json",
+    "/i18n.js",  # the sign-in page's Greek / English switch
 })
 # A user who must change a temporary password can reach only these until it is changed
 PASSWORD_CHANGE_PATHS = frozenset({"/api/auth/status", "/api/auth/me", "/api/auth/change-password", "/api/auth/logout"})

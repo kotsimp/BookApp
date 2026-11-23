@@ -70,6 +70,29 @@
   opacity: 0.25;
 }
 
+/* Interface language switch: ΕΛ | EN, the chosen one highlighted */
+.lang-switch {
+  display: inline-flex;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 2px;
+  backdrop-filter: blur(8px);
+}
+.lang-switch button {
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  padding: 4px 11px;
+  border-radius: var(--radius-xl);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.lang-switch button:hover { color: var(--text-primary); }
+.lang-switch button.active { background: var(--violet); color: #fff; }
+
 .theme-toggle-btn {
   display: inline-flex;
   align-items: center;

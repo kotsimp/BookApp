@@ -2381,7 +2381,7 @@ function renderHistory(jobs) {
     <div class="history-item" data-job-id="${escHtml(j.job_id)}" data-mode="${escHtml(j.mode || '')}" data-file-name="${escHtml(j.file_name || '')}" onclick="openHistoryJob(this.dataset.jobId, this.dataset.mode, this.dataset.fileName)">
       <span class="history-icon">${modeIcon[j.mode] || '📄'}</span>
       <div class="history-info">
-        <div class="history-name">${escHtml(j.file_name)}</div>
+        <div class="history-name" translate="no">${escHtml(j.file_name)}</div>
         <div class="history-meta">
           ${j.mode ? escHtml(j.mode.charAt(0).toUpperCase() + j.mode.slice(1)) : 'Uploaded'} ·
           ${statusIcon[j.status] || ''} ${escHtml(j.status)}
@@ -4634,7 +4634,7 @@ function renderBatchQueue(q) {
           <div class="queue-item-info">
             <span style="font-size:1.2rem">${it.is_comic ? '🎨' : '📄'}</span>
             <div style="min-width:0; flex:1">
-              <div class="queue-item-name" title="${escHtml(it.file_name)}">${escHtml(it.file_name)}</div>
+              <div class="queue-item-name" translate="no" title="${escHtml(it.file_name)}">${escHtml(it.file_name)}</div>
               <div class="queue-item-meta">
                 <span>${modeTag}${aiTag}</span>
                 <span>→ ${fmtLabel}</span>

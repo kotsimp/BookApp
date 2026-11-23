@@ -799,6 +799,86 @@ const ok = (name) => ({ job_id: name, file_name: name, file_type: 'pdf', estimat
         self.assertFalse(auth.is_open_path("/app.js"), "only the icons are open, not the app")
         print("   App icon files and links: OK")
 
+    def test_10_interface_language_switch(self):
+        """Every interface text of the pages exists in Greek and English (i18n.js), both pages carry the ΕΛ | EN switch,
+        texts with numbers switch with their numbers, and book text / file names are never translated."""
+        print("-> 10. Testing the Greek / English interface switch...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        from html.parser import HTMLParser
+        from backend import auth
+
+        class Texts(HTMLParser):
+            VOID = {"br", "img", "input", "meta", "link", "hr", "source"}
+
+            def __init__(self):
+                super().__init__()
+                self.stack, self.texts = [], []
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                skip = tag in ("script", "style", "code") or a.get("translate") == "no"
+                if tag not in self.VOID:
+                    self.stack.append(skip or bool(self.stack and self.stack[-1]))
+                if not (self.stack and self.stack[-1]) and not skip:
+                    self.texts += [a[k] for k in ("title", "placeholder", "aria-label", "alt") if a.get(k)]
+
+            def handle_endtag(self, tag):
+                if tag not in self.VOID and self.stack:
+                    self.stack.pop()
+
+            def handle_data(self, data):
+                if not (self.stack and self.stack[-1]):
+                    self.texts.append(" ".join(data.split()))
+
+        front = Path("frontend")
+        texts = []
+        for page in ("index.html", "login.html"):
+            html = (front / page).read_text(encoding="utf-8")
+            self.assertIn('data-ui-lang="el"', html, page)
+            self.assertIn('data-ui-lang="en"', html, page)
+            head = html.split("</head>")[0]
+            self.assertIn("i18n.js", head, f"{page}: i18n.js loads in <head>, before the page text")
+            parser = Texts()
+            parser.feed(html)
+            # Greek words or English phrases: names, formats and code examples are the same in both languages
+            texts += [t for t in parser.texts if re.search(r"[Ͱ-Ͽ]{2,}|[A-Za-z]{3,} [A-Za-z]{3,}", t)]
+        index = (front / "index.html").read_text(encoding="utf-8")
+        for ident in ("tr-file-name", "reader-single-content", "glossary-tbody", "ins-result-body"):
+            self.assertIn(f'id="{ident}" translate="no"', index, f"{ident} holds book content: never translated")
+        self.assertTrue(auth.is_open_path("/i18n.js"), "the sign-in page loads it before signing in")
+
+        same = {"DocTranslate & AudioBook", "Smart Batch Queue:", "Graphic Novel / Comic", "AI Polish (Gemini)",
+                "✨ AI Polish (Gemini)", "1-Click Insights", "⚡ Edge-TTS Neural", "George Kotsimpos", "Book Insights",
+                "CBZ / CBR COMIC", "✨ Gemini Flash",
+                "sudo journalctl -u bookapp | grep \"setup code\"", "docker logs bookapp"}
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const ctx = vm.createContext({ console, MutationObserver: class { observe() {} }, CustomEvent: class {},
+  localStorage: { getItem: () => null, setItem() {} }, navigator: { language: 'el-GR' },
+  document: { documentElement: {}, addEventListener() {}, querySelectorAll: () => [], dispatchEvent() {} },
+  window: { alert() {}, confirm() { return true; }, prompt() {} }, NodeFilter: {} });
+vm.runInContext(fs.readFileSync('frontend/i18n.js', 'utf8') + ';globalThis.I18N = I18N;', ctx);
+const { I18N } = ctx;
+const [texts, same] = JSON.parse(fs.readFileSync(0, 'utf8'));
+const missing = texts.filter((t) => !same.includes(t) && !I18N._identify(t));
+assert.deepStrictEqual(missing, [], 'interface texts without a Greek / English pair in i18n.js');
+const t = (s, l) => I18N.text(s, l);
+assert.strictEqual(t('🌐 Start Translation', 'el'), '🌐 Έναρξη μετάφρασης');
+assert.strictEqual(t('🌐 Έναρξη μετάφρασης', 'en'), '🌐 Start Translation');
+assert.strictEqual(t('Advanced Mode (Πλήρης Έλεγχος)', 'en'), 'Advanced Mode (Full Control)', 'mixed wording becomes one language');
+assert.strictEqual(t('▶️ Start Batch Translation (12 files)', 'el'), '▶️ Έναρξη μαζικής μετάφρασης (12 αρχεία)');
+assert.strictEqual(t('4.0 MB · ~340 pages · PDF · Ready', 'el'), '4.0 MB · ~340 σελίδες · PDF · Έτοιμο');
+assert.strictEqual(t('15 λεπτά – 1 ώρα 5 λεπτά', 'en'), '15 minutes – 1 hour 5 minutes');
+assert.strictEqual(t('Ready in 5 minutes', 'el'), 'Ready in 5 minutes', 'unknown text is left alone');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], input=json.dumps([texts, sorted(same)]), capture_output=True,
+                             text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print(f"   Interface language switch ({len(texts)} texts with both languages): OK")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.10.2" />
+  <link rel="stylesheet" href="style.css?v=2.10.3" />
+  <script src="i18n.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -35,6 +36,10 @@
   <!-- ── Hero ── -->
   <header class="hero animate-in" style="position:relative">
     <div style="position:absolute; top:1.2rem; right:1.5rem; display:flex; gap:0.5rem; align-items:center;">
+      <div class="lang-switch" role="group" aria-label="Γλώσσα / Language" translate="no">
+        <button type="button" data-ui-lang="el" onclick="setUiLanguage('el')" title="Ελληνικά">ΕΛ</button>
+        <button type="button" data-ui-lang="en" onclick="setUiLanguage('en')" title="English">EN</button>
+      </div>
       <button id="refresh-page-btn" class="theme-toggle-btn" onclick="refreshPageApp()" title="Ανανέωση Σελίδας & Δεδομένων (Refresh)" aria-label="Refresh Page">
         <span id="refresh-icon">🔄</span> <span id="refresh-label">Refresh</span>
       </button>
@@ -167,7 +172,7 @@
       <div class="selected-file" id="tr-selected-file">
         <span class="file-icon-large" id="tr-file-icon">📄</span>
         <div class="file-info">
-          <div class="file-info-name" id="tr-file-name">filename.pdf</div>
+          <div class="file-info-name" id="tr-file-name" translate="no">filename.pdf</div>
           <div class="file-info-meta" id="tr-file-meta">Loading...</div>
           <div class="upload-bar" id="tr-upload-bar" style="display:none" role="progressbar" aria-label="Ανέβασμα αρχείου" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="tr-upload-bar-fill" style="width:0%"></div></div>
         </div>
@@ -625,7 +630,7 @@
       <div class="selected-file" id="ab-selected-file">
         <span class="file-icon-large" id="ab-file-icon">📄</span>
         <div class="file-info">
-          <div class="file-info-name" id="ab-file-name">filename.pdf</div>
+          <div class="file-info-name" id="ab-file-name" translate="no">filename.pdf</div>
           <div class="file-info-meta" id="ab-file-meta">Loading...</div>
           <div class="upload-bar" id="ab-upload-bar" style="display:none" role="progressbar" aria-label="Ανέβασμα αρχείου" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="ab-upload-bar-fill" style="width:0%"></div></div>
         </div>
@@ -937,7 +942,7 @@
       <div class="selected-file" id="ins-selected-file">
         <span class="file-icon-large" id="ins-file-icon">📄</span>
         <div class="file-info">
-          <div class="file-info-name" id="ins-file-name">filename.pdf</div>
+          <div class="file-info-name" id="ins-file-name" translate="no">filename.pdf</div>
           <div class="file-info-meta" id="ins-file-meta">Ανάλυση…</div>
         </div>
         <button class="remove-file-btn" onclick="removeInsightsDocument()" aria-label="Αφαίρεση εγγράφου">✕</button>
@@ -1042,7 +1047,7 @@
       </div>
       <div class="ins-result-meta" id="ins-result-meta"></div>
       <div class="ins-result-warnings" id="ins-result-warnings" style="display:none"></div>
-      <article class="ins-result-body" id="ins-result-body" tabindex="0"></article>
+      <article class="ins-result-body" id="ins-result-body" translate="no" tabindex="0"></article>
       <div class="ins-actions">
         <button type="button" class="btn btn-sm btn-secondary" id="ins-copy-btn" onclick="copyInsightText()">📋 Αντιγραφή</button>
         <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('pdf')">⬇️ PDF</button>
@@ -1357,7 +1362,7 @@
               <th style="width:50px; text-align:center">Action</th>
             </tr>
           </thead>
-          <tbody id="glossary-tbody">
+          <tbody id="glossary-tbody" translate="no">
             <!-- Populated via JS -->
           </tbody>
         </table>
@@ -1384,7 +1389,7 @@
     <div class="reader-header">
       <div class="reader-meta">
         <span style="font-size:1.25rem">📖</span>
-        <span class="reader-title" id="reader-book-title">Βιβλίο</span>
+        <span class="reader-title" id="reader-book-title" translate="no">Βιβλίο</span>
         <span class="reader-badge" id="reader-badge">Ελληνική Μετάφραση</span>
       </div>
       <div class="reader-controls">
@@ -1409,15 +1414,15 @@
       </div>
     </div>
     <div class="reader-body theme-paper" id="reader-body">
-      <div class="reader-content" id="reader-single-content"></div>
+      <div class="reader-content" id="reader-single-content" translate="no"></div>
       <div class="reader-split-content" id="reader-split-content" style="display:none">
         <div class="reader-split-col reader-orig-col">
           <div class="reader-col-header">Πρωτότυπο Κείμενο (Original)</div>
-          <div class="reader-col-body" id="reader-orig-text"></div>
+          <div class="reader-col-body" id="reader-orig-text" translate="no"></div>
         </div>
         <div class="reader-split-col reader-trans-col">
           <div class="reader-col-header">Μετάφραση (Greek)</div>
-          <div class="reader-col-body" id="reader-trans-text"></div>
+          <div class="reader-col-body" id="reader-trans-text" translate="no"></div>
         </div>
       </div>
     </div>
