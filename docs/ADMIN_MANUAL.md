@@ -43,7 +43,7 @@ The application implements an asynchronous, event-driven API architecture:
 │ │  Format Preserver    │    │      TTS Engine        │ │
 │ │  - python-docx       │    │  - edge-tts (Neural)   │ │
 │ │  - PyMuPDF (fitz)    │    │  - Streamed MP3 Chunks │ │
-│ │  - EbookLib / BS4    │    │  - Nestoras / Athina   │ │
+│ │  - EbookLib / BS4    │    │  - Nestoras, English   │ │
 │ └──────────────────────┘    └────────────────────────┘ │
 └──────────────┬────────────────────────┬────────────────┘
                │ Outbound HTTPS         │ Outbound WSS/HTTPS
@@ -102,8 +102,8 @@ The application implements an asynchronous, event-driven API architecture:
 * **Slow-model memory:** a model that times out is moved to the end of the candidate list for `SLOW_MODEL_PENALTY_S = 600` seconds; a success clears it.
 * **M4B chapters:** `tts_engine.compute_chapter_marks()` derives chapter start times from the synthesised parts (exporter heading detector; proportional placement inside a part; size-based duration fallback). They're written next to the output as `<name>.chapters.json` and passed to ffmpeg as an FFMETADATA file (`-map_metadata` / `-map_chapters`), both during generation and for on-demand MP3→M4B downloads. The ffmpeg timeout is `300 s + 4 s/MB`. Output is staged and swapped atomically; an unreadable cover is skipped, and any other failure is an error (never MP3 data named `.m4b`).
 * **Shared Gemini call (`ai_polisher._call_gemini_api`):** size-aware per-request timeout `45 + len(content)/120` seconds (clamped 45–180; previously a fixed 25 s that pushed long batches onto Lite models), rate-limiter token estimate `≈ (prompt + content chars) / 2` (clamped 500–60,000; previously a constant 1,500), and an optional `cache_gate(output) -> bool` predicate. Without a gate, only outputs passing `detect_greek_output_issues` are cached (unchanged); Book Insights and the dossier extraction pass a non-empty gate so English and short outputs are cached too.
-* **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously across different Google accounts (providing up to 6,000 free requests/day). Features sliding-window rate limiting (`GeminiRateLimiter` tracking RPM/TPM and smoothing request pacing), explicit Retry-After support, intelligent error payload classification (`parse_gemini_error`), per-model quota cooldown isolation (`_MODEL_COOLDOWNS` preventing low-quota models like `gemini-3.8-flash` with 20 RPD from blocking 1,500 RPD models on the same key), seamless key rotation upon HTTP 429 daily exhaustion, transient burst backoff (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when cooldowns expire or new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
-* **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`).
+* **Multi-Key Gemini API Pool & Failover Manager (`backend/gemini_key_pool.py`):** Manages up to **4 free Google Gemini API Keys** simultaneously across different Google accounts (each key adds Google's free allowance, which is set per model and per day and can be small, e.g. 20 requests/day for `gemini-3.5-flash`). Features sliding-window rate limiting (`GeminiRateLimiter` tracking RPM/TPM and smoothing request pacing), explicit Retry-After support, intelligent error payload classification (`parse_gemini_error`), per-model quota cooldown isolation (`_MODEL_COOLDOWNS`: a model whose daily allowance is used up does not block the other models on the same key), seamless key rotation upon HTTP 429 daily exhaustion, transient burst backoff (`retryDelay <= 60s`), thread-safe per-key cooldown timers, automatic circuit breaker reset when cooldowns expire or new keys are saved, and live status endpoints (`GET/POST /api/gemini/pool`).
+* **Categorized Terminology Engine (`backend/translator.py`, `config/glossary.json`):** High-speed terminology substitution engine with **3,366+ preconfigured terms** across Technical (1,130), Literary (1,032), and General (1,204) categories. Implements idempotent single-pass placeholder replacement, regex backslash safety, symbol-safe word boundaries, automatic domain isolation (excluding IT/DevOps terms in literary, comic, and poetry modes), and live CRUD REST endpoints (`GET/POST /api/glossary`). In a finished Greek translation (`apply_glossary(..., translated=True)`), an English term inside a Greek sentence is not replaced: its Greek translation follows it once per document, in parentheses (one `explained` set per document).
 * **Test Isolation (`run_all_tests.py`, `tests/_sandbox_guard.py`):** The runner copies the code to a temporary folder and runs the suites there on a free port, with an empty database and without keys, then deletes the copy. Test files exit immediately outside it. Name-based test-job detection and purge (`is_test_job_identifier`, `cleanup_test_jobs`) only work when `BOOKAPP_TEST_MODE=1`, which the sandbox sets. **Never set it on a real installation:** there, a file called `Bookkeeping.pdf` would count as test junk.
 * **Format-preserved outputs (`backend/format_sync.py`):**
   * **Marker:** the pipeline records how each output was made in `.format_preserved.json` in the job's output folder. Older jobs without a marker are detected conservatively.
@@ -121,9 +121,10 @@ The application implements an asynchronous, event-driven API architecture:
 * **macOS:** macOS 11 Big Sur or newer.
 
 ### Software Requirements
-* **Python 3.9 through 3.15** with `pip` and `venv`.
+* **Python 3.11 through 3.15** with `pip` and `venv`.
 * **Git** (for cloning and pulling updates).
 * **FFmpeg** (needed for M4B): installed automatically with the `imageio-ffmpeg` dependency; an FFmpeg on `PATH` takes precedence.
+* **Linux without Docker:** install `libarchive-tools` (bsdtar reads `.cbr` uploads) and fonts with Greek and italic faces, e.g. `fonts-dejavu-core fonts-dejavu-extra fonts-liberation`. Without an italic face, PDF italics are drawn by leaning the regular face.
 
 ### Network & Firewall Rules
 * **Inbound:** Port `8000` (or `80`/`443` when behind a reverse proxy).
@@ -248,6 +249,9 @@ docker compose up -d --build
 ```
 Access the application on `http://localhost:8000`.
 
+* **Your API keys are not in the image:** `.dockerignore` excludes `config/settings.json`, `config/*.tmp`, `config/*.corrupt` and `.env` files; docker-compose mounts `./config` at run time. Images built before 23 Nov 2026 contain `config/settings.json`: remove them (`docker image rm bookapp:latest`), rebuild, and replace the keys if such an image was ever pushed or shared.
+* The image installs `libarchive-tools` (bsdtar reads `.cbr` uploads), FFmpeg and the DejaVu and Liberation fonts. `.cbr` exports need no tool: BookApp writes the RAR archive itself.
+
 ### Nginx Reverse Proxy Configuration with SSE
 Because the application uses **Server-Sent Events (SSE)** for live progress streaming, proxy buffering **must** be disabled in Nginx:
 
@@ -302,6 +306,8 @@ BookApp/
 │   ├── format_sync.py       # In-place edits of format-preserved DOCX/EPUB
 │   ├── format_preserver.py  # In-place DOCX and EPUB layout and style preserver
 │   ├── exporter.py          # Exporter for TXT, DOCX, EPUB, PDF, CBZ, CBR & Literature layout
+│   ├── comic_archive.py     # Reads CBR uploads (7-Zip / bsdtar) and writes CBR exports (RAR 4, pages stored)
+│   ├── pdf_text_names.py    # Names shared glyphs in exported PDFs as the book's characters (copy, search)
 │   ├── glossary.py          # Categorized domain glossary management
 │   ├── settings_manager.py  # Local persistent settings manager (config/settings.json)
 │   ├── gemini_key_pool.py   # Multi-Key Gemini API Pool & Failover Manager (up to 4 keys)
@@ -318,7 +324,7 @@ BookApp/
 ├── temp/
 │   ├── uploads/{job_id}/    # Uploaded input documents
 │   └── outputs/{job_id}/    # Translated books, checkpoints, audiobooks (+ <name>.chapters.json), insights/
-├── tests/                   # 49 automated test suites (sandboxed)
+├── tests/                   # 61 automated test suites (sandboxed)
 ├── eval/passages.json       # Translation quality evaluation passages
 ├── scripts/                 # eval_translation_quality.py (quality evaluation runner)
 ├── requirements.txt
@@ -379,10 +385,10 @@ The repository includes a comprehensive master test runner with **100% endpoint 
 > **Tests never see your data:** `run_all_tests.py` works in a throw-away copy on a free port, with an empty database and no API keys. A running BookApp on port 8000 is not used. Test files refuse to run outside this sandbox.
 
 ```bash
-# Execute all 49 test suites (Full Master Suite):
+# Execute all 61 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (44 local static, unit, contract, UI, and queue suites):
+# Fast execution (56 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 
 # Selected suites:
@@ -464,7 +470,20 @@ The master runner automatically executes all test suites:
 
 49. `test_data_safety_and_preservation.py`: regression guards for restart data safety, format-preserving edits (DOCX/EPUB, randomized round-trips), comics, Wait for Reset, real M4B, validation and escaping.
 
-All test suites pass: **`49/49 PASS (44/44 in --fast mode · 58/58 FastAPI routes covered)`**.
+50. `test_comic_archive.py`: `.cbr` uploads (RAR 4, RAR 5 or ZIP inside) become CBZ through 7-Zip and through bsdtar; hostile names and sizes stay harmless; a `.cbr` export is a real RAR archive that reads back page for page.
+51. `test_comic_fidelity.py`: comics keep their page order and every balloon, read real scans and WebP; balloon text copies out of the PDF as written; a short rate limit never switches a key off.
+52. `test_export_fidelity.py`: exporters drop no words; every script is drawn; text copied from PDFs is the book's own characters in every font the exporters use.
+53. `test_free_engine_failover.py`: Google's refusals are respected, MyMemory stays inside its limit, Gemini stands in with few requests, and nothing is handed out shortened or untranslated.
+54. `test_gemini_answers.py`: only complete Gemini answers count, a blocked text costs one request per model, and request labels follow the language of their instructions.
+55. `test_interruptions_and_free_engine.py`: Smart Resume data, queue persistence across restarts, the quota banner, and the free engine never reporting untranslated text as translated.
+56. `test_lossless_documents.py`: property tests on random DOCX/EPUB packages (format preservation, edits, preformatted poems vs code, the kept-code note).
+57. `test_output_freshness.py`: downloads follow the job's current translation; cover removal, polish language and cross-site protection.
+58. `test_parser_fidelity.py`: the parsers drop nothing the reader sees, keep the reading order, and use the PDF's page labels to confirm page numbers.
+59. `test_target_language.py`: English targets get English instructions; an AI answer in another language or with lost text never replaces the book's text.
+60. `test_text_fidelity.py`: clean-up passes never change correct text, and boundary de-duplication never deletes text the book repeats.
+61. `test_voice_fallback.py`: a refused or cut voice request never leaves gaps in an audiobook; network drops are waited out in the chosen voice; Resume reuses parts.
+
+All test suites pass: **`61/61 PASS (56/56 in --fast mode)`** on Windows 11 (Python 3.15) and on Linux (Ubuntu 20.04 under WSL, Python 3.11, bsdtar instead of 7-Zip).
 
 ---
 
@@ -480,7 +499,7 @@ All test suites pass: **`49/49 PASS (44/44 in --fast mode · 58/58 FastAPI route
 | **Progress bar stays at 0%** | Proxy server or firewall is buffering Server-Sent Events (SSE). | Ensure `proxy_buffering off;` and `proxy_read_timeout 86400s;` are configured in Nginx. |
 | **Scanned PDFs / Graphic Novels have no extracted text** | Document consists purely of bitmap artwork without vector text. | Fully resolved: `detect_is_graphic_novel()` auto-detects scanned PDFs on upload, locks the UI to comic formats, and routes pages to **Gemini Vision AI** workers with opaque background fill and comic lettering. |
 | **HTTP 429 rate limit during translation** | Temporary Google GTX rate limit on heavy batch translation. | Fully resolved: `translator.py` features a **20s 429 Circuit Breaker**, fallback to MyMemory, and **automatic failover to Gemini Flash**. Single-Pass AI Polish also bypasses Google Translate entirely. |
-| **Queue stalls on Gemini Free Tier daily quota limit** | Exceeded 1,500 requests/day per key on Google AI Studio Free Tier. | Fully resolved: `ai_polisher.py` implements a **Gemini Daily Quota Circuit Breaker** (`DailyQuotaExhaustedError`, `get_gemini_quota_info`). It fails fast in <1ms without sleeping over candidate models. The **Multi-Key Pool** automatically rotates to backup keys (Slots 2–4). When all keys are exhausted, `wait` mode pauses safely at disk checkpoint while `fallback` mode continues with free engines. |
+| **Queue stalls on Gemini Free Tier daily quota limit** | Used up Google's free daily allowance, which is set per model and can be small (e.g. 20 requests/day for `gemini-3.5-flash`). | Fully resolved: `ai_polisher.py` implements a **Gemini Daily Quota Circuit Breaker** (`DailyQuotaExhaustedError`, `get_gemini_quota_info`). It fails fast in <1ms without sleeping over candidate models. The **Multi-Key Pool** automatically rotates to backup keys (Slots 2–4). When all keys are exhausted, `wait` mode pauses safely at disk checkpoint while `fallback` mode continues with free engines. |
 | **Slow AI Polish or timeouts on large books** | Low concurrency, sleep inside semaphore, or hidden thinking token overhead in Gemini 2.5 Flash. | Fully resolved: Upgraded to **5 parallel workers** (`Semaphore(5)`), `thinkingBudget: 0`, HTTP keep-alive connection pooling, and smart multi-page batching, achieving **4x–8x acceleration**. |
 | **M4B download returns HTTP 501** | No FFmpeg is available. | Run `pip install -r requirements.txt` in BookApp's virtual environment, then restart. |
 | **Saving in the Editor returns HTTP 409** | The document is open in another program, or the edit can't be placed in the format-preserved file safely. | Close the file and retry, or edit the downloaded document directly. Nothing was changed. |

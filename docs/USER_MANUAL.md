@@ -112,13 +112,14 @@ The application includes a specialized pipeline for illustrated publications:
    - Speech balloon detection and translation ordering are sorted top-to-bottom and **right-to-left**.
    - Fixed-Layout EPUB exports embed the standard `page-progression-direction="rtl"` directive so e-readers flip pages from right to left naturally.
 5. **Permitted Comic Export Formats:**
-   - **PDF**, **CBZ** (Comic Book Zip), **CBR** (Comic Book Archive), and **EPUB** (Fixed-Layout).
+   - **PDF**, **CBZ** (Comic Book Zip), **CBR** (Comic Book RAR, a real RAR archive), and **EPUB** (Fixed-Layout).
    - Plain text formats (TXT and DOCX) are automatically disabled for comics to protect users from artwork loss.
 
 ### 💡 Auto-Genre & Document Style Detection
 Upon uploading a document, the system automatically analyzes the opening pages:
 * Detects whether the file is **Literature**, **Poetry**, **Technical Documentation**, **Formal / Administrative**, or a **Graphic Novel**.
 * Displays an informative badge (e.g. `💡 Detected genre: Literature (85% confidence)`).
+* If the book describes itself as poetry or fiction (the subject saved in the EPUB, PDF or Word file), BookApp follows that instead of judging from the text. A book *about* poetry ("… history and criticism") is still judged from its text.
 * In Advanced Mode, clicking **"Apply Recommended"** automatically aligns the layout style, AI Polish prompt, and glossary category. In Basic Mode, the recommendation is **automatically applied immediately** (`✓ Auto-applied`).
 
 ### ✍️ Automatic Greek Editorial Typography & Scripted Sanitization Pass
@@ -159,7 +160,7 @@ All translated text passes automatically through the built-in publishing typogra
      - 📕 **PDF:** Formatted PDF with custom headers and complete Greek Unicode glyph support (zero missing-glyph tofu boxes `□`).
      - 📘 **DOCX:** Microsoft Word document with full preservation of fonts, tables, headings, and styles.
      - 📗 **EPUB:** E-book formatted with chapters, navigation, and HTML/CSS styling.
-     - 🎨 **CBZ / CBR:** Digital comic archive with speech balloons translated.
+     - 🎨 **CBZ / CBR:** Digital comic archive with speech balloons translated (CBZ is a ZIP archive, CBR a RAR archive).
      - 📄 **TXT:** Clean plain text.
    - **Instant On-Demand Conversion:** Even after translation completes in one format, you can download any of the other formats (PDF, DOCX, EPUB, TXT) instantly via the 1-click download pills on the result card.
 4. **Document Layout Styles:**
@@ -272,7 +273,7 @@ Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After
 
 ### 🔑 Gemini Multi-Key API Pool & Auto-Failover
 * **Connect up to 4 Free Gemini API Keys:** Enter keys in Slots 1 through 4 (Slot 1 Primary + Slots 2–4 Backups) from different Google accounts.
-* **Up to 6,000 Free Requests/Day ($0 Cost):** Each free Google account grants 1,500 requests/day. Combining 4 keys multiplies your daily quota to 6,000 requests completely free.
+* **Free daily allowance, per model:** Google gives each free key a daily allowance for each Gemini model, and it can be small (for example 20 requests a day for `gemini-3.5-flash`). Every key from another Google account adds its own allowance, and when one model's allowance is used up BookApp moves on to other models and keys. Google AI Studio shows your current limits.
 * **Instant Automatic Failover:** When Slot 1 encounters quota exhaustion (HTTP 429), the engine **instantly rotates to Slot 2, then Slot 3, then Slot 4** without pausing or losing progress.
 * **Keys stay on the server:** keys are stored only in the server configuration (`config/settings.json`) and shown masked in the page (e.g. `AIzaSy...4f2D`). The browser keeps no copy; keys saved in the browser by older versions are moved to the server once. Saving the window without typing a new key keeps your existing keys, so they're never accidentally wiped or duplicated when you switch tabs or refresh.
 * **Auto-Resume on Save:** If a translation was waiting on quota, clicking **«💾 Save Pool»** with new keys immediately resumes the job automatically without requiring a manual resume click!
@@ -290,6 +291,7 @@ Click **⚙️ Glossary** in the top navigation to configure persistent domain t
   * ⚙️ **General (`general`):** 1,204 terms (Publishing, Typography, Legal, Economics, Public Policy, Environment, Medicine, Daily Idioms).
 * Add and edit custom translation pairs across all 3 categories with live search and filtering.
 * **Domain Isolation:** When translating literature, poetry, or comics, technical IT/DevOps terms (e.g. `pod`, `sandbox`) are automatically ignored to prevent awkward translations in fiction.
+* **Terms inside a Greek sentence:** in a finished Greek translation, an English term that was left inside a Greek sentence stays and gets its Greek translation once, in parentheses (for example `το kernel (πυρήνας)`), because a Greek noun cannot replace it without the right case and gender. A term alone on its line is replaced.
 
 ### In-Place Layout & Style Preservation
 * **Word Documents (`.docx`):** Preserves font sizes, font families (Times New Roman, Arial, Calibri), **Bold**, *Italics*, underline, tables, and nested drawings. Bullet points from Wingdings/Symbol are converted to clean standard Unicode bullets (`•`).
@@ -327,17 +329,16 @@ Convert any document into high-fidelity MP3 and M4B audiobooks with embedded cha
 
 ### Available Neural Voices & Live Auditions
 * **Greek Neural Voices (🇬🇷):**
-  * 👨 **Nestoras (Male)** (`el-GR-NestorasNeural`) — Recommended voice with exceptional pronunciation and acronym handling.
-  * 👩 **Athina (Female)** (`el-GR-AthinaNeural`) — Natural feminine voice.
+  * 👨 **Nestoras (Male)** (`el-GR-NestorasNeural`) — exceptional pronunciation and acronym handling. It is the only Greek voice: Microsoft's Athina voice was removed because it returned cut-off audio for most parts in tests. Audiobooks saved with Athina are read by Nestoras.
 * **English Neural Voices (🇬🇧 / 🇺🇸):**
   * 👩 Aria, Jenny, Emma
-  * 👨 Guy, Davis, Ryan
+  * 👨 Guy, Brian, Ryan
 * 🔊 **Live Voice Audition:** Click **«🔊 Preview»** next to any voice card to hear a 2–3 second sample before generating your audiobook.
 
 ### 🎭 Multi-Voice Dramatization
 Create a theatrical audio experience:
 1. Enable **🎭 Multi-Voice Dramatization**.
-2. Select your primary voice for **Narrator** (e.g. Nestoras) and secondary voice for **Dialogue** (e.g. Athina).
+2. Select your primary voice for **Narrator** (e.g. Guy) and secondary voice for **Dialogue** (e.g. Jenny). Greek has one voice, so this option appears for English books only.
 3. The system automatically detects quotes (`«...»`) and dialogue dashes (`—`), routing character speech to the dialogue voice and descriptive prose to the narrator voice.
 
 ### 📦 M4B Export & Embedded Cover Art
@@ -495,7 +496,7 @@ Only on the computer that runs BookApp. The page shows them masked (for example 
 Yes. Your administrator can turn on **device pairing**. Then, in 🔑 Gemini API Key → 📱 Συσκευές, create a link and open it once on the new device; after that it just works, with no password. Devices you haven't paired are refused, and you can revoke a device at any time.
 
 #### ❓ Do I need to pay for an API key?
-* **No.** Standard document translation and Microsoft Edge neural voices are 100% free with zero keys. A free Google Gemini API key is only needed for Gemini AI Polish and scanned comic Vision AI.
+* **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and scanned comics.
 
 #### ❓ How long does translation or audio generation take?
 * Small documents (1–5 pages): **2 to 10 seconds**.
@@ -504,7 +505,16 @@ Yes. Your administrator can turn on **device pairing**. Then, in 🔑 Gemini API
 * Scanned Graphic Novels (~60 pages): **~1.5 to 3 minutes**.
 
 #### ❓ What happens if Google Translate hits a temporary rate limit (HTTP 429)?
-* The application triggers a **429 Circuit Breaker** with fallback to MyMemory API and automatic failover to Gemini Flash, ensuring translations complete without interruption.
+* BookApp waits as long as Google asks, then uses MyMemory within its daily limit and, if you saved a Gemini key, lets Gemini translate (this uses your Gemini allowance). The finished job tells you which engine translated. Without a key, a book that cannot be translated stops with a clear message; it is never handed out half translated.
+
+#### ❓ The job says some preformatted blocks were kept untranslated. Why?
+* EPUB books sometimes hold program code or tables in preformatted blocks. Translated code would be broken code, so blocks that look like code stay as they are, and the job tells you how many. Poems, verse and letters that the book itself marks as such are always translated.
+
+#### ❓ Text I copy from an exported PDF looks odd (spaces, hyphens, Greek accents).
+* PDFs exported by BookApp from 23 Nov 2026 copy and search as the book's own characters. Export older translations again (the download buttons do it in seconds). Quotations in Arabic, Hebrew or Indic scripts still copy out as glyph forms, although they look right on the page.
+
+#### ❓ The audiobook stopped with a voice outage message.
+* A short network drop is waited out in the voice you chose. If Microsoft's voice service cannot be reached for about a minute, the audiobook stops and offers **Resume**: the parts already narrated are kept and reused.
 
 #### ❓ What happens if I don't enter a Gemini API Key?
 * The application automatically enables **Free Mode** (indicated by the `🆓 Free Mode` badge). Translations use Google Translate, editorial typography rules are applied, and audiobooks use Edge-TTS neural voices completely free.
