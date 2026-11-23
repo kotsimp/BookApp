@@ -148,14 +148,24 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 Open **[http://localhost:8000](http://localhost:8000)** in your browser.
 
-### 🐳 Run with Docker & Docker Compose (Ubuntu, Synology NAS, MacBook)
+### 🖥️ Install on a Server (Ubuntu, Synology NAS)
+Step-by-step guides with every command are in the **[Administrator Manual, section 3](docs/ADMIN_MANUAL.md#3-step-by-step-installation)**:
+
+| Where | Guide |
+|---|---|
+| Ubuntu server with Docker (recommended) | [3.1](docs/ADMIN_MANUAL.md#31-ubuntu-server-with-docker): Docker install, `.env`, start, setup code, updates, backups, troubleshooting |
+| Synology NAS | [3.2](docs/ADMIN_MANUAL.md#32-synology-nas-with-docker-container-manager): Container Manager only (no command line) or SSH |
+| Ubuntu server without Docker | [3.3](docs/ADMIN_MANUAL.md#33-ubuntu-server-without-docker-python--systemd): Python environment and a systemd service |
+| First administrator, API key, users | [3.4](docs/ADMIN_MANUAL.md#34-first-sign-in-every-server-installation) |
+
+The short version with Docker (port 2000, sign-in on):
 ```bash
-# Clone and run with one command
-git clone https://github.com/kotsimp/BookApp.git
-cd BookApp
+git clone https://github.com/kotsimp/BookApp.git && cd BookApp
+printf 'BOOKAPP_PORT=2000\nBOOKAPP_AUTH=1\n' > .env
 docker compose up -d --build
+docker logs bookapp 2>&1 | grep -i "setup code"   # then open http://<server-ip>:2000/setup
 ```
-Access the application at **`http://localhost:8000`** (or your server's IP). For a server shared by several people, uncomment `BOOKAPP_AUTH=1` in `docker-compose.yml` to require sign-in. The first administrator is created with the setup code from `docker logs bookapp` (see the Admin Manual, *User Accounts & Administrators*). All database files (`data/`), settings (`config/`), and outputs are automatically persisted outside the container.
+Server settings live in `.env` next to `docker-compose.yml`. Git ignores that file, so `git pull && docker compose up -d --build` updates BookApp without touching them. The server's IP address is not set anywhere, because the app answers on every address of the machine. Jobs (`data/`), settings (`config/`) and books (`temp/`) stay outside the container.
 
 Your settings and API keys (`config/settings.json`) are never copied into the image: they stay in `./config`, which the container mounts. Images built by versions before 23 Nov 2026 do contain that file, so delete them (`docker image rm bookapp:latest`) and build again; if such an image was ever shared, replace your keys.
 

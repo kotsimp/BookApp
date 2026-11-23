@@ -51,6 +51,8 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 Open your modern web browser (Google Chrome, Microsoft Edge, Mozilla Firefox, Brave, or Safari) and navigate to:
 👉 **[http://localhost:8000](http://localhost:8000)** *(the web interface also adapts automatically to `http://127.0.0.1:8000` or your local network LAN IP)*
 
+If BookApp runs on a server or a Synology NAS, open the address your administrator gives you, for example `http://10.9.251.250:2000`. Installing it is described in the [Administrator Manual, section 3](ADMIN_MANUAL.md#3-step-by-step-installation).
+
 You will see the main user interface with two primary tabs at the top:
 * 🌐 **Translate Document**
 * 🎧 **Generate Audiobook**

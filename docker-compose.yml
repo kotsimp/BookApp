@@ -1,5 +1,10 @@
 version: '3.8'
 
+# Server-specific settings go in a file named .env next to this one (docker compose reads it automatically and
+# git ignores it, so `git pull` never conflicts with them). Example .env:
+#   BOOKAPP_PORT=2000
+#   BOOKAPP_AUTH=1
+
 services:
   bookapp:
     build: .
@@ -7,17 +12,21 @@ services:
     container_name: bookapp
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Port the browser uses: http://<server>:BOOKAPP_PORT (default 8000). Inside the container it is always 8000.
+      - "${BOOKAPP_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./config:/app/config
       - ./temp:/app/temp
     environment:
       - PYTHONUNBUFFERED=1
-      # User accounts with administrators (sign-in required). On the first start the server log
+      # BOOKAPP_AUTH=1: user accounts with administrators (sign-in required). On the first start the server log
       # (docker logs bookapp / Container Manager -> Log) shows a one-time setup code; open /setup and enter it.
-      # - BOOKAPP_AUTH=1
+      - BOOKAPP_AUTH=${BOOKAPP_AUTH:-}
       # Behind a reverse proxy (Synology DSM Reverse Proxy, nginx, Caddy, Traefik) that reaches the container over
-      # Docker's network: trust its X-Forwarded-For / X-Forwarded-Proto headers, so HTTPS and visitors' addresses are
-      # seen. Only use "*" when port 8000 is not reachable from untrusted networks except through the proxy.
-      # - FORWARDED_ALLOW_IPS=*
+      # Docker's network, set FORWARDED_ALLOW_IPS=* so its X-Forwarded-For / X-Forwarded-Proto headers (HTTPS and
+      # visitors' addresses) are trusted. Only use "*" when the port is not reachable from untrusted networks except
+      # through the proxy. Without a proxy leave it unset.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1,::1}
+      # BOOKAPP_COOKIE_SECURE=1 forces the Secure flag on the sign-in cookie (HTTPS only).
+      - BOOKAPP_COOKIE_SECURE=${BOOKAPP_COOKIE_SECURE:-}

@@ -9,6 +9,11 @@ This manual is intended for System Administrators, DevOps Engineers, and technic
 1. [Technical Architecture](#1-technical-architecture)
 2. [System Prerequisites](#2-system-prerequisites)
 3. [Step-by-Step Installation](#3-step-by-step-installation)
+   - [3.1 Ubuntu Server with Docker](#31-ubuntu-server-with-docker)
+   - [3.2 Synology NAS with Docker (Container Manager)](#32-synology-nas-with-docker-container-manager)
+   - [3.3 Ubuntu Server without Docker (Python + systemd)](#33-ubuntu-server-without-docker-python--systemd)
+   - [3.4 First Sign-In (every server installation)](#34-first-sign-in-every-server-installation)
+   - [3.5 Windows or macOS Computer (one person)](#35-windows-or-macos-computer-one-person)
 4. [Production Deployment](#4-production-deployment)
    - [Option A: Windows Service (NSSM)](#option-a-windows-service-via-nssm)
    - [Option B: Linux Systemd Service](#option-b-linux-systemd-service)
@@ -130,7 +135,7 @@ The application implements an asynchronous, event-driven API architecture:
 * **Linux without Docker:** install `libarchive-tools` (bsdtar reads `.cbr` uploads) and fonts with Greek and italic faces, e.g. `fonts-dejavu-core fonts-dejavu-extra fonts-liberation`. Without an italic face, PDF italics are drawn by leaning the regular face.
 
 ### Network & Firewall Rules
-* **Inbound:** Port `8000` (or `80`/`443` when behind a reverse proxy).
+* **Inbound:** Port `8000` by default (any port with `BOOKAPP_PORT` in Docker or `--port` without Docker), or `80`/`443` behind a reverse proxy.
 * **Outbound Internet Access:**
   * `translate.googleapis.com:443` (HTTPS) for translation services.
   * `*.speech.microsoft.com:443` (WSS / HTTPS) for Microsoft Edge neural voice synthesis.
@@ -159,13 +164,389 @@ The application implements an asynchronous, event-driven API architecture:
 
 ## 3. Step-by-Step Installation
 
-### Step 1: Clone Repository
+Pick the guide that matches the machine BookApp will run on. Copy the commands as they are; replace only values written in `<angle brackets>`.
+
+| Where BookApp runs | Guide | Command line | Updating |
+|---|---|---|---|
+| **Ubuntu server with Docker** (recommended for servers) | [3.1](#31-ubuntu-server-with-docker) | SSH | `git pull` + one command |
+| **Synology NAS** (Docker via Container Manager) | [3.2](#32-synology-nas-with-docker-container-manager) | none (Method A) or SSH (Method B) | upload new files, or `git pull` |
+| **Ubuntu server without Docker** (Python + systemd) | [3.3](#33-ubuntu-server-without-docker-python--systemd) | SSH | `git pull` + restart |
+| **Your own Windows or macOS computer** (one person) | [3.5](#35-windows-or-macos-computer-one-person) | a few commands | `git pull` |
+
+After a server installation, continue with [3.4 First Sign-In](#34-first-sign-in-every-server-installation).
+
+**Values used in the guides**
+* `<server-ip>`: the server's address on your network, for example `10.9.251.250`. On Ubuntu, `hostname -I` prints it (the first value). On Synology: **Control Panel → Network → Network Interface**.
+* **Port:** the examples use `8000`. Any free port from 1024 up works, for example `2000`; the guides say where to change it. People then open `http://<server-ip>:2000`. The server's IP address is never written in any BookApp file: the app answers on every address of the machine.
+* **Install folder:** `/opt/BookApp` on Ubuntu, `/volume1/docker/bookapp` on Synology.
+
+### 3.1 Ubuntu Server with Docker
+
+For Ubuntu 22.04 or 24.04 LTS (20.04 works the same way). You need SSH access (`ssh <your-user>@<server-ip>`) with an account that may use `sudo`. Docker brings Python, FFmpeg and the fonts with it: nothing else is installed on the server.
+
+**Step 1. Install Docker Engine and Docker Compose.** Skip this step if `docker compose version` already prints `Docker Compose version v2…`.
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+These are the commands of Docker's official repository ([docs.docker.com/engine/install/ubuntu](https://docs.docker.com/engine/install/ubuntu/)). If Ubuntu's own `docker.io` package is already installed and works, keep it and skip this step. Don't install both.
+
+**Step 2. Let your account run Docker without `sudo`**, then sign out:
+```bash
+sudo usermod -aG docker $USER
+exit
+```
+Connect with SSH again and check:
+```bash
+docker compose version          # Docker Compose version v2.x
+docker run --rm hello-world     # prints "Hello from Docker!"
+```
+Members of the `docker` group have root-level control of the server: add only administrators. Without this step, write `sudo` before every `docker` command below.
+
+**Step 3. Download BookApp**
+```bash
+sudo mkdir -p /opt/BookApp
+sudo chown "$USER": /opt/BookApp
+git clone https://github.com/kotsimp/BookApp.git /opt/BookApp
+cd /opt/BookApp
+```
+
+**Step 4. Write the server settings** in `/opt/BookApp/.env`. Docker Compose reads this file automatically, and git ignores it, so updates never overwrite it. To use port 2000, write `BOOKAPP_PORT=2000`:
+```bash
+cat > .env <<'EOF'
+BOOKAPP_PORT=8000
+BOOKAPP_AUTH=1
+EOF
+cat .env
+```
+`BOOKAPP_AUTH=1` turns on sign-in with user accounts. The other variables are listed in [Option C](#option-c-docker--docker-compose). To change the file later, use `nano .env`: Ctrl+O and Enter save, Ctrl+X exits.
+
+**Step 5. Build and start**
+```bash
+docker compose up -d --build
+```
+The first build downloads Python, FFmpeg and the fonts and takes about 3–10 minutes. Later starts take seconds. The container starts again by itself after a reboot (`restart: unless-stopped`).
+
+**Step 6. Check that it runs.** Write your port in place of 8000:
+```bash
+docker compose ps                          # STATUS: "Up … (healthy)" after about 30 seconds
+curl -s http://localhost:8000/api/health   # {"status":"ok","message":"DocTranslate is running"}
+```
+
+**Step 7. Firewall.** Docker opens the published port in the firewall itself, bypassing `ufw`. Every computer that can reach the server can reach the port, whatever `ufw` says. That is why `BOOKAPP_AUTH=1` matters. On a cloud server (AWS, Azure, Hetzner and so on), also allow the port in the provider's firewall or security group.
+
+**Step 8. Read the setup code** for the first administrator:
+```bash
+docker logs bookapp 2>&1 | grep -i "setup code"
+```
+It prints a line such as `and enter the setup code:   7K3F-9QXM`. The same code is in `sudo cat /opt/BookApp/data/setup_code.txt`. The log always mentions port 8000, which is the port inside the container. In the browser, use your own port: `http://<server-ip>:8000/setup`. Continue with [3.4 First Sign-In](#34-first-sign-in-every-server-installation).
+
+**Everyday commands** (run them in `/opt/BookApp`)
+
+| Task | Command |
+|---|---|
+| Watch the log live (Ctrl+C stops watching, not the app) | `docker logs -f bookapp` |
+| Last 200 log lines | `docker logs --tail 200 bookapp` |
+| Restart | `docker compose restart` |
+| Stop / start | `docker compose stop` / `docker compose start` |
+| Apply a changed `.env` (port, sign-in) | `docker compose up -d` |
+| Account tool (here: list users) | `docker exec -it bookapp python -m backend.auth list-users` |
+
+**Update to a new version**
+```bash
+cd /opt/BookApp
+git pull
+docker compose up -d --build
+docker image prune -f        # removes the previous, now unused image
+```
+Users, jobs, books, settings and API keys are kept.
+
+**Back up and restore**
+```bash
+cd /opt/BookApp
+docker compose stop
+sudo tar czf ~/bookapp-backup-$(date +%F).tar.gz data config temp .env
+docker compose start
+```
+* **What the backup holds:**
+  * `data` holds the job database and the user accounts.
+  * `config` holds the settings, the API keys and the glossary.
+  * `temp` holds the uploaded books and the results.
+* **Keep it private:** the file contains your API keys and the password hashes.
+* **Restore on a new server:**
+  1. Follow Steps 1–3.
+  2. Run `sudo tar xzf ~/bookapp-backup-<date>.tar.gz -C /opt/BookApp`.
+  3. Run `docker compose up -d --build`.
+
+**Uninstall**
+```bash
+cd /opt/BookApp
+docker compose down
+docker image rm bookapp:latest
+sudo rm -rf /opt/BookApp       # deletes every book, user and setting: back up first
+```
+
+**Troubleshooting**
+
+| Message or symptom | What to do |
+|---|---|
+| `permission denied while trying to connect to the Docker daemon socket` | Step 2 needs a new SSH sign-in (`exit`, connect again). Or write `sudo` before the command. |
+| `compose build requires buildx 0.17 or later` | `sudo apt-get install -y docker-buildx-plugin` (Docker's repository) or `sudo apt-get install -y docker-buildx` (Ubuntu's `docker.io`) |
+| `Bind for 0.0.0.0:8000 failed: port is already allocated` | Another program uses the port: `sudo ss -ltnp \| grep :8000` shows which one. Choose another `BOOKAPP_PORT` in `.env`, then `docker compose up -d`. |
+| `curl` works on the server, but another computer's browser can't open the page | A firewall or router between them blocks the port, or a cloud security group does. Port 2000 is also used by Cisco IP phones (SCCP), and some Cisco firewalls intercept it. If so, choose another port. |
+| `docker compose ps` shows `Restarting` or `unhealthy` | `docker logs --tail 100 bookapp` shows the reason. |
+| `git pull`: `Your local changes to the following files would be overwritten by merge: config/glossary.json` | That file holds the glossary edited in the app. To keep your version: `cp config/glossary.json ~/glossary-mine.json && git checkout -- config/glossary.json && git pull && cp ~/glossary-mine.json config/glossary.json`, then `docker compose up -d --build`. |
+
+### 3.2 Synology NAS with Docker (Container Manager)
+
+You need DSM 7.2 or newer and a model that supports **Container Manager**: Package Center lists it only for models that do. The image is built on the NAS, so the first build takes about 5–20 minutes.
+
+There are two ways. **Method A** uses only DSM's web pages. **Method B** uses SSH and makes later updates a single command.
+
+#### Method A: Container Manager only (no command line)
+
+**Step 1. Install Container Manager.** In **Package Center**, search for *Container Manager* and click **Install**. It creates the shared folder `docker`.
+
+**Step 2. Download BookApp** on your computer:
+1. Open [github.com/kotsimp/BookApp](https://github.com/kotsimp/BookApp).
+2. Click the green **Code** button, then **Download ZIP**.
+
+You get the file `BookApp-master.zip`.
+
+**Step 3. Upload and unpack it with File Station**
+1. Open the `docker` folder and click **Upload → Upload - Skip**. Choose `BookApp-master.zip`.
+2. Right-click the ZIP and choose **Extract → Extract here**.
+3. Right-click the new folder `BookApp-master` and choose **Rename**. Name it `bookapp`.
+4. Open `bookapp`. Click **Create → Create folder** and make a folder named `data`. Do the same for a folder named `temp`.
+5. Delete the ZIP.
+
+You now have `docker/bookapp/docker-compose.yml`, plus the empty folders `docker/bookapp/data` and `docker/bookapp/temp`.
+
+**Step 4. Create the project.** In **Container Manager**, open **Project → Create**:
+1. **Project name:** `bookapp`.
+2. **Path:** click **Set path** and choose `docker/bookapp`.
+3. **Source:** choose **Use existing docker-compose.yml**.
+4. In the editor that opens, find these two lines:
+   ```yaml
+         - "${BOOKAPP_PORT:-8000}:8000"
+         - BOOKAPP_AUTH=${BOOKAPP_AUTH:-}
+   ```
+   Change them to the following:
+   ```yaml
+         - "8000:8000"
+         - BOOKAPP_AUTH=1
+   ```
+   For port 2000, write `"2000:8000"`. Only the left number is the NAS port; the right one stays 8000.
+5. Click **Next**. Leave the *Web Station* web portal option unticked, then click **Next** again.
+6. On the summary, tick **Start the project once it is created** and click **Done**. Container Manager builds the image (a log window shows the progress) and starts the container.
+
+**Step 5. Firewall.** Do this only if DSM's firewall is on (**Control Panel → Security → Firewall**):
+1. Click **Edit Rules → Create**.
+2. Under **Ports**, choose **Custom**. Set protocol **TCP** and port **8000**, or your port.
+3. Set **Action** to **Allow**, then click **OK → Apply**.
+
+**Step 6. Read the setup code.** Go to **Container Manager → Container**, double-click `bookapp` and open the **Log** tab. Look for the line `enter the setup code:   XXXX-XXXX`. With File Station, the code is also in `docker/bookapp/data/setup_code.txt`. Then open `http://<nas-ip>:8000/setup` with your own port, and continue with [3.4 First Sign-In](#34-first-sign-in-every-server-installation).
+
+**Update (Method A)**
+1. Download the new ZIP. Upload it to `docker` and extract it there, so that `BookApp-master` appears next to `bookapp`.
+2. In `bookapp`, delete the folders `backend` and `frontend`.
+3. In `BookApp-master`, select `backend`, `frontend`, `Dockerfile` and `requirements.txt`. Use **Action → Copy to** to copy them to `docker/bookapp`, choosing **Overwrite**.
+   * **Don't copy** `docker-compose.yml`, `config`, `data` or `temp`. They hold your port setting, API keys, glossary, users and books.
+4. Delete `BookApp-master` and the ZIP.
+5. In **Container Manager → Project**, select `bookapp` and click **Action → Build**. When the build finishes the project should be running (green). If it isn't, click **Action → Start**.
+
+#### Method B: SSH (updates with one command)
+
+**Step 1. Install the packages.** In **Package Center**, install **Container Manager** (Method A, Step 1) and **Git Server**. Git Server provides the `git` command.
+
+**Step 2. Turn on SSH.** In **Control Panel → Terminal & SNMP**, tick **Enable SSH service** and click **Apply**.
+
+**Step 3. Connect** from your computer with an administrator account of DSM:
+```bash
+ssh <dsm-admin-user>@<nas-ip>
+```
+
+**Step 4. Download BookApp, write the settings and start it.** `/volume1` is the volume of the `docker` shared folder: check it in **Control Panel → Shared Folder**.
+```bash
+cd /volume1/docker
+git clone https://github.com/kotsimp/BookApp.git bookapp
+cd bookapp
+mkdir -p data temp
+cat > .env <<'EOF'
+BOOKAPP_PORT=8000
+BOOKAPP_AUTH=1
+EOF
+sudo docker compose up -d --build
+```
+`sudo` asks for your DSM password. On an older Container Manager that doesn't know `docker compose`, write `sudo docker-compose` instead.
+
+**Step 5. Read the setup code**, then continue with [3.4 First Sign-In](#34-first-sign-in-every-server-installation):
+```bash
+sudo docker logs bookapp 2>&1 | grep -i "setup code"
+```
+
+**Update (Method B)**
+```bash
+cd /volume1/docker/bookapp
+git pull
+sudo docker compose up -d --build
+sudo docker image prune -f
+```
+The container appears in **Container Manager → Container** like any other, where you can see its log and stop or start it. The commands of [3.1](#31-ubuntu-server-with-docker) also work, with `sudo` in front. If you don't use SSH otherwise, you can turn it off again after the installation.
+
+**Backup (both methods):** in **Hyper Backup**, add the shared folder `docker/bookapp` (or at least its `data`, `config` and `temp` folders) to a backup task. Schedule it at night, when no translation is running. **HTTPS:** see [HTTPS for User Accounts](#https-for-user-accounts-caddy-nginx-synology-dsm) (DSM reverse proxy).
+
+### 3.3 Ubuntu Server without Docker (Python + systemd)
+
+Ubuntu 24.04 LTS is recommended, because it comes with Python 3.12. Ubuntu 22.04 comes with Python 3.10, so Step 1 adds Python 3.11 there. BookApp runs as its own system user, `bookapp`, from `/opt/BookApp`.
+
+**Step 1. Install the system packages**
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip ffmpeg libarchive-tools \
+  fonts-dejavu-core fonts-dejavu-extra fonts-liberation fontconfig ca-certificates curl
+python3 --version
+```
+* **Python 3.11 or newer:** go on to Step 2.
+* **Python 3.10** (Ubuntu 22.04): run `sudo apt install -y python3.11 python3.11-venv`, and write `python3.11` instead of `python3` in Step 3.
+* **What the packages are for:**
+  * `ffmpeg` makes M4B audiobooks.
+  * `libarchive-tools` reads `.cbr` comics.
+  * The fonts give PDFs and comic balloons Greek letters and italics.
+
+**Step 2. Create the service account and download BookApp**
+```bash
+sudo useradd --system --home-dir /opt/BookApp --shell /usr/sbin/nologin bookapp
+sudo git clone https://github.com/kotsimp/BookApp.git /opt/BookApp
+sudo chown -R bookapp:bookapp /opt/BookApp
+```
+
+**Step 3. Create the Python environment and install the dependencies.** This takes 2–5 minutes.
+```bash
+cd /opt/BookApp
+sudo -u bookapp python3 -m venv /opt/BookApp/.venv
+sudo -u bookapp /opt/BookApp/.venv/bin/pip install --no-cache-dir --upgrade pip
+sudo -u bookapp /opt/BookApp/.venv/bin/pip install --no-cache-dir -r /opt/BookApp/requirements.txt
+```
+
+**Step 4. Create and start the service.** The port is set in the `ExecStart` line (`--port 8000`; for example `--port 2000`). Use a port from 1024 up. `BOOKAPP_AUTH=1` turns on sign-in.
+```bash
+sudo tee /etc/systemd/system/bookapp.service > /dev/null <<'EOF'
+[Unit]
+Description=BookApp (DocTranslate & AudioBook Generator)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bookapp
+Group=bookapp
+WorkingDirectory=/opt/BookApp
+Environment=PYTHONUNBUFFERED=1
+Environment=BOOKAPP_AUTH=1
+ExecStart=/opt/BookApp/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --log-level info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now bookapp
+systemctl status bookapp --no-pager      # "active (running)"
+```
+
+**Step 5. Check that it runs.** Write your port in place of 8000:
+```bash
+curl -s http://localhost:8000/api/health   # {"status":"ok","message":"DocTranslate is running"}
+```
+
+**Step 6. Firewall.** Add the rule only if `ufw` shows `Status: active`:
+```bash
+sudo ufw status
+sudo ufw allow 8000/tcp
+```
+
+**Step 7. Read the setup code**, then continue with [3.4 First Sign-In](#34-first-sign-in-every-server-installation):
+```bash
+sudo journalctl -u bookapp --no-pager | grep -i "setup code"
+sudo cat /opt/BookApp/data/setup_code.txt      # the same code
+```
+The log always says port 8000. If you set another port in `ExecStart`, use that one in the browser.
+
+**Everyday commands**
+
+| Task | Command |
+|---|---|
+| Watch the log live | `sudo journalctl -u bookapp -f` |
+| Restart | `sudo systemctl restart bookapp` |
+| Stop / start | `sudo systemctl stop bookapp` / `sudo systemctl start bookapp` |
+| Change the port or variables | `sudo systemctl edit --full bookapp`, then `sudo systemctl restart bookapp` (and `sudo ufw allow <new-port>/tcp`) |
+| Account tool (here: list users) | `cd /opt/BookApp && sudo -u bookapp .venv/bin/python -m backend.auth list-users` |
+
+**Update to a new version**
+```bash
+sudo -u bookapp git -C /opt/BookApp pull
+sudo -u bookapp /opt/BookApp/.venv/bin/pip install --no-cache-dir -r /opt/BookApp/requirements.txt
+sudo systemctl restart bookapp
+```
+
+**Back up and restore**
+```bash
+sudo systemctl stop bookapp
+sudo tar czf ~/bookapp-backup-$(date +%F).tar.gz -C /opt/BookApp data config temp
+sudo systemctl start bookapp
+```
+The backup contains your API keys and the password hashes, so keep it private. To restore on a new server:
+1. Follow Steps 1–4.
+2. Stop the service: `sudo systemctl stop bookapp`.
+3. Unpack the backup: `sudo tar xzf ~/bookapp-backup-<date>.tar.gz -C /opt/BookApp`.
+4. Give the files back to the service account: `sudo chown -R bookapp:bookapp /opt/BookApp`.
+5. Start the service: `sudo systemctl start bookapp`.
+
+**Troubleshooting**
+
+| Message or symptom | What to do |
+|---|---|
+| `systemctl status` shows `failed` | `sudo journalctl -u bookapp -n 100 --no-pager` shows the reason |
+| `ModuleNotFoundError` in the log | Step 3 did not finish: run its last command again, then `sudo systemctl restart bookapp` |
+| `address already in use` | Another program uses the port: `sudo ss -ltnp \| grep :8000`. Choose another port (*Change the port* above). |
+| `fatal: detected dubious ownership` on `git pull` | Run git as the service account: `sudo -u bookapp git -C /opt/BookApp pull` |
+| `git pull` refuses because of `config/glossary.json` | Keep your glossary: `cd /opt/BookApp && sudo -u bookapp cp config/glossary.json /tmp/glossary-mine.json && sudo -u bookapp git checkout -- config/glossary.json && sudo -u bookapp git pull && sudo -u bookapp cp /tmp/glossary-mine.json config/glossary.json && sudo systemctl restart bookapp` |
+| M4B export unavailable | `ffmpeg -version` must work; otherwise `sudo apt install -y ffmpeg` and restart |
+
+For HTTPS with Caddy, bind BookApp to the server itself: `--host 127.0.0.1` in `ExecStart`. See [HTTPS for User Accounts](#https-for-user-accounts-caddy-nginx-synology-dsm).
+
+### 3.4 First Sign-In (every server installation)
+
+1. **Create the first administrator.** Open `http://<server-ip>:<port>/setup` and enter the setup code from the guide's last step. Choose a username and a password:
+   * the username uses 2–32 Latin letters, digits, `.`, `_` or `-`;
+   * the password has at least 10 characters.
+
+   You are now the first administrator. The setup code stops working.
+2. **Add the Gemini key.** Click **🔑 Gemini API Key** in the top menu (only administrators see it) and paste up to 4 keys, then save. Without a key, BookApp uses the free translation engines.
+3. **Create the other accounts.** Click **👥 Χρήστες** and create an account for each person. Leave the password empty to get a temporary one, which is shown once: give it to that person. Everyone chooses their own password at the first sign-in. **⭐ Κάνε διαχειριστή** gives someone the same rights as you.
+4. **Share the address.** Give everyone the address `http://<server-ip>:<port>`.
+
+* **Forgotten administrator password:** use the account tool's `reset-password` command on the server (see [User Accounts & Administrators](#user-accounts--administrators-sign-in)).
+* **Plain `http://`:** passwords cross the network unencrypted. That is fine on a trusted local network. If the app can be reached from the internet, put [HTTPS](#https-for-user-accounts-caddy-nginx-synology-dsm) in front of it.
+
+### 3.5 Windows or macOS Computer (one person)
+
+**Step 1. Clone the repository**
 ```bash
 git clone https://github.com/kotsimp/BookApp.git
 cd BookApp
 ```
 
-### Step 2: Create & Activate Virtual Environment
+**Step 2. Create and activate a virtual environment**
 * **On Windows (PowerShell / Command Prompt):**
   ```powershell
   python -m venv .venv
@@ -177,20 +558,21 @@ cd BookApp
   source .venv/bin/activate
   ```
 
-### Step 3: Install Dependencies
+**Step 3. Install the dependencies**
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 # optional, reproducible: pin to the exact versions of a verified environment
 pip install -r requirements.txt -c requirements-lock.txt
 ```
-Dependencies: FastAPI, Uvicorn, python-multipart, aiofiles, aiohttp, Pydantic, PyMuPDF, python-docx, EbookLib, BeautifulSoup4, deep-translator, edge-tts, mutagen, Pillow (comic page rendering). imageio-ffmpeg (bundles FFmpeg for M4B). Without any FFmpeg, M4B export returns HTTP 501 and MP3 remains available; `GET /api/settings` reports this as `m4b_available`.
+* **Packages:** FastAPI, Uvicorn, python-multipart, aiofiles, aiohttp, Pydantic, PyMuPDF, python-docx, EbookLib, BeautifulSoup4, deep-translator, edge-tts, mutagen, Pillow (comic page rendering) and imageio-ffmpeg (bundles FFmpeg for M4B).
+* **Without FFmpeg:** M4B export returns HTTP 501 and MP3 remains available. `GET /api/settings` reports this as `m4b_available`.
 
-### Step 4: Verify Installation
+**Step 4. Start the app**
 ```bash
 python run.py
 ```
-*The application will launch on `http://localhost:8000` and automatically open your default browser.*
+*The application launches on `http://localhost:8000` and opens your default browser. It listens only on this computer (`127.0.0.1`). `python run.py` also works on its own: it creates `.venv` and installs the dependencies by itself.*
 
 ---
 
@@ -214,46 +596,21 @@ For continuous 24/7 background operation on servers, run the application as a ma
    ```
 
 ### Option B: Linux Systemd Service
-1. Create the systemd service file:
-   ```bash
-   sudo nano /etc/systemd/system/bookapp.service
-   ```
-2. Paste the following configuration:
-   ```ini
-   [Unit]
-   Description=DocTranslate and AudioBook Generator Service
-   After=network.target
-
-   [Service]
-   Type=simple
-   User=www-data
-   WorkingDirectory=/opt/BookApp
-   ExecStart=/opt/BookApp/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --log-level info
-   Restart=always
-   RestartSec=5
-   Environment=PYTHONUNBUFFERED=1
-   # User accounts (sign-in) - see "User Accounts & Administrators" below
-   Environment=BOOKAPP_AUTH=1
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-3. Reload systemd, enable, and start the service:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable bookapp
-   sudo systemctl start bookapp
-   sudo systemctl status bookapp
-   ```
+The complete procedure is in [3.3 Ubuntu Server without Docker](#33-ubuntu-server-without-docker-python--systemd). It covers the service account, the unit file, the firewall, updates, backups and troubleshooting. On other distributions, use the same unit file with that distribution's package names.
 
 ### Option C: Docker & Docker Compose
-The project includes a production-ready **`Dockerfile`** and **`docker-compose.yml`** bundling FFmpeg, Unicode fonts, and persistent volumes:
+The project includes a production-ready **`Dockerfile`** and **`docker-compose.yml`** bundling FFmpeg, Unicode fonts, and persistent volumes. Step-by-step procedures: [3.1 Ubuntu Server with Docker](#31-ubuntu-server-with-docker) and [3.2 Synology NAS](#32-synology-nas-with-docker-container-manager).
 
-```bash
-# Build and run containers in background
-docker compose up -d --build
-```
-Access the application on `http://localhost:8000`.
+**Server settings go in `.env`** next to `docker-compose.yml`. Docker Compose reads the file automatically, and git ignores it, so `git pull` never conflicts with it. Container Manager on Synology (Method A) takes the values written directly in `docker-compose.yml` instead.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BOOKAPP_PORT` | `8000` | Port in the browser address (`http://<server-ip>:<port>`); inside the container it is always 8000 |
+| `BOOKAPP_AUTH` | off | `1` = sign-in required, administrators create the users |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | `*` only behind a reverse proxy (see [HTTPS](#https-for-user-accounts-caddy-nginx-synology-dsm)) |
+| `BOOKAPP_COOKIE_SECURE` | off | `1` = sign-in cookie only over HTTPS |
+
+After changing `.env`, run `docker compose up -d`. The server's IP address is not configured anywhere: the container answers on every address of the host.
 
 * **Your API keys are not in the image:** `.dockerignore` excludes `config/settings.json`, `config/*.tmp`, `config/*.corrupt` and `.env` files; docker-compose mounts `./config` at run time. Images built before 23 Nov 2026 contain `config/settings.json`: remove them (`docker image rm bookapp:latest`), rebuild, and replace the keys if such an image was ever pushed or shared.
 * The image installs `libarchive-tools` (bsdtar reads `.cbr` uploads), FFmpeg and the DejaVu and Liberation fonts. `.cbr` exports need no tool: BookApp writes the RAR archive itself.
@@ -317,14 +674,14 @@ The Gemini keys stay one shared pool managed by the administrators; users never 
 
    | Installation | Where to read the code |
    |---|---|
-   | Ubuntu, systemd | `sudo journalctl -u bookapp \| grep "setup code"` or `sudo cat /opt/BookApp/data/setup_code.txt` |
-   | Docker | `docker logs bookapp \| grep "setup code"` or `./data/setup_code.txt` next to `docker-compose.yml` |
+   | Ubuntu, systemd | `sudo journalctl -u bookapp \| grep -i "setup code"` or `sudo cat /opt/BookApp/data/setup_code.txt` |
+   | Docker | `docker logs bookapp 2>&1 \| grep -i "setup code"` or `sudo cat data/setup_code.txt` next to `docker-compose.yml` |
    | Synology (Container Manager) | **Container → bookapp → Log**, or with File Station the file `setup_code.txt` in the folder mapped to `/app/data` (for example `/docker/bookapp/data/`) |
 
 2. **Command line (SSH).** Run in the BookApp folder with its Python environment; it works while the server runs:
    ```bash
-   cd /opt/BookApp && .venv/bin/python -m backend.auth create-admin kostas     # asks for the password twice
-   docker exec -it bookapp python -m backend.auth create-admin kostas           # Docker / Synology
+   cd /opt/BookApp && sudo -u bookapp .venv/bin/python -m backend.auth create-admin kostas   # asks for the password twice
+   docker exec -it bookapp python -m backend.auth create-admin kostas           # Docker (on Synology: sudo docker exec …)
    ```
 
 **Account tool** (`python -m backend.auth <command>`; prefix `docker exec -it bookapp` for Docker):
@@ -368,7 +725,7 @@ Passwords must not travel over plain `http://` outside your own home network. Pu
   ```
   Then bind BookApp to the local address only: `--host 127.0.0.1` in the systemd `ExecStart` line.
 * **nginx:** use the configuration above with `listen 443 ssl;` and a certificate from `certbot --nginx`. It already sends `X-Forwarded-For` and `X-Forwarded-Proto`.
-* **Synology DSM:** **Control Panel → Login Portal → Advanced → Reverse Proxy → Create**: source `HTTPS`, your hostname, port 443; destination `HTTP`, `localhost`, port 8000. Get the certificate in **Control Panel → Security → Certificate**. In the container settings add the environment variables `BOOKAPP_AUTH=1` and `FORWARDED_ALLOW_IPS=*`. If after signing in over HTTPS the browser's cookie details show `bookapp_session` without *Secure*, the proxy does not pass the original scheme: add under **Custom Header** `X-Forwarded-Proto` = `$scheme` and `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, or set `BOOKAPP_COOKIE_SECURE=1`.
+* **Synology DSM:** **Control Panel → Login Portal → Advanced → Reverse Proxy → Create**: source `HTTPS`, your hostname, port 443; destination `HTTP`, `localhost`, port 8000 (or the NAS port you chose). Get the certificate in **Control Panel → Security → Certificate**. In the container settings add the environment variables `BOOKAPP_AUTH=1` and `FORWARDED_ALLOW_IPS=*`. If after signing in over HTTPS the browser's cookie details show `bookapp_session` without *Secure*, the proxy does not pass the original scheme: add under **Custom Header** `X-Forwarded-Proto` = `$scheme` and `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, or set `BOOKAPP_COOKIE_SECURE=1`.
 
 **Why `FORWARDED_ALLOW_IPS`:** Uvicorn trusts the proxy's `X-Forwarded-For` / `X-Forwarded-Proto` headers only from `127.0.0.1` by default. That covers Caddy or nginx on the same machine. In Docker the proxy arrives over Docker's network (for example `172.17.0.1`), so set `FORWARDED_ALLOW_IPS=*` (or the proxy's address). Without it, BookApp sees every visitor as the proxy's address (a lockout would hit everybody) and does not notice HTTPS. Use `*` only when port 8000 is not reachable from untrusted networks except through the proxy. `BOOKAPP_COOKIE_SECURE=1` forces the `Secure` cookie flag regardless.
 
