@@ -3121,18 +3121,15 @@ function renderGeminiPoolStatus(poolData) {
       badge.style.color = 'var(--amber)';
     } else if (cooling.length) {
       // the key works, but some of its models used up their daily allowance
-      badge.textContent = `🟡 ${slotInfo.is_active ? 'Ενεργό' : 'Εφεδρικό'} · ${cooling.length} μοντέλα στο όριο`;
+      badge.textContent = `🟡 Ενεργό · ${cooling.length} μοντέλα στο όριο`;
       badge.title = cooling.join(', ');
       badge.style.background = 'rgba(245,158,11,0.14)';
       badge.style.color = 'var(--amber)';
-    } else if (slotInfo.is_active) {
+    } else {
+      // requests take the keys in turn: every usable key is in use, none waits on standby
       badge.textContent = '🟢 Ενεργό (Active)';
       badge.style.background = 'rgba(16,185,129,0.18)';
       badge.style.color = 'var(--emerald)';
-    } else {
-      badge.textContent = '🟡 Εφεδρικό (Standby)';
-      badge.style.background = 'rgba(124,58,237,0.15)';
-      badge.style.color = 'var(--violet)';
     }
   }
 

@@ -454,6 +454,72 @@ class TestGeminiDiagnosticsAndRotation(unittest.TestCase):
 
         asyncio.run(run_pool())
 
+    def _ok_session(self, calls):
+        """A mock Gemini session that answers every request and records (key, model)."""
+        class Resp:
+            status = 200
+            headers = {}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "Μετάφραση έτοιμη."}]}, "finishReason": "STOP"}]}
+
+            async def text(self):
+                return ""
+
+        def post(url, *a, **kw):
+            calls.append((kw.get("headers", {}).get("x-goog-api-key"), url.split("/models/")[1].split(":")[0]))
+            return Resp()
+
+        session = MagicMock()
+        session.post.side_effect = post
+        return session
+
+    def test_11_requests_take_the_keys_in_turn(self):
+        """Parallel batches spread over the pool: each request starts on the next usable key."""
+        keys = ["AQ.Turn1", "AQ.Turn2", "AQ.Turn3"]
+        GeminiKeyPool.set_keys(keys)
+        self.assertEqual([GeminiKeyPool.next_key() for _ in range(4)], keys + ["AQ.Turn1"])
+        GeminiKeyPool.mark_key_exhausted("AQ.Turn2", 3600)
+        self.assertEqual([GeminiKeyPool.next_key() for _ in range(3)], ["AQ.Turn3", "AQ.Turn1", "AQ.Turn3"])
+        GeminiKeyPool.reset_quota()
+        GeminiKeyPool.set_keys(keys)
+        calls = []
+        with patch("backend.ai_polisher._get_available_models", AsyncMock(return_value=["gemini-3.5-flash"])):
+            for i in range(3):
+                asyncio.run(_call_gemini_api(f"Κείμενο {i}", "AQ.Turn1", "Οδηγίες", session=self._ok_session(calls),
+                                             bypass_cache=True))
+        self.assertEqual([k for k, _ in calls], keys, "three requests, three keys")
+
+    def test_12_best_model_on_every_key_before_a_weaker_one(self):
+        """Key 1 used up the best model's daily allowance: the request uses the best model on key 2, not a weaker
+        model on key 1. Only when no key has it left does a weaker model take over."""
+        keys = ["AQ.Best1", "AQ.Best2", "AQ.Best3"]
+        GeminiKeyPool.set_keys(keys)
+        GeminiKeyPool.mark_model_exhausted("AQ.Best1", "gemini-3.5-flash", 3600)
+        ranked = ["gemini-3.5-flash", "gemini-flash-latest"]
+        self.assertEqual(GeminiKeyPool.key_for_better_model(ranked, "gemini-flash-latest", {"AQ.Best1"}), "AQ.Best2")
+        self.assertIsNone(GeminiKeyPool.key_for_better_model(ranked, "gemini-3.5-flash", {"AQ.Best2"}))
+        calls = []
+        models = AsyncMock(return_value=["gemini-3.5-flash", "gemini-flash-latest"])
+        with patch("backend.ai_polisher._get_available_models", models):
+            asyncio.run(_call_gemini_api("Κείμενο", "AQ.Best1", "Οδηγίες", session=self._ok_session(calls),
+                                         bypass_cache=True))
+            self.assertEqual(calls, [("AQ.Best2", "gemini-3.5-flash")], "the best model, on the key that still has it")
+            # every key spent on the best model: then the next model does the work
+            for k in keys:
+                GeminiKeyPool.mark_model_exhausted(k, "gemini-3.5-flash", 3600)
+            calls.clear()
+            asyncio.run(_call_gemini_api("Κείμενο 2", "AQ.Best1", "Οδηγίες", session=self._ok_session(calls),
+                                         bypass_cache=True))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], "gemini-flash-latest")
+
     def test_10_live_diagnostics_minimal(self):
         """Live diagnostic mode: tests configured real keys with a single 1-word call."""
         keys = GeminiKeyPool.get_keys()

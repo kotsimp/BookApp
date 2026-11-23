@@ -989,7 +989,7 @@ const pool = { total_keys: 6, available_keys: 6, all_exhausted: false,
   cooling_models: [{ model: 'gemini-3.5-flash', keys: 2, reset_timestamp: now + 3 * 3600, remaining_sec: 3 * 3600 }] };
 ctx.renderGeminiPoolStatus(pool);
 assert.ok(getEl('pool-slot-status-1').textContent.includes('1 μοντέλα στο όριο'), getEl('pool-slot-status-1').textContent);
-assert.strictEqual(getEl('pool-slot-status-3').textContent, '🟡 Εφεδρικό (Standby)');
+assert.strictEqual(getEl('pool-slot-status-3').textContent, '🟢 Ενεργό (Active)', 'keys take turns: none on standby');
 assert.strictEqual(getEl('pool-slot-status-7').textContent, '⚪ Κενό', 'slots 7-8 are empty but drawn');
 const box = getEl('ai-polish-quota-warning-banner');
 const body = getEl('ai-polish-quota-warning-text');

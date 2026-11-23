@@ -24,6 +24,7 @@ _pool_lock = threading.RLock()
 _KEY_COOLDOWNS: Dict[str, float] = {}  # key -> timestamp until which it is exhausted
 _MODEL_COOLDOWNS: Dict[Tuple[str, str], float] = {}  # (key, model) -> timestamp until which this model is cooling down
 MAX_KEYS = 8  # each from another Google account adds its own daily allowance per model
+_RR_INDEX = 0  # where GeminiKeyPool.next_key() continues: requests take the pool's keys in turn
 
 # Known default quotas for Google Gemini Free Tier
 # Google sets and changes them per project and model: the quota in its 429 answer decides, these are only defaults.
@@ -416,6 +417,9 @@ class GeminiKeyPool:
             else:
                 delete_setting("gemini_api_key")
 
+            global _RR_INDEX
+            _RR_INDEX = 0  # a new pool starts its turns at slot 1
+
             # Prune cooldown entries for keys no longer in the pool
             for stale_key in list(_KEY_COOLDOWNS.keys()):
                 if stale_key not in cleaned_keys:
@@ -461,6 +465,46 @@ class GeminiKeyPool:
                 cleaned = index_or_key.strip()
                 keys = [k for k in keys if k != cleaned]
             return GeminiKeyPool.set_keys(keys)
+
+    @staticmethod
+    def next_key(exclude_keys: Optional[Set[str]] = None) -> Optional[str]:
+        """
+        The next usable key in turn. Requests are spread over the pool, so every key's per-minute pace and per-model
+        daily allowance add up, instead of all requests landing on the first key until it is spent.
+        """
+        global _RR_INDEX
+        now = time.time()
+        exclude = exclude_keys or set()
+        with _pool_lock:
+            keys = GeminiKeyPool.get_keys()
+            for step in range(len(keys)):
+                index = (_RR_INDEX + step) % len(keys)
+                key = keys[index]
+                if key in exclude or now < _KEY_COOLDOWNS.get(key, 0.0):
+                    continue
+                _RR_INDEX = (index + 1) % len(keys)
+                return key
+            return None
+
+    @staticmethod
+    def key_for_better_model(ranked_models: List[str], best_here: Optional[str],
+                             exclude_keys: Optional[Set[str]] = None) -> Optional[str]:
+        """
+        Another usable key on which a model ranked above `best_here` (the best model still open on the current key)
+        has not reached its limit, or None. The strongest model is used on every key before any key falls back to a
+        weaker one (a free key may allow only 20 requests a day of the best model).
+        """
+        now = time.time()
+        exclude = exclude_keys or set()
+        with _pool_lock:
+            keys = [k for k in GeminiKeyPool.get_keys() if k not in exclude and now >= _KEY_COOLDOWNS.get(k, 0.0)]
+            for model in ranked_models:
+                if model == best_here:
+                    return None
+                for key in keys:
+                    if now >= _MODEL_COOLDOWNS.get((key, model), 0.0):
+                        return key
+            return None
 
     @staticmethod
     def get_active_key(exclude_keys: Optional[Set[str]] = None) -> Optional[str]:
@@ -565,6 +609,8 @@ class GeminiKeyPool:
                 _KEY_COOLDOWNS.clear()
                 _MODEL_COOLDOWNS.clear()
                 GeminiRateLimiter.reset()
+                global _RR_INDEX
+                _RR_INDEX = 0
 
             try:
                 from backend.ai_polisher import reset_gemini_quota_exhaustion

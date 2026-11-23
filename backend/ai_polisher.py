@@ -44,6 +44,7 @@ _FULL_MODELS_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("gemini
 # every request re-waited the full timeout on the same slow model before reaching a responsive one.
 _MODEL_SLOW_UNTIL: dict[str, float] = {}
 SLOW_MODEL_PENALTY_S = 600.0
+OVERLOADED_MODEL_PENALTY_S = 120.0  # a 500/503 answer: overloads pass quickly
 
 
 def _deprioritize_slow_models(candidates: list[str]) -> list[str]:
@@ -148,8 +149,9 @@ STYLE_TEMPERATURES = {
 
 # Cached discoveries to avoid querying Google ModelService on every single page
 _CACHED_WORKING_MODEL: Optional[str] = None
-_CACHED_AVAILABLE_MODELS: Optional[list[str]] = None
+_CACHED_AVAILABLE_MODELS: Optional[list[str]] = None  # the models of the key used last
 _CACHED_API_KEY_HASH: Optional[str] = None
+_MODELS_BY_KEY: dict[str, list[str]] = {}  # key hash -> its text models: requests take the pool's keys in turn
 _CHECKPOINT_LOCK = threading.RLock()
 
 POLISH_STATUS: dict[str, dict[str, Any]] = {}
@@ -178,6 +180,7 @@ def reset_model_cache():
     global _CACHED_WORKING_MODEL, _CACHED_AVAILABLE_MODELS
     _CACHED_WORKING_MODEL = None
     _CACHED_AVAILABLE_MODELS = None
+    _MODELS_BY_KEY.clear()
     reset_gemini_quota_exhaustion()
 
 
@@ -1243,14 +1246,14 @@ async def _get_available_models(api_key: str, session: aiohttp.ClientSession) ->
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         return ["gemini-flash-latest", "gemini-2.5-flash-lite"]
 
-    global _CACHED_AVAILABLE_MODELS, _CACHED_WORKING_MODEL, _CACHED_API_KEY_HASH
+    global _CACHED_AVAILABLE_MODELS, _CACHED_API_KEY_HASH
     key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
-    if _CACHED_API_KEY_HASH != key_hash:
-        _CACHED_WORKING_MODEL = None
-        _CACHED_AVAILABLE_MODELS = None
-        _CACHED_API_KEY_HASH = key_hash
-    if _CACHED_AVAILABLE_MODELS:
-        return _CACHED_AVAILABLE_MODELS
+    # each key is listed once: requests take the pool's keys in turn, so a single cached list would be re-read
+    # on every request
+    known = _MODELS_BY_KEY.get(key_hash)
+    if known:
+        _CACHED_AVAILABLE_MODELS, _CACHED_API_KEY_HASH = known, key_hash
+        return known
 
     url = "https://generativelanguage.googleapis.com/v1beta/models"
     headers = {"x-goog-api-key": api_key}
@@ -1270,7 +1273,9 @@ async def _get_available_models(api_key: str, session: aiohttp.ClientSession) ->
                     valid_models.append(name)
 
                 logger.info(f"Discovered {len(valid_models)} valid text Gemini models: {valid_models}")
-                _CACHED_AVAILABLE_MODELS = valid_models
+                if valid_models:
+                    _MODELS_BY_KEY[key_hash] = valid_models
+                _CACHED_AVAILABLE_MODELS, _CACHED_API_KEY_HASH = valid_models, key_hash
                 return valid_models
             else:
                 err = await resp.text()
@@ -2033,6 +2038,9 @@ async def _call_gemini_api(
 
     # Allow rotation across pool if no key was explicitly pinned, or if the provided key belongs to the configured pool
     allow_pool_rotation = (not (api_key or "").strip()) or (initial_key in pool_keys)
+    if allow_pool_rotation and len(pool_keys) > 1 and not initial_key.startswith(("AQ.Test", "AIzaTest")):
+        # requests take the pool's keys in turn: parallel batches use every key's pace and daily allowance
+        initial_key = GeminiKeyPool.next_key() or initial_key
 
     current_key = initial_key
 
@@ -2122,17 +2130,12 @@ async def _call_gemini_api(
             active_key = current_key
             switched_key = False
 
+            # Models in order of preference. The model that worked last is no longer put first: that kept every key on
+            # a fallback once the first key had used up the best model's daily allowance. An overloaded or timing-out
+            # model is tried last for a while instead (_deprioritize_slow_models).
             candidates = []
-
-            # If a full (non-lite, non-gemma) working model was already cached, try it first
-            if (
-                _CACHED_WORKING_MODEL
-                and not _CACHED_WORKING_MODEL.startswith("gemma")
-                and "lite" not in _CACHED_WORKING_MODEL.lower()
-            ):
-                candidates.append(_CACHED_WORKING_MODEL)
-
             discovered = await _get_available_models(active_key, session)
+
             if discovered:
                 # 1. Preferred full Flash models first, then Flash-Lite
                 for pref in PREFERRED_FLASH_MODELS:
@@ -2160,9 +2163,24 @@ async def _call_gemini_api(
             if _FULL_MODELS_ONLY.get():
                 candidates = [m for m in candidates if _is_full_model(m)]
             candidates = _deprioritize_slow_models(candidates)
+            ranked = list(candidates)
 
             # Filter out candidate models that are currently cooling down for this specific key
             candidates = GeminiKeyPool.get_active_models_for_key(active_key, candidates)
+
+            # The strongest model first on every key: when it reached its daily limit here but not on another key,
+            # that key is used rather than a weaker model here
+            if allow_pool_rotation:
+                better_key = GeminiKeyPool.key_for_better_model(
+                    ranked, candidates[0] if candidates else None, exclude_keys=attempted_keys)
+                if better_key:
+                    logger.info(
+                        f"[Gemini Key Pool] Key {mask_api_key(active_key)} has used its daily allowance of a better "
+                        f"model than {candidates[0] if candidates else 'any left'}: continuing on key "
+                        f"{mask_api_key(better_key)}.")
+                    current_key = better_key
+                    continue
+
             if not candidates:
                 if allow_pool_rotation:
                     next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=attempted_keys)
@@ -2278,6 +2296,8 @@ async def _call_gemini_api(
                                 logger.info(f"Model {model} overloaded/unavailable ({resp.status}). Immediately trying next candidate...")
                                 if _CACHED_WORKING_MODEL == model:
                                     _CACHED_WORKING_MODEL = None
+                                # tried last for a while, so the next requests do not each meet the overload first
+                                _MODEL_SLOW_UNTIL[model] = time.time() + OVERLOADED_MODEL_PENALTY_S
                                 break
                             elif resp.status == 429:
                                 err_text = await resp.text()

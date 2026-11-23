@@ -1199,6 +1199,8 @@ async def _detect_comic_balloons_vision_async(
         if not initial_key or (not initial_key.startswith(("AQ.Test", "AIzaTest")) and GeminiKeyPool.is_key_exhausted(initial_key)):
             initial_key = GeminiKeyPool.get_active_key() or initial_key
         allow_pool_rotation = (not (api_key or "").strip()) or (initial_key in pool_keys)
+        if allow_pool_rotation and len(pool_keys) > 1 and not initial_key.startswith(("AQ.Test", "AIzaTest")):
+            initial_key = GeminiKeyPool.next_key() or initial_key  # pages take the pool's keys in turn
         api_key = initial_key
 
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
@@ -1209,6 +1211,15 @@ async def _detect_comic_balloons_vision_async(
         attempt_round = 0
         while attempt_round < 2 and not succeeded and not out_of_quota:
             candidates = GeminiKeyPool.get_active_models_for_key(api_key, vision_models)
+            # the strongest Vision model on every key before a weaker one on this key
+            better_key = (GeminiKeyPool.key_for_better_model(vision_models, candidates[0] if candidates else None,
+                                                             exclude_keys=tried_keys)
+                          if allow_pool_rotation else None)
+            if better_key:
+                api_key = better_key
+                tried_keys.add(api_key)
+                headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+                continue
             if not candidates:  # every Vision model's own allowance is used up on this key
                 next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=tried_keys) if allow_pool_rotation else None
                 if not next_pool_key:
