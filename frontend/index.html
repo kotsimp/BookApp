@@ -8,12 +8,21 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.9.4" />
+  <link rel="stylesheet" href="style.css?v=2.10.0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
 
 <div class="app-wrapper">
+
+  <!-- ── Signed-in user (only with user accounts, BOOKAPP_AUTH=1) ── -->
+  <div class="auth-bar auth-only" id="auth-bar">
+    <button type="button" class="theme-toggle-btn" id="auth-account-btn" onclick="openAccountModal()" title="Ο λογαριασμός μου · αλλαγή κωδικού">
+      👤 <span id="auth-user-label"></span> <span class="auth-pill" id="auth-role-badge"></span>
+    </button>
+    <button type="button" class="theme-toggle-btn auth-admin-only" id="auth-users-btn" onclick="openUsersModal()" title="Διαχείριση χρηστών">👥 Χρήστες</button>
+    <button type="button" class="theme-toggle-btn" id="auth-logout-btn" onclick="logoutAccount()" title="Αποσύνδεση">🚪 Αποσύνδεση</button>
+  </div>
 
   <!-- ── Hero ── -->
   <header class="hero animate-in" style="position:relative">
@@ -63,7 +72,7 @@
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
     </button>
-    <button class="tab-btn tab-btn-tool" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
+    <button class="tab-btn tab-btn-tool auth-admin-only" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
       <span class="tab-icon">🔑</span>
       <span class="tab-label">Gemini API Key</span>
       <span id="nav-gemini-quota-badge" style="display:none; font-size:0.72rem; padding:2px 7px; border-radius:10px; font-weight:600; margin-left:6px"></span>
@@ -1031,7 +1040,13 @@
   <!-- ── Session History ── -->
   <section class="history-section" id="history-section">
     <div class="history-title">
-      <span>🕑 Session History</span>
+      <span class="history-title-main">
+        <span>🕑 Session History</span>
+        <select id="history-owner-filter" class="form-select-sm auth-only auth-admin-only" onchange="onHistoryOwnerFilterChange(this.value)" title="Ποιανού τις εργασίες βλέπετε" aria-label="Ποιανού τις εργασίες βλέπετε">
+          <option value="mine">Οι εργασίες μου</option>
+          <option value="all">Όλοι οι χρήστες</option>
+        </select>
+      </span>
       <button class="clear-history-btn" id="clear-history-btn" onclick="clearAllHistory()" style="display:none">
         🗑️ Clear All
       </button>
@@ -1195,6 +1210,73 @@
   </div>
 </div>
 
+<!-- My account (user accounts mode) -->
+<div class="modal-overlay" id="account-modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">👤 Ο λογαριασμός μου</div>
+      <button class="modal-close" onclick="closeAccountModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="account-summary" class="auth-summary"></div>
+      <div class="form-label" style="margin-top:16px">🔒 Αλλαγή κωδικού</div>
+      <div class="auth-form-stack">
+        <input type="password" id="account-current-password" class="form-input" placeholder="Τρέχων κωδικός" autocomplete="current-password" />
+        <input type="password" id="account-new-password" class="form-input" placeholder="Νέος κωδικός (τουλάχιστον 10 χαρακτήρες)" autocomplete="new-password" />
+        <input type="password" id="account-new-password2" class="form-input" placeholder="Επανάληψη νέου κωδικού" autocomplete="new-password" />
+      </div>
+      <p class="auth-muted" style="margin-top:8px">Μετά την αλλαγή αποσυνδέεστε από όλες τις άλλες συσκευές σας.</p>
+      <div class="auth-modal-actions">
+        <button class="btn btn-secondary" onclick="logoutAccount()">🚪 Αποσύνδεση</button>
+        <button class="btn btn-primary" id="account-save-password-btn" onclick="submitPasswordChange()">Αποθήκευση κωδικού</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- User management (administrators, user accounts mode) -->
+<div class="modal-overlay" id="users-modal" style="display:none">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">👥 Χρήστες &amp; δικαιώματα</div>
+      <button class="modal-close" onclick="closeUsersModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="auth-muted" style="margin-bottom:12px">
+        Οι <strong>χρήστες</strong> βλέπουν μόνο τις δικές τους εργασίες. Οι <strong>διαχειριστές</strong> διαχειρίζονται χρήστες,
+        Gemini API keys και ρυθμίσεις και βλέπουν όλες τις εργασίες. Πρέπει να υπάρχει πάντα τουλάχιστον ένας ενεργός διαχειριστής.
+      </p>
+      <div class="auth-create-row">
+        <input type="text" id="users-new-username" class="form-input" placeholder="Όνομα χρήστη (π.χ. maria)" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <select id="users-new-role" class="form-select">
+          <option value="user">Χρήστης</option>
+          <option value="admin">Διαχειριστής</option>
+        </select>
+        <input type="text" id="users-new-password" class="form-input" placeholder="Προσωρινός κωδικός (κενό = αυτόματος)" autocomplete="off" spellcheck="false" />
+        <button type="button" class="btn btn-primary" id="users-create-btn" onclick="createUserAccount()">➕ Δημιουργία</button>
+      </div>
+      <div id="users-temp-box" class="auth-notice" style="display:none">
+        <div id="users-temp-text"></div>
+        <button type="button" class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="copyTempPassword()">📋 Αντιγραφή κωδικού</button>
+      </div>
+      <div id="users-delete-box" class="auth-notice auth-notice-danger" style="display:none">
+        <div id="users-delete-text"></div>
+        <div class="auth-user-actions">
+          <button type="button" class="btn btn-sm btn-secondary" onclick="confirmDeleteUser('transfer')">Διαγραφή — οι εργασίες του μεταφέρονται σε εμένα</button>
+          <button type="button" class="btn btn-sm btn-secondary auth-danger" onclick="confirmDeleteUser('delete')">Διαγραφή μαζί με τις εργασίες και τα αρχεία</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="cancelDeleteUser()">Άκυρο</button>
+        </div>
+      </div>
+      <div id="users-error" class="auth-notice auth-notice-danger" style="display:none"></div>
+      <div id="users-list" class="auth-users-list"></div>
+      <details class="auth-audit">
+        <summary>📜 Ιστορικό ενεργειών διαχείρισης</summary>
+        <ul id="users-audit-list"></ul>
+      </details>
+    </div>
+  </div>
+</div>
+
 <!-- Glossary Modal -->
 <div class="modal-overlay" id="glossary-modal" style="display:none">
   <div class="modal-box modal-lg">
@@ -1325,8 +1407,9 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.11.3"></script>
+<script src="app.js?v=2.12.0"></script>
 <script src="insights.js?v=2.9.1"></script>
 <script src="pairing.js?v=2.9.0"></script>
+<script src="auth.js?v=1.0.0"></script>
 </body>
 </html>

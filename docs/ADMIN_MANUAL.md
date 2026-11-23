@@ -14,6 +14,8 @@ This manual is intended for System Administrators, DevOps Engineers, and technic
    - [Option B: Linux Systemd Service](#option-b-linux-systemd-service)
    - [Option C: Docker & Docker Compose](#option-c-docker--docker-compose)
    - [Nginx Reverse Proxy Configuration with SSE](#nginx-reverse-proxy-configuration-with-sse)
+   - [User Accounts & Administrators (sign-in)](#user-accounts--administrators-sign-in)
+   - [HTTPS for User Accounts (Caddy, nginx, Synology DSM)](#https-for-user-accounts-caddy-nginx-synology-dsm)
 5. [Storage Layout & Data Management](#5-storage-layout--data-management)
    - [Directory Structure](#directory-structure)
    - [REST API Administration Endpoints](#rest-api-administration-endpoints)
@@ -98,6 +100,7 @@ The application implements an asynchronous, event-driven API architecture:
   * **Acceptance:** identical page markers and a length ratio of 0.8–1.25; whitespace-only differences count as `verified_clean`; the file is replaced atomically via a `.revision-tmp` file.
   * **Report:** `revision_report = {status: revised|verified_clean|skipped|error, reason, changed_lines, similarity, duration_s}`, persisted in job metadata and exposed via `GET /api/status/{job_id}` and SSE.
 * **Format-preserving AI translation (`backend/ai_segment_translator.py` + `format_preserver`):** when AI Polish and a key are used for DOCX→DOCX or EPUB→EPUB, `format_preserver` collects units in document order. Units are paragraphs, or individual runs for mixed bold/italic paragraphs (DOCX), or text nodes (EPUB). Gemini translates them in numbered batches (`⟦n⟧ text`, ~4,000 characters / 60 segments) with the direct-translation prompt, dossier (>18k characters) and glossary, and the result is written back in place. Missing or duplicated segments are retried in halves, then fall back to the free engine individually. A quota error falls back or propagates per `quota_behavior`. Maximum quality is not applied to these outputs (`revision_report.reason = format_preserved_output`).
+* **User accounts (`backend/auth.py`, `backend/request_context.py`, `backend/api/auth.py`):** optional (`BOOKAPP_AUTH=1`). The `account_login_guard` middleware resolves the session cookie, redirects pages to `/login` or `/setup`, refuses administrator-only endpoints to users and answers 404 for another user's job id in a URL. Jobs carry an `owner` (stored in the job metadata; empty = administrators' jobs from before accounts); `get_job()` and `list_jobs()` hide other users' jobs, so endpoints taking a `job_id` in the body answer 404 too. The batch queue processor runs in a fresh context (it serves every user) and acts as each item's owner while running it. Gemini usage is also counted per user (`get_daily_gemini_usage_by_user()`). See [User Accounts & Administrators](#user-accounts--administrators-sign-in).
 * **Gemini usage accounting:** `ai_polisher.track_gemini_usage()` opens a context-scoped accumulator around each job, Book Insights task and standalone polish. `record_gemini_usage()` adds `usageMetadata` (and cache hits) per call, including comic Vision calls. The result is stored in `Job.gemini_usage` and exposed via status/SSE; the daily total is in `GET /api/gemini/status` (`usage_today`).
 * **Slow-model memory:** a model that times out is moved to the end of the candidate list for `SLOW_MODEL_PENALTY_S = 600` seconds; a success clears it.
 * **M4B chapters:** `tts_engine.compute_chapter_marks()` derives chapter start times from the synthesised parts (exporter heading detector; proportional placement inside a part; size-based duration fallback). They're written next to the output as `<name>.chapters.json` and passed to ffmpeg as an FFMETADATA file (`-map_metadata` / `-map_chapters`), both during generation and for on-demand MP3→M4B downloads. The ffmpeg timeout is `300 s + 4 s/MB`. Output is staged and swapped atomically; an unreadable cover is skipped, and any other failure is an error (never MP3 data named `.m4b`).
@@ -140,9 +143,10 @@ The application implements an asynchronous, event-driven API architecture:
   * `BOOKAPP_CORS_ORIGINS="https://a.example,https://b.example"`: extra origins allowed to call the API cross-origin. Normally unnecessary: the UI is served by the same server (same origin), including behind Nginx, on a LAN or in Docker.
 * **CORS policy:** only same-origin requests and local development origins (`http(s)://localhost`, `127.0.0.1` and `[::1]`, any port) receive CORS permission. Other websites open in the user's browser cannot read API responses, such as `/api/settings`, which contains the Gemini keys. They also cannot send JSON or DELETE requests to the app.
 * **Input validation:** `output_format`, `layout_mode`, `reading_direction` and `quota_behavior` accept only known values, and languages only plain words (they become part of file names); anything else is HTTP 400.
-* **Network exposure:** the API has no user accounts; it's designed as a single-user local app. `run.py` and `start_bookapp.bat` bind to `127.0.0.1`. The Docker image binds to `0.0.0.0`, so on a LAN anyone who can reach port 8000 can use the app. Use device pairing (below), expose it only on trusted networks, or put it behind a reverse proxy with authentication.
+* **Network exposure:** without user accounts the app is single-user. `run.py` and `start_bookapp.bat` bind to `127.0.0.1`. The Docker image binds to `0.0.0.0`, so on a LAN anyone who can reach port 8000 can use the app. For a server shared by several people, switch on **user accounts** (`BOOKAPP_AUTH=1`, see [User Accounts & Administrators](#user-accounts--administrators-sign-in)) and serve it over HTTPS. For one person on a home network, device pairing (below) is enough.
+* **`BOOKAPP_AUTH=1`:** user accounts with administrators (sign-in required). It replaces device pairing: `BOOKAPP_PAIRING` is ignored while it is on.
 * **Gemini API keys** are stored only in `config/settings.json` on the server. `GET /api/settings` returns masked forms (`AIzaSy...4f2D`), and the browser never stores keys. `GeminiKeyPool.set_keys` and `resolve_gemini_api_key` map masked values back to the stored keys, and drop unknown masked values.
-* **Device pairing (optional, no password):**
+* **Device pairing (optional, no password; single user):**
   * **Enabling:** set `BOOKAPP_PAIRING=1`. Only trusted clients can use the app: the host computer (loopback) and paired devices. Unpaired clients get HTTP 403 (a JSON message for `/api/*`, an explanatory page otherwise). `/api/health` stays open for health checks.
   * **First device:** at startup the server logs a one-time link `http://<this-computer>:8000/pair?code=...`, valid 15 minutes and single use. Opening it sets a 1-year HttpOnly, SameSite=Lax cookie.
   * **More devices:** create links from any trusted device in **🔑 Gemini API Key → 📱 Συσκευές**, which also lists devices and lets you revoke them.
@@ -228,6 +232,8 @@ For continuous 24/7 background operation on servers, run the application as a ma
    Restart=always
    RestartSec=5
    Environment=PYTHONUNBUFFERED=1
+   # User accounts (sign-in) - see "User Accounts & Administrators" below
+   Environment=BOOKAPP_AUTH=1
 
    [Install]
    WantedBy=multi-user.target
@@ -281,6 +287,91 @@ server {
 }
 ```
 
+### User Accounts & Administrators (sign-in)
+
+Off by default. With `BOOKAPP_AUTH=1` everyone signs in with a username and password.
+
+**Roles**
+
+| | User | Administrator |
+|---|---|---|
+| Translate, audiobooks, Book Insights | ✅ | ✅ |
+| Session History, downloads, batch queue | own jobs only | all jobs (filter: mine / all users / one user) |
+| Own password, sign out | ✅ | ✅ |
+| Gemini API keys, settings, device pairing, storage clean-up | — | ✅ |
+| Create users, reset passwords, disable, delete, sign out everywhere | — | ✅ |
+| Make another user an administrator (same rights) or remove the rights | — | ✅ |
+| Gemini usage today per user | own (👤 menu) | everyone (👥 Χρήστες) |
+
+The Gemini keys stay one shared pool managed by the administrators; users never see them, not even masked. Another user's job is answered with "not found" everywhere (status, downloads, progress, editor, insights, queue, AI Polish), so job ids reveal nothing. The batch queue processes everyone's documents one at a time; each user sees and clears only their own items, and *Start* applies a user's settings only to that user's documents (*Pause* and *Auto-start* act on the whole shared queue). The glossary is shared by all users.
+
+**The first administrator** (no account exists yet). Use either way:
+
+1. **Setup code (browser).** On the first start with accounts on, the server writes a one-time code to its log and to `data/setup_code.txt` (owner-only permissions on Linux):
+   ```text
+   BookApp FIRST-TIME SETUP: no user account exists yet.
+   Open  http://<this-server>:8000/setup  (or https://<your-domain>/setup) in a browser
+   and enter the setup code:   7K3F-9QXM
+   ```
+   Read it on the server, then open `/setup` on any computer, enter the code and choose a username and password. Until then every page leads to `/setup`, and nobody can become administrator without the code. The code survives restarts and is deleted as soon as the first administrator exists. Ten wrong codes pause setup for 15 minutes.
+
+   | Installation | Where to read the code |
+   |---|---|
+   | Ubuntu, systemd | `sudo journalctl -u bookapp \| grep "setup code"` or `sudo cat /opt/BookApp/data/setup_code.txt` |
+   | Docker | `docker logs bookapp \| grep "setup code"` or `./data/setup_code.txt` next to `docker-compose.yml` |
+   | Synology (Container Manager) | **Container → bookapp → Log**, or with File Station the file `setup_code.txt` in the folder mapped to `/app/data` (for example `/docker/bookapp/data/`) |
+
+2. **Command line (SSH).** Run in the BookApp folder with its Python environment; it works while the server runs:
+   ```bash
+   cd /opt/BookApp && .venv/bin/python -m backend.auth create-admin kostas     # asks for the password twice
+   docker exec -it bookapp python -m backend.auth create-admin kostas           # Docker / Synology
+   ```
+
+**Account tool** (`python -m backend.auth <command>`; prefix `docker exec -it bookapp` for Docker):
+
+| Command | What it does |
+|---|---|
+| `create-admin NAME` / `create-user NAME` | Creates an account (asks for the password; `--password-stdin` for scripts) |
+| `reset-password NAME` | Sets a new password and signs that user out everywhere. **Recovery** when the only administrator forgot the password: access to the server is the key |
+| `make-admin NAME` | Gives administrator rights and re-enables the account |
+| `list-users` | Lists accounts, roles, last sign-in |
+| `setup-code` | Shows the setup code while no account exists |
+
+**Administrators in the app:** the **👥 Χρήστες** button opens user management:
+* **Create:** username (2–32 Latin letters, digits, `.` `_` `-`) and role; leave the password empty to get a generated temporary one (shown once). Every new user must choose an own password at the first sign-in.
+* **⭐ Κάνε διαχειριστή / ⬇️ Αφαίρεση δικαιωμάτων:** a promoted user has exactly the administrators' rights.
+* **🔑 Επαναφορά κωδικού:** new temporary password; the user is signed out everywhere.
+* **⏸️ Απενεργοποίηση:** blocks sign-in and ends all sessions at once; **✅ Ενεργοποίηση** undoes it.
+* **🚪 Αποσύνδεση παντού** and **🗑️ Διαγραφή**. Deleting asks what happens to the user's jobs: transferred to you, or deleted with their files.
+* **Safeguards:** the last active administrator cannot be demoted, disabled or deleted, and you cannot disable or delete your own account. All these actions are recorded in **📜 Ιστορικό ενεργειών διαχείρισης** (last 2,000 entries).
+
+**Sessions:** *Να παραμείνω συνδεδεμένος/η* (ticked by default) keeps a user signed in for **60 days, renewed on every visit**: someone who uses the app regularly is not signed out until they sign out. Unticked, the session ends with the browser (at most 12 idle hours). Changing a password signs out the user's other sessions. **Lockout:** 5 wrong passwords lock that username for 15 minutes; 20 from one address lock that address.
+
+**Security details:** passwords are stored only as salted scrypt hashes (Python standard library, no extra packages) in `data/auth.db`; session tokens are random, sent in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) and stored only as SHA-256 hashes. Minimum password length 10 (no forced periodic changes). Existing jobs from before accounts were switched on belong to the administrators. Back up `data/auth.db` together with `data/bookapp.db`.
+
+**Endpoints:** `GET /login`, `GET /setup`, `GET /api/auth/status`, `POST /api/auth/setup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/change-password`; administrators: `GET|POST /api/auth/users`, `POST /api/auth/users/{id}/role|disabled|reset-password|sign-out`, `DELETE /api/auth/users/{id}?jobs=transfer|delete`, `GET /api/auth/audit`. `GET /api/jobs` and `DELETE /api/jobs` take `scope=mine|all|<user id>` (administrators); for users they always mean their own jobs.
+
+### HTTPS for User Accounts (Caddy, nginx, Synology DSM)
+
+Passwords must not travel over plain `http://` outside your own home network. Put BookApp behind a reverse proxy with a free Let's Encrypt certificate, and let only the proxy reach port 8000.
+
+* **Caddy (Ubuntu, simplest; obtains and renews the certificate itself):** `/etc/caddy/Caddyfile`
+  ```text
+  books.example.com {
+      request_body {
+          max_size 250MB
+      }
+      reverse_proxy 127.0.0.1:8000 {
+          flush_interval -1
+      }
+  }
+  ```
+  Then bind BookApp to the local address only: `--host 127.0.0.1` in the systemd `ExecStart` line.
+* **nginx:** use the configuration above with `listen 443 ssl;` and a certificate from `certbot --nginx`. It already sends `X-Forwarded-For` and `X-Forwarded-Proto`.
+* **Synology DSM:** **Control Panel → Login Portal → Advanced → Reverse Proxy → Create**: source `HTTPS`, your hostname, port 443; destination `HTTP`, `localhost`, port 8000. Get the certificate in **Control Panel → Security → Certificate**. In the container settings add the environment variables `BOOKAPP_AUTH=1` and `FORWARDED_ALLOW_IPS=*`. If after signing in over HTTPS the browser's cookie details show `bookapp_session` without *Secure*, the proxy does not pass the original scheme: add under **Custom Header** `X-Forwarded-Proto` = `$scheme` and `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, or set `BOOKAPP_COOKIE_SECURE=1`.
+
+**Why `FORWARDED_ALLOW_IPS`:** Uvicorn trusts the proxy's `X-Forwarded-For` / `X-Forwarded-Proto` headers only from `127.0.0.1` by default. That covers Caddy or nginx on the same machine. In Docker the proxy arrives over Docker's network (for example `172.17.0.1`), so set `FORWARDED_ALLOW_IPS=*` (or the proxy's address). Without it, BookApp sees every visitor as the proxy's address (a lockout would hit everybody) and does not notice HTTPS. Use `*` only when port 8000 is not reachable from untrusted networks except through the proxy. `BOOKAPP_COOKIE_SECURE=1` forces the `Secure` cookie flag regardless.
+
 ---
 
 ## 5. Storage Layout & Data Management
@@ -290,12 +381,14 @@ server {
 BookApp/
 ├── backend/
 │   ├── main.py              # FastAPI application (pipelines, core endpoints & SSE streaming)
-│   ├── api/                 # API routers: refine.py, insights.py, pairing.py + shared common.py (58 REST endpoints in total)
+│   ├── api/                 # API routers: refine.py, insights.py, pairing.py, auth.py + shared common.py (75 routes in total)
 │   ├── output_refiner.py    # Final Output Refinement & quality-control stage
 │   ├── book_insights.py     # Book Insights: summaries, synopses & their audio
 │   ├── translation_prompts.py # Versioned prompt library (translation, polish, revision, audiobook script, dossier)
 │   ├── ai_segment_translator.py # Format-preserving AI translation of DOCX/EPUB segments
 │   ├── device_pairing.py    # Optional password-free device pairing (BOOKAPP_PAIRING=1)
+│   ├── auth.py              # Optional user accounts & administrators (BOOKAPP_AUTH=1); account tool: python -m backend.auth
+│   ├── request_context.py   # Signed-in user of the current request (job visibility, usage per user)
 │   ├── ai_polisher.py       # Single-Pass Direct AI Translation & Gemini Polish engine
 │   ├── comic_translator.py  # Graphic Novel, Scanned PDF & Manga (RTL) Vision AI engine
 │   ├── queue_manager.py     # Smart Batch Queue serial engine (max 20 files, retry, auto-pause)
@@ -319,12 +412,14 @@ BookApp/
 │   ├── glossary.json        # Categorized custom glossary terms (3,366+ terms across Technical, Literary, General)
 │   └── settings.json        # Persistent configuration & API keys (gitignored)
 ├── data/
-│   └── bookapp.db           # Persistent SQLite database (jobs, settings & semantic cache)
-├── frontend/                # Single-page app: index.html, style.css, app.js (core), insights.js, pairing.js
+│   ├── bookapp.db           # Persistent SQLite database (jobs, settings & semantic cache)
+│   ├── auth.db              # User accounts: password hashes, session hashes, audit log (BOOKAPP_AUTH=1)
+│   └── setup_code.txt       # One-time first-administrator setup code (deleted after setup)
+├── frontend/                # Single-page app: index.html, login.html, style.css, app.js (core), insights.js, pairing.js, auth.js
 ├── temp/
 │   ├── uploads/{job_id}/    # Uploaded input documents
 │   └── outputs/{job_id}/    # Translated books, checkpoints, audiobooks (+ <name>.chapters.json), insights/
-├── tests/                   # 61 automated test suites (sandboxed)
+├── tests/                   # 62 automated test suites (sandboxed)
 ├── eval/passages.json       # Translation quality evaluation passages
 ├── scripts/                 # eval_translation_quality.py (quality evaluation runner)
 ├── requirements.txt
@@ -332,12 +427,12 @@ BookApp/
 ```
 
 ### REST API Administration Endpoints
-The backend provides **58 REST endpoints** for complete administrative control:
+The backend provides **75 routes** (REST endpoints plus the `/login`, `/setup` and `/pair` pages) for complete administrative control. User-account endpoints are listed in [User Accounts & Administrators](#user-accounts--administrators-sign-in):
 * `POST /api/translate`: Initiates document translation. Supports `quota_behavior: "wait" | "fallback"`, `final_refinement` (local quality stage override) and `max_quality` (second AI revision against the original; requires `ai_polish` and a Gemini key).
 * `POST /api/audiobook`: Initiates neural audiobook synthesis.
 * `GET /api/queue`, `POST /api/queue/add`, `POST /api/queue/start`, `POST /api/queue/pause`, `POST /api/queue/auto-start`, `POST /api/queue/{job_id}/retry`, `GET /api/queue/download-all`, `DELETE /api/queue/{job_id}`, `DELETE /api/queue`: Full Smart Batch Queue administration.
 * `DELETE /api/jobs/{job_id}`: Deletes a specific job from memory, database, queue, and purges its upload and output directories.
-* `DELETE /api/jobs`: Clears all job history and temporary files (retaining the semantic cache).
+* `DELETE /api/jobs`: Clears all job history and temporary files (retaining the semantic cache). With user accounts: only the requester's jobs; administrators can pass `scope=all` for the full clean-up.
 * `DELETE /api/jobs/tests/cleanup`: Purges test-generated jobs inside the test sandbox. On a normal installation it deletes nothing and returns `deleted_count: 0`.
 * `GET /api/settings`, `POST /api/settings`, `DELETE /api/settings/{key}`: Reads, saves, and deletes configuration parameters.
 * `GET /api/gemini/pool`: Returns detailed Multi-Key Pool status (total keys, active keys, individual slot health, and cooldown timestamps).
@@ -379,16 +474,16 @@ On startup, `cleanup_old_jobs()` resets interrupted jobs and removes scratch fil
 
 ## 6. Automated Test Suite Execution
 
-The repository includes a comprehensive master test runner with **100% endpoint coverage across all 58 FastAPI routes**:
+The repository includes a comprehensive master test runner with **100% endpoint coverage across all 75 FastAPI routes**:
 
 > [!IMPORTANT]
 > **Tests never see your data:** `run_all_tests.py` works in a throw-away copy on a free port, with an empty database and no API keys. A running BookApp on port 8000 is not used. Test files refuse to run outside this sandbox.
 
 ```bash
-# Execute all 61 test suites (Full Master Suite):
+# Execute all 62 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (56 local static, unit, contract, UI, and queue suites):
+# Fast execution (57 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 
 # Selected suites:
@@ -482,8 +577,9 @@ The master runner automatically executes all test suites:
 59. `test_target_language.py`: English targets get English instructions; an AI answer in another language or with lost text never replaces the book's text.
 60. `test_text_fidelity.py`: clean-up passes never change correct text, and boundary de-duplication never deletes text the book repeats.
 61. `test_voice_fallback.py`: a refused or cut voice request never leaves gaps in an audiobook; network drops are waited out in the chosen voice; Resume reuses parts.
+62. `test_auth.py`: user accounts (18 tests). Covers: accounts off changes nothing; the first administrator through the setup code (log/file, stable across restarts, forgiving format, single use) and through the command-line tool; scrypt hashes and password rules; the 5-failure lockout; 60-day remembered sessions that slide forward vs browser sessions; temporary passwords that must be changed before anything else; HttpOnly/SameSite cookies, `Secure` behind an HTTPS proxy; admin-only endpoints and hidden keys; users reach only their own jobs (history, status, downloads, progress, editor, insights, cancel, delete, translate, polish, queue, Clear All) while administrators see all with the filter; promote, demote, disable, reset, sign out everywhere, delete with job transfer or deletion, audit log; the last active administrator protected; pairing replaced; the browser script (expired session to the login page, admin-only controls hidden).
 
-All test suites pass: **`61/61 PASS (56/56 in --fast mode)`** on Windows 11 (Python 3.15) and on Linux (Ubuntu 20.04 under WSL, Python 3.11, bsdtar instead of 7-Zip).
+All test suites pass: **`62/62 PASS (57/57 in --fast mode)`** on Windows 11 (Python 3.15) and on Linux (Ubuntu 20.04 under WSL, Python 3.11, bsdtar instead of 7-Zip).
 
 ---
 

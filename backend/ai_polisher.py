@@ -65,6 +65,7 @@ def _is_full_model(name: str) -> bool:
 # asyncio tasks, which inherit the context) adds its usageMetadata. A daily total is kept for the settings view.
 _USAGE_ACC: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("gemini_usage_acc", default=None)
 _DAILY_USAGE: dict[str, Any] = {"date": "", "requests": 0, "cached": 0, "prompt_tokens": 0, "output_tokens": 0}
+_DAILY_USAGE_BY_USER: dict[str, dict[str, Any]] = {}  # user accounts mode: today's usage per user id
 _USAGE_LOCK = threading.Lock()
 
 
@@ -97,10 +98,16 @@ def record_gemini_usage(response_json: Optional[dict] = None, cached: bool = Fal
     with _USAGE_LOCK:
         if _DAILY_USAGE["date"] != today:
             _DAILY_USAGE.update(date=today, requests=0, cached=0, prompt_tokens=0, output_tokens=0)
+            _DAILY_USAGE_BY_USER.clear()
         targets = [_DAILY_USAGE]
         acc = _USAGE_ACC.get()
         if acc is not None:
             targets.append(acc)
+        from backend.request_context import current_user_id
+        uid = current_user_id()
+        if uid:
+            targets.append(_DAILY_USAGE_BY_USER.setdefault(
+                uid, {"requests": 0, "cached": 0, "prompt_tokens": 0, "output_tokens": 0}))
         for t in targets:
             if cached:
                 t["cached"] = t.get("cached", 0) + 1
@@ -110,6 +117,15 @@ def record_gemini_usage(response_json: Optional[dict] = None, cached: bool = Fal
                 t["output_tokens"] = t.get("output_tokens", 0) + o_tok
             if "total_tokens" in t:
                 t["total_tokens"] = t["prompt_tokens"] + t["output_tokens"]
+
+
+def get_daily_gemini_usage_by_user() -> dict[str, dict[str, Any]]:
+    """Today's Gemini usage per user id (user accounts mode), for the administrators' Users panel."""
+    with _USAGE_LOCK:
+        if _DAILY_USAGE["date"] != time.strftime("%Y-%m-%d"):
+            return {}
+        return {uid: dict(u, total_tokens=u["prompt_tokens"] + u["output_tokens"])
+                for uid, u in _DAILY_USAGE_BY_USER.items()}
 
 
 def get_daily_gemini_usage() -> dict[str, Any]:

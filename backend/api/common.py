@@ -69,3 +69,20 @@ def _job_output_dir(job_id: str) -> Path:
     d = OUTPUT_DIR / job_id
     d.mkdir(exist_ok=True)
     return d
+
+
+def purge_job(job_id: str) -> None:
+    """Deletes a job completely: stops it, takes it out of the batch queue, removes its files and its record."""
+    import shutil
+    from backend.job_manager import cancel_job, _jobs
+    from backend.queue_manager import remove_from_queue
+    from backend.database import db_delete_job
+    from backend.ai_polisher import POLISH_STATUS
+    cancel_job(job_id)
+    remove_from_queue(job_id)
+    for d in (UPLOAD_DIR / job_id, OUTPUT_DIR / job_id):
+        if d.exists():
+            shutil.rmtree(str(d), ignore_errors=True)
+    _jobs.pop(job_id, None)
+    POLISH_STATUS.pop(job_id, None)
+    db_delete_job(job_id)

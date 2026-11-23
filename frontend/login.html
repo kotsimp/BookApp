@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>BookApp Sign In</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+  <style>
+    :root {
+      --bg: #07091a; --card: #11142a; --input: #1a1e38; --text: #f0f2ff; --muted: #9ba3c0;
+      --border: rgba(255,255,255,0.10); --accent: #7c3aed; --accent-2: #9d6cf0; --error: #f43f5e; --ok: #10b981;
+    }
+    :root[data-theme="light"] {
+      --bg: #f4f5fb; --card: #ffffff; --input: #f0f1f8; --text: #171a33; --muted: #5a6285;
+      --border: rgba(20,24,60,0.14); --accent: #6d28d9; --accent-2: #7c3aed; --error: #c81e3f; --ok: #047857;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+      background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+    }
+    .card {
+      width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+      padding: 28px 24px; box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+    }
+    .brand { text-align: center; margin-bottom: 18px; }
+    .brand .logo { font-size: 2.2rem; }
+    .brand h1 { font-size: 1.25rem; margin: 6px 0 2px; }
+    .brand p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    form { display: none; }
+    form.active { display: block; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 12px 0 5px; }
+    input[type="text"], input[type="password"] {
+      width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--input);
+      color: var(--text); font-size: 1rem;
+    }
+    input:focus { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    .code-input { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: 0.18em; text-transform: uppercase; }
+    .check { display: flex; gap: 8px; align-items: flex-start; margin: 14px 0 4px; font-size: 0.88rem; color: var(--muted); }
+    .check input { margin-top: 3px; }
+    button {
+      width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius: 10px; background: var(--accent);
+      color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .hint { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+    .info { background: rgba(124,58,237,0.10); border: 1px solid rgba(124,58,237,0.30); border-radius: 10px;
+            padding: 10px 12px; font-size: 0.85rem; color: var(--text); margin-bottom: 6px; }
+    .info code { font-size: 0.8rem; word-break: break-all; }
+    .msg { display: none; margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 0.88rem; }
+    .msg.error { display: block; color: var(--error); border: 1px solid var(--error); }
+    .msg.ok { display: block; color: var(--ok); border: 1px solid var(--ok); }
+  </style>
+  <script>
+    try { document.documentElement.setAttribute('data-theme', localStorage.getItem('bookapp_theme') || 'dark'); } catch (_) {}
+  </script>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <div class="logo">📚</div>
+      <h1>DocTranslate &amp; AudioBook</h1>
+      <p id="subtitle">Σύνδεση</p>
+    </div>
+
+    <!-- Sign in -->
+    <form id="form-login" autocomplete="on">
+      <label for="login-username">Όνομα χρήστη</label>
+      <input type="text" id="login-username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required />
+      <label for="login-password">Κωδικός</label>
+      <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      <label class="check"><input type="checkbox" id="login-remember" checked />
+        <span>Να παραμείνω συνδεδεμένος/η (<span id="remember-days">60</span> ημέρες, ανανεώνεται σε κάθε επίσκεψη)</span></label>
+      <button type="submit" id="login-submit">Σύνδεση</button>
+      <p class="hint">Ξεχάσατε τον κωδικό; Ζητήστε από έναν διαχειριστή να τον επαναφέρει.</p>
+    </form>
+
+    <!-- First-time setup: first administrator -->
+    <form id="form-setup" autocomplete="off">
+      <div class="info">
+        Δεν υπάρχει ακόμη λογαριασμός. Δημιουργήστε τον <strong>πρώτο διαχειριστή</strong>.<br />
+        Ο <strong>κωδικός ρύθμισης</strong> βρίσκεται στο log του διακομιστή:<br />
+        <code>sudo journalctl -u bookapp | grep "setup code"</code><br />
+        ή στο αρχείο <code>data/setup_code.txt</code> (Docker: <code>docker logs bookapp</code>).
+      </div>
+      <label for="setup-code">Κωδικός ρύθμισης</label>
+      <input type="text" id="setup-code" class="code-input" placeholder="XXXX-XXXX" maxlength="12" autocomplete="off" spellcheck="false" required />
+      <label for="setup-username">Όνομα χρήστη διαχειριστή</label>
+      <input type="text" id="setup-username" autocomplete="username" autocapitalize="off" spellcheck="false" required />
+      <label for="setup-password">Κωδικός</label>
+      <input type="password" id="setup-password" autocomplete="new-password" required />
+      <label for="setup-password2">Επανάληψη κωδικού</label>
+      <input type="password" id="setup-password2" autocomplete="new-password" required />
+      <p class="hint">Τουλάχιστον <span class="min-len">10</span> χαρακτήρες. Μια φράση από λέξεις είναι ιδανική.</p>
+      <button type="submit" id="setup-submit">Δημιουργία διαχειριστή</button>
+    </form>
+
+    <!-- Change a temporary password -->
+    <form id="form-change" autocomplete="off">
+      <div class="info">Ο διαχειριστής σάς έδωσε <strong>προσωρινό κωδικό</strong>. Επιλέξτε τώρα τον δικό σας.</div>
+      <label for="change-current">Προσωρινός κωδικός</label>
+      <input type="password" id="change-current" autocomplete="current-password" required />
+      <label for="change-new">Νέος κωδικός</label>
+      <input type="password" id="change-new" autocomplete="new-password" required />
+      <label for="change-new2">Επανάληψη νέου κωδικού</label>
+      <input type="password" id="change-new2" autocomplete="new-password" required />
+      <p class="hint">Τουλάχιστον <span class="min-len">10</span> χαρακτήρες.</p>
+      <button type="submit" id="change-submit">Αποθήκευση κωδικού</button>
+    </form>
+
+    <div class="msg" id="msg" role="alert"></div>
+  </main>
+
+  <script>
+  'use strict';
+  (function () {
+    const API = window.location.origin + '/api';
+    const params = new URLSearchParams(window.location.search);
+    let justUsedPassword = '';
+
+    function nextUrl() {
+      const n = params.get('next') || '/';
+      return (n.startsWith('/') && !n.startsWith('//')) ? n : '/';   // only same-site paths
+    }
+    function show(mode) {
+      ['login', 'setup', 'change'].forEach((m) => {
+        document.getElementById('form-' + m).classList.toggle('active', m === mode);
+      });
+      document.getElementById('subtitle').textContent =
+        mode === 'setup' ? 'Αρχική ρύθμιση' : (mode === 'change' ? 'Νέος κωδικός' : 'Σύνδεση');
+      const first = document.querySelector('#form-' + mode + ' input');
+      if (first) first.focus();
+    }
+    function message(text, kind) {
+      const el = document.getElementById('msg');
+      el.textContent = text || '';
+      el.className = 'msg' + (text ? ' ' + (kind || 'error') : '');
+    }
+    async function post(path, body) {
+      const res = await fetch(API + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) {
+        const d = data && data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Κάτι πήγε στραβά (HTTP ' + res.status + ').');
+      }
+      return data;
+    }
+    function busy(btnId, on) { document.getElementById(btnId).disabled = !!on; }
+
+    document.getElementById('form-login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      message('');
+      busy('login-submit', true);
+      const password = document.getElementById('login-password').value;
+      try {
+        const data = await post('/auth/login', {
+          username: document.getElementById('login-username').value.trim(),
+          password,
+          remember: document.getElementById('login-remember').checked,
+        });
+        if (data.must_change) {
+          justUsedPassword = password;
+          document.getElementById('change-current').value = password;
+          show('change');
+        } else {
+          window.location.replace(nextUrl());
+        }
+      } catch (err) {
+        message(err.message);
+        document.getElementById('login-password').select();
+      } finally {
+        busy('login-submit', false);
+      }
+    });
+
+    document.getElementById('form-setup').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      message('');
+      const p1 = document.getElementById('setup-password').value;
+      if (p1 !== document.getElementById('setup-password2').value) { message('Οι δύο κωδικοί δεν ταιριάζουν.'); return; }
+      busy('setup-submit', true);
+      try {
+        await post('/auth/setup', {
+          code: document.getElementById('setup-code').value.trim(),
+          username: document.getElementById('setup-username').value.trim(),
+          password: p1,
+          remember: true,
+        });
+        message('✅ Ο διαχειριστής δημιουργήθηκε. Μεταφορά στην εφαρμογή…', 'ok');
+        setTimeout(() => window.location.replace('/'), 700);
+      } catch (err) {
+        message(err.message);
+      } finally {
+        busy('setup-submit', false);
+      }
+    });
+
+    document.getElementById('form-change').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      message('');
+      const p1 = document.getElementById('change-new').value;
+      if (p1 !== document.getElementById('change-new2').value) { message('Οι δύο κωδικοί δεν ταιριάζουν.'); return; }
+      busy('change-submit', true);
+      try {
+        await post('/auth/change-password', {
+          current_password: document.getElementById('change-current').value || justUsedPassword,
+          new_password: p1,
+        });
+        message('✅ Ο κωδικός αποθηκεύτηκε.', 'ok');
+        setTimeout(() => window.location.replace(nextUrl()), 500);
+      } catch (err) {
+        message(err.message);
+      } finally {
+        busy('change-submit', false);
+      }
+    });
+
+    (async () => {
+      let st = null;
+      try {
+        const res = await fetch(API + '/auth/status', { credentials: 'same-origin' });
+        st = await res.json();
+      } catch (_) {
+        message('Δεν υπάρχει σύνδεση με τον διακομιστή.');
+        show('login');
+        return;
+      }
+      if (!st || !st.enabled) { window.location.replace('/'); return; }
+      document.getElementById('remember-days').textContent = String(st.remember_days || 60);
+      document.querySelectorAll('.min-len').forEach((el) => { el.textContent = String(st.min_password_length || 10); });
+      if (st.setup_required) { show('setup'); return; }
+      if (st.user && st.user.must_change) { show('change'); return; }
+      if (st.user) { window.location.replace(nextUrl()); return; }
+      show('login');
+    })();
+  })();
+  </script>
+</body>
+</html>

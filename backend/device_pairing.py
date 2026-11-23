@@ -37,6 +37,9 @@ def _truthy(v: Optional[str]) -> bool:
 
 
 def is_enabled() -> bool:
+    """On with BOOKAPP_PAIRING=1 - unless user accounts (BOOKAPP_AUTH=1) are on, which replace pairing."""
+    if _truthy(os.environ.get("BOOKAPP_AUTH")):
+        return False
     return _truthy(os.environ.get("BOOKAPP_PAIRING"))
 
 

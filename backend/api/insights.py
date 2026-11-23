@@ -79,6 +79,14 @@ def _insights_resolve_type(raw: str) -> str:
     return t
 
 
+def _hidden_job(job_id: str) -> bool:
+    """True for an existing job of another user (user accounts mode)."""
+    from backend.job_manager import job_owner
+    from backend.request_context import can_view_owner
+    owner = job_owner(job_id)
+    return owner is not None and not can_view_owner(owner)
+
+
 def _insights_public_record(job_id: str, rec: dict) -> dict:
     pub = {k: v for k, v in rec.items() if k not in ("source_hash", "text_hash", "audio_text_hash")}
     if rec.get("audio_file"):
@@ -93,9 +101,13 @@ async def insights_task_status(task_id: str):
     if not re.fullmatch(r"[0-9a-f]{32}", task_id or ""):
         raise HTTPException(400, "Invalid task id.")
     task = get_task(task_id)
+    if task and _hidden_job(task.job_id):   # another user's task (user accounts mode)
+        raise HTTPException(404, "Η εργασία δεν βρέθηκε.")
     if not task:
         from backend.book_insights import recover_task
         recovered = recover_task(task_id, _job_output_dir)
+        if recovered and _hidden_job(recovered.get("job_id", "")):
+            recovered = None
         if recovered:
             if recovered.get("result"):
                 recovered["result"] = _insights_public_record(recovered["job_id"], recovered["result"])

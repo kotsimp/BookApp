@@ -2203,9 +2203,14 @@ function syncAudiobookLangWithSource() {
 }
 
 // ── History ────────────────────────────────────────────────
+function historyScope() {
+  // User accounts (auth.js): an administrator chooses whose jobs to see; everyone else always sees their own
+  return (typeof authState !== 'undefined' && authState.historyScope) ? authState.historyScope : 'mine';
+}
+
 async function refreshHistory() {
   try {
-    const res = await fetch(`${API}/jobs`);
+    const res = await fetch(`${API}/jobs?scope=${encodeURIComponent(historyScope())}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const jobs = await res.json();
     const jobList = Array.isArray(jobs) ? jobs : [];
@@ -2232,6 +2237,9 @@ function renderHistory(jobs) {
   if (clearBtn) clearBtn.style.display = 'inline-flex';
 
   const modeIcon = { translate: '🌐', audiobook: '🎧', '': '📄' };
+  const me = (typeof authState !== 'undefined' && authState.user) ? authState.user : null;
+  const ownerTag = (j) => (me && me.role === 'admin' && j.owner && j.owner !== me.id && j.owner_name)
+    ? ` · 👤 ${escHtml(j.owner_name)}` : '';
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
 
   grid.innerHTML = displayJobs.map(j => `
@@ -2242,7 +2250,7 @@ function renderHistory(jobs) {
         <div class="history-meta">
           ${j.mode ? escHtml(j.mode.charAt(0).toUpperCase() + j.mode.slice(1)) : 'Uploaded'} ·
           ${statusIcon[j.status] || ''} ${escHtml(j.status)}
-          ${j.progress > 0 && j.status !== 'done' ? `· ${Number(j.progress) || 0}%` : ''}
+          ${j.progress > 0 && j.status !== 'done' ? `· ${Number(j.progress) || 0}%` : ''}${ownerTag(j)}
         </div>
       </div>
       ${j.has_output ? `<span style="color:var(--emerald);font-size:0.8rem;font-weight:600">⬇️ Ready</span>` : ''}
@@ -2273,11 +2281,15 @@ async function clearAllHistory() {
   const doConfirm = (typeof window !== 'undefined' && typeof window.confirm === 'function')
     ? window.confirm
     : (typeof confirm === 'function' ? confirm : null);
-  if (doConfirm && !doConfirm('Are you sure you want to delete all session history and temporary files?')) {
+  const scope = historyScope();
+  const question = scope === 'all'
+    ? 'Διαγραφή ΟΛΩΝ των εργασιών ΟΛΩΝ των χρηστών και των προσωρινών αρχείων; (Are you sure?)'
+    : 'Are you sure you want to delete all session history and temporary files?';
+  if (doConfirm && !doConfirm(question)) {
     return;
   }
   try {
-    const res = await fetch(`${API}/jobs`, { method: 'DELETE' });
+    const res = await fetch(`${API}/jobs?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
     if (res.ok) {
       toast('All session history deleted.', 'success');
       if (state.tr.jobId) removeFile('tr');
@@ -2969,6 +2981,10 @@ function updateNavGeminiBadge(poolData) {
 let _currentAiModalMode = 'polish';
 
 async function openApiKeyModal() {
+  if (typeof authIsRestrictedUser === 'function' && authIsRestrictedUser()) {
+    toast('🔑 Τα Gemini API keys και οι ρυθμίσεις τα διαχειρίζεται ένας διαχειριστής.', 'info');
+    return null;
+  }
   return openAiPolishModal('settings');
 }
 

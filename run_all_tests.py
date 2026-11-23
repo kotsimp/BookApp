@@ -67,7 +67,7 @@ def _run_in_sandbox() -> int:
 
         env = dict(os.environ)
         for var in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GEMINI_QUOTA_EXHAUSTED_UNTIL", "BOOKAPP_PAIRING",
-                    "BOOKAPP_TRUST_LOOPBACK", "FINAL_REFINEMENT_ENABLED"):
+                    "BOOKAPP_TRUST_LOOPBACK", "FINAL_REFINEMENT_ENABLED", "BOOKAPP_AUTH", "BOOKAPP_COOKIE_SECURE"):
             env.pop(var, None)
         env.update(BOOKAPP_TEST_MODE="1", BOOKAPP_TEST_PORT=str(port), PYTHONIOENCODING="utf-8",
                    PYTHONDONTWRITEBYTECODE="1")

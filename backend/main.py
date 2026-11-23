@@ -10,7 +10,7 @@ import os
 import re
 import shutil
 import uuid
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -25,12 +25,16 @@ from pydantic import BaseModel
 from backend.api.common import (  # noqa: E402
     BASE_DIR, TEMP_DIR, UPLOAD_DIR, OUTPUT_DIR, MIME_MAP, _validate_job_id, _job_output_dir,
     OUTPUT_FORMATS, LAYOUT_MODES, READING_DIRECTIONS, QUOTA_BEHAVIORS, _validate_choice, _validate_language,
+    purge_job,
 )
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
     cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled,
     cleanup_test_jobs, is_test_job_identifier, mark_interrupted, is_resumable, is_quota_stop, is_quota_error,
+    job_owner,
 )
+from backend import auth
+from backend.request_context import current_user, set_current_user, reset_current_user, can_view_owner
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
 from backend.tts_engine import (
@@ -103,6 +107,13 @@ async def lifespan(_app: FastAPI):
             " and this computer" if device_pairing.trust_loopback() else "",
             device_pairing.PAIRING_CODE_TTL // 60, code,
         )
+    if auth.is_enabled():
+        if os.environ.get("BOOKAPP_PAIRING", "").strip().lower() in ("1", "true", "yes", "on"):
+            logger.warning("[Auth] BOOKAPP_PAIRING is ignored: user accounts (BOOKAPP_AUTH=1) replace device pairing.")
+        if auth.setup_required():
+            auth.announce_setup_code()
+        else:
+            logger.info("[Auth] User accounts are ON: signing in is required.")
     cleanup_old_jobs()
     cleanup_test_jobs()
     from backend.queue_manager import restore_queue
@@ -183,6 +194,65 @@ async def device_pairing_guard(request: Request, call_next):
         return JSONResponse({"detail": "This device is not paired with BookApp. Open a pairing link first."},
                             status_code=403)
     return HTMLResponse(device_pairing.NOT_PAIRED_HTML, status_code=403)
+
+
+_JOB_ID_SEGMENT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+@app.middleware("http")
+async def account_login_guard(request: Request, call_next):
+    """
+    Opt-in (BOOKAPP_AUTH=1): signing in is required; users reach only their own jobs; some endpoints are for
+    administrators only (backend/auth.py). No-op when user accounts are off.
+    """
+    if not auth.is_enabled():
+        return await call_next(request)
+    from fastapi.responses import JSONResponse, RedirectResponse, PlainTextResponse
+    path = request.url.path
+    if request.method == "OPTIONS" or auth.is_open_path(path):
+        return await call_next(request)
+    is_api = path.startswith("/api/")
+    is_page = request.method in ("GET", "HEAD") and (path in ("", "/") or path.endswith(".html"))
+
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    session = await asyncio.to_thread(auth.session_for_token, token) if token else None
+    if not session:
+        setup = await asyncio.to_thread(auth.setup_required)
+        if is_api:
+            msg = "Η εφαρμογή χρειάζεται αρχική ρύθμιση (/setup)." if setup else "Συνδεθείτε για να συνεχίσετε."
+            return JSONResponse({"detail": msg, "auth_required": True, "setup_required": setup}, status_code=401)
+        if is_page:
+            nxt = "" if path in ("", "/") else f"?next={quote(path)}"
+            return RedirectResponse("/setup" if setup else f"/login{nxt}", status_code=303)
+        return PlainTextResponse("Sign in required.", status_code=401)
+
+    user = session["user"]
+    if user["must_change"] and path not in auth.PASSWORD_CHANGE_PATHS:
+        if is_api:
+            return JSONResponse({"detail": "Αλλάξτε πρώτα τον προσωρινό κωδικό σας.", "password_change_required": True},
+                                status_code=403)
+        if is_page:
+            return RedirectResponse("/login?change=1", status_code=303)
+        return PlainTextResponse("Password change required.", status_code=403)
+    if user["role"] != "admin" and auth.is_admin_path(request.method, path):
+        return JSONResponse({"detail": "Μόνο οι διαχειριστές έχουν πρόσβαση σε αυτή τη λειτουργία."}, status_code=403)
+
+    ctx_token = set_current_user(user)
+    try:
+        if user["role"] != "admin":
+            # Another user's job id in the URL (status, download, progress, insights files, ...): "not found"
+            for seg in path.split("/"):
+                if _JOB_ID_SEGMENT.fullmatch(seg):
+                    owner = job_owner(seg)
+                    if owner is not None and not can_view_owner(owner):
+                        return JSONResponse({"detail": f"Job '{seg}' not found."}, status_code=404)
+        response = await call_next(request)
+    finally:
+        reset_current_user(ctx_token)
+    if session["renewed"] and session["persistent"]:
+        from backend.api.auth import set_session_cookie
+        set_session_cookie(response, request, token, True)  # "keep me signed in" slides forward with every visit
+    return response
 
 
 @app.middleware("http")
@@ -1534,10 +1604,26 @@ async def list_voices():
     return get_available_voices()
 
 
-@app.get("/api/jobs")
-async def all_jobs(include_tests: bool = False):
-    """Returns all jobs (for session history). Hides test-generated jobs by default."""
+def _jobs_in_scope(scope: str = "mine"):
+    """
+    Session History jobs. Accounts off: all. A user: own jobs. An administrator: scope 'mine' (own + jobs from before
+    accounts / of removed users), 'all', or a user id.
+    """
     jobs = list_jobs()
+    if not auth.is_enabled():
+        return jobs, {}
+    names = auth.usernames_by_id()
+    me = current_user()
+    if me and me.get("role") == "admin" and scope != "all":
+        wanted = {me["id"], ""} if scope in ("", "mine") else {scope}
+        jobs = [j for j in jobs if (j.owner if j.owner in names else "") in wanted]
+    return jobs, names
+
+
+@app.get("/api/jobs")
+async def all_jobs(include_tests: bool = False, scope: str = "mine"):
+    """Returns the requester's jobs for Session History (see _jobs_in_scope). Hides test-generated jobs by default."""
+    jobs, names = _jobs_in_scope(scope)
     return [
         {
             "job_id": j.job_id,
@@ -1553,6 +1639,8 @@ async def all_jobs(include_tests: bool = False):
             "resumable": is_resumable(j),
             "quota_stopped": is_quota_stop(j),
             "has_output": j.output_path is not None,
+            "owner": j.owner or "",
+            "owner_name": names.get(j.owner, ""),
         }
         for j in jobs
         if include_tests or not is_test_job_identifier(j.job_id, j.file_name)
@@ -1603,8 +1691,18 @@ async def debug_extract(job_id: str, max_chars: int = 500):
 
 
 @app.delete("/api/jobs")
-async def clear_all_jobs():
-    """Clean up all jobs and all temporary files inside temp/."""
+async def clear_all_jobs(scope: str = "mine"):
+    """
+    Clean up all jobs and all temporary files inside temp/. With user accounts: only the requester's jobs
+    (an administrator may pass scope=all for the full clean-up, or a user id).
+    """
+    if auth.is_enabled():
+        me = current_user()
+        if not (me and me.get("role") == "admin" and scope == "all"):
+            ids = [j.job_id for j in _jobs_in_scope(scope)[0]]
+            for jid in ids:
+                purge_job(jid)
+            return {"status": "cleared", "count": len(ids)}
     from backend.job_manager import _jobs, _active_tasks
     # Cancel and await all running tasks BEFORE deleting directories
     tasks_to_cancel = [t for t in _active_tasks.values() if not t.done()]
@@ -1663,20 +1761,7 @@ async def delete_job(job_id: str):
     if not job:
         raise HTTPException(404, f"Job '{job_id}' not found.")
 
-    from backend.job_manager import _jobs
-    from backend.database import db_delete_job
-    from backend.queue_manager import remove_from_queue
-    # Cancel active task & remove from queue BEFORE deleting files
-    cancel_job(job_id)
-    remove_from_queue(job_id)
-
-    for d in [UPLOAD_DIR / job_id, OUTPUT_DIR / job_id]:
-        if d.exists():
-            shutil.rmtree(str(d), ignore_errors=True)
-
-    _jobs.pop(job_id, None)
-    POLISH_STATUS.pop(job_id, None)
-    db_delete_job(job_id)
+    purge_job(job_id)  # cancels the task and leaves the queue BEFORE the files are deleted
     return {"deleted": job_id}
 
 
@@ -1837,6 +1922,19 @@ class SettingsRequest(BaseModel):
     final_refinement_enabled: Optional[bool] = None
 
 
+def _may_see_keys() -> bool:
+    return not auth.is_enabled() or (current_user() or {}).get("role") == "admin"
+
+
+def _redact_pool(pool: dict) -> dict:
+    """Pool health without the (masked) keys, for users who are not administrators."""
+    if not isinstance(pool, dict):
+        return pool
+    out = dict(pool)
+    out["slots"] = [dict(s, masked_key="") for s in pool.get("slots") or []]
+    return out
+
+
 @app.get("/api/settings")
 async def get_app_settings():
     from backend.settings_manager import get_setting
@@ -1853,12 +1951,14 @@ async def get_app_settings():
     refinement_on = is_refinement_enabled()
     from backend.gemini_key_pool import mask_api_key
     # Keys never leave the server in clear text: the UI only needs masked forms (it sends them back unchanged to keep
-    # a key; GeminiKeyPool.set_keys maps masked values back to the stored keys).
+    # a key; GeminiKeyPool.set_keys maps masked values back to the stored keys). Users who are not administrators
+    # (user accounts mode) do not see even the masked keys.
+    keys_visible = _may_see_keys()
     return {
-        "gemini_api_key": mask_api_key(key),
-        "gemini_api_keys": [mask_api_key(k) for k in keys],
+        "gemini_api_key": mask_api_key(key) if keys_visible else "",
+        "gemini_api_keys": [mask_api_key(k) for k in keys] if keys_visible else [],
         "gemini_api_keys_count": len(keys),
-        "pool": pool_status,
+        "pool": pool_status if keys_visible else _redact_pool(pool_status),
         "default_quota_behavior": quota_behavior,
         "final_refinement_enabled": refinement_on,
         "m4b_available": bool(find_ffmpeg()),
@@ -1952,6 +2052,8 @@ async def get_gemini_status():
     from backend.ai_polisher import get_gemini_quota_info, get_daily_gemini_usage
     info = dict(get_gemini_quota_info())
     info["usage_today"] = get_daily_gemini_usage()
+    if "pool" in info and not _may_see_keys():
+        info["pool"] = _redact_pool(info["pool"])
     return info
 
 
@@ -1986,6 +2088,8 @@ async def polish_translation(req: PolishRequest):
     else:
         _validate_job_id(req.job_id)
         job = get_job(req.job_id)
+        if job is None and job_owner(req.job_id) is not None:  # another user's job (user accounts mode)
+            raise HTTPException(404, f"Job '{req.job_id}' not found.")
         if job and job.status == "running":
             raise HTTPException(409, "A task is already running for this job.")
         out_dir = OUTPUT_DIR / req.job_id
@@ -2187,11 +2291,12 @@ async def polish_translation(req: PolishRequest):
 # Self-contained endpoint groups (backend/api/*): refinement, Book Insights, device pairing
 # ---------------------------------------------------------------------------
 from backend.api import refine as _refine_api, insights as _insights_api, pairing as _pairing_api  # noqa: E402
+from backend.api import auth as _auth_api  # noqa: E402
 
 # Register the routers' routes directly on the app (no prefix/dependencies), so they appear as plain APIRoute
 # entries in app.routes exactly like routes declared here (FastAPI >= 0.16x nests include_router() routers,
 # which hides them from code that inspects app.routes, e.g. the API contract and coverage tests).
-for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router):
+for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router, _auth_api.router):
     app.router.routes.extend(_api_router.routes)
 
 
@@ -2311,6 +2416,10 @@ async def _execute_queue_item(q_item):
         raise RuntimeError(f"Job '{q_item.job_id}' is already running.")
     if (q_item.source_lang or "").strip().lower() == (q_item.target_lang or "").strip().lower():
         raise ValueError("Source and target languages must be different.")
+
+    if job.owner:
+        # The queue processor serves everyone: inside this item, act as the job's owner (Gemini usage per user)
+        set_current_user({"id": job.owner, "username": "", "role": "user"})
 
     out_dir = _job_output_dir(q_item.job_id)
     stem = Path(job.file_name).stem

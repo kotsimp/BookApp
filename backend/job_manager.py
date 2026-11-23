@@ -45,6 +45,7 @@ class Job:
     revision_report: Optional[dict] = None  # result of the maximum-quality revision pass
     gemini_usage: Optional[dict] = None  # Gemini requests/tokens consumed by the last run of this job
     audiobook_options: Optional[dict] = None  # settings of the last audiobook run, restored by Smart Resume
+    owner: str = ""  # user id of the account that uploaded it (user accounts mode); "" = administrators' jobs
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -118,6 +119,7 @@ def _job_to_db_dict(job: Job) -> dict:
             "revision_report": getattr(job, "revision_report", None),
             "gemini_usage": getattr(job, "gemini_usage", None),
             "audiobook_options": getattr(job, "audiobook_options", None),
+            "owner": getattr(job, "owner", "") or "",
         },
     }
 
@@ -168,6 +170,7 @@ def _job_from_db_row(row: dict) -> Job:
         revision_report=meta.get("revision_report") if isinstance(meta.get("revision_report"), dict) else None,
         gemini_usage=meta.get("gemini_usage") if isinstance(meta.get("gemini_usage"), dict) else None,
         audiobook_options=meta.get("audiobook_options") if isinstance(meta.get("audiobook_options"), dict) else None,
+        owner=str(meta.get("owner") or ""),
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -236,7 +239,7 @@ def cancel_job(job_id: str) -> bool:
     """Cancels a running job and its active asyncio task, persisting cancelled state to SQLite."""
     if not is_valid_job_id(job_id):
         return False
-    job = _jobs.get(job_id) or get_job(job_id)
+    job = _jobs.get(job_id) or _load_job(job_id)
     task = _active_tasks.pop(job_id, None)
     if task and not task.done():
         task.cancel()
@@ -271,7 +274,9 @@ def clear_job_cancellation(job_id: str) -> None:
             pass
 
 
-def create_job(file_path: str, file_name: str, file_type: str) -> Job:
+def create_job(file_path: str, file_name: str, file_type: str, owner: Optional[str] = None) -> Job:
+    """A new idle job, owned by the signed-in user of the current request (user accounts mode) unless given."""
+    from backend.request_context import current_user_id
     job_id = str(uuid.uuid4())
     now = time.time()
     job = Job(
@@ -287,6 +292,7 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
         done_chunks=0,
         created_at=now,
         updated_at=now,
+        owner=current_user_id() if owner is None else owner,
     )
     _jobs[job_id] = job
     try:
@@ -298,6 +304,25 @@ def create_job(file_path: str, file_name: str, file_type: str) -> Job:
 
 
 def get_job(job_id: str) -> Optional[Job]:
+    """
+    The job, or None when it does not exist - or, in user accounts mode, when it belongs to another user
+    (requests then answer "not found", so other people's jobs are not even revealed to exist).
+    """
+    from backend.request_context import can_view_owner
+    job = _load_job(job_id)
+    if job is not None and not can_view_owner(job.owner):
+        return None
+    return job
+
+
+def job_owner(job_id: str) -> Optional[str]:
+    """Owner of an existing job ("" = administrators' / created before accounts), or None if there is no such job."""
+    job = _load_job(job_id)
+    return None if job is None else (job.owner or "")
+
+
+def _load_job(job_id: str) -> Optional[Job]:
+    """get_job without the per-user visibility check (internal bookkeeping only)."""
     if not is_valid_job_id(job_id):
         return None
     if job_id in _jobs:
@@ -393,7 +418,7 @@ def get_job(job_id: str) -> Optional[Job]:
 
 
 def update_job(job_id: str, **kwargs):
-    job = _jobs.get(job_id) or get_job(job_id)
+    job = _jobs.get(job_id) or _load_job(job_id)
     if job:
         # Protect cancelled status: once cancelled, background steps cannot overwrite status/step/output
         if job.status == "cancelled":
@@ -494,12 +519,14 @@ def list_jobs() -> list[Job]:
         if out_root.exists():
             for d in out_root.iterdir():
                 if d.is_dir() and d.name not in _jobs:
-                    get_job(d.name)
+                    _load_job(d.name)
     except Exception:
         pass
 
-    # Return jobs sorted by creation time, newest first
-    return sorted(_jobs.values(), key=lambda j: j.created_at, reverse=True)
+    # Return jobs sorted by creation time, newest first (in user accounts mode: only the ones the requester may see)
+    from backend.request_context import can_view_owner
+    jobs = [j for j in _jobs.values() if can_view_owner(j.owner)]
+    return sorted(jobs, key=lambda j: j.created_at, reverse=True)
 
 
 def cleanup_old_jobs(max_age_seconds: int = 86400):

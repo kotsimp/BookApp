@@ -3,7 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: Passing](https://img.shields.io/badge/Tests-61%2F61%20Suites%20Passed-brightgreen.svg)](tests/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-62%2F62%20Suites%20Passed-brightgreen.svg)](tests/)
 
 A modern, high-performance local web application to **translate documents** between English and Greek with **Single-Pass Direct AI Translation & Polish**, **in-place format preservation** (fonts, sizes, headings, tables, styles), **automatic Graphic Novel / Scanned Comic & Manga translation** with 100% artwork preservation, and **professional AI audiobooks** (including multi-voice dramatization and M4B export) using Microsoft Edge neural voices. Supports a **Hybrid AI Architecture** allowing seamless operation with Google Gemini or completely free, local/web alternatives.
 
@@ -14,7 +14,7 @@ A modern, high-performance local web application to **translate documents** betw
 * 📖 **[User Manual (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**  
   *Comprehensive step-by-step user guide covering: Unified Upload & Smart Batch Queue (1–20 files), Prior Quota Routing Choice (Wait for Reset with live countdown timer vs Auto-Fallback to Free model), Automatic Free Mode default when no API key is provided, Single-Pass AI Translation & Polish (with live batch + page progress & full settings restore on Resume), automatic detection of Graphic Novels & Scanned PDFs (with compatible options lock), Manga (RTL), format pickers (PDF, CBZ, CBR, EPUB), Greek editorial typography rules, auto-genre detection, multi-voice audiobooks, live voice auditions, Refresh button, and Dark/Light Mode.*
 * 🛠️ **[Administrator & Deployment Manual (docs/ADMIN_MANUAL.md)](docs/ADMIN_MANUAL.md)**  
-  *In-depth technical guide for system administrators: Hybrid AI architecture (Google Gemini + Free local/cloud models), quota management (circuit breaker, countdown, per-task routing, quota_behavior: 'wait' | 'fallback'), Free Mode automation, SQLite database persistence (`data/bookapp.db`) with metadata settings & `file_path` auto-healing, Smart Batch Queue engine (`backend/queue_manager.py`) with ZIP completion gating (HTTP 409 while items are running, immediate individual download for completed items), semantic translation & Vision AI caches (`gemini_polish_v4` full-prompt SHA-256 hash & `gemini_comic_vision_v2`), Single-Pass Full Gemini Flash with `thinkingBudget: 0`, `maxOutputTokens: 16384`, `BLOCK_NONE` safety settings, `thought` filtering, recursive page/paragraph bisection, `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` boundary deduplication, whole-book stratified Entity Consistency Dossier & Greek mixed-script quality gate, zero-tofu PDF glyph guard & URL wrapping, two-pass non-blank comic balloon renderer with natural CBZ page sorting & Zip Slip protection, 429 Circuit Breaker with automatic Gemini failover, universal `job_id` path-traversal validation, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy with SSE, Final Output Refinement stage, publication-grade AI translation prompts, Book Insights, 58 REST API endpoints, and 61 automated test suites.*
+  *In-depth technical guide for system administrators: Hybrid AI architecture (Google Gemini + Free local/cloud models), quota management (circuit breaker, countdown, per-task routing, quota_behavior: 'wait' | 'fallback'), Free Mode automation, SQLite database persistence (`data/bookapp.db`) with metadata settings & `file_path` auto-healing, Smart Batch Queue engine (`backend/queue_manager.py`) with ZIP completion gating (HTTP 409 while items are running, immediate individual download for completed items), semantic translation & Vision AI caches (`gemini_polish_v4` full-prompt SHA-256 hash & `gemini_comic_vision_v2`), Single-Pass Full Gemini Flash with `thinkingBudget: 0`, `maxOutputTokens: 16384`, `BLOCK_NONE` safety settings, `thought` filtering, recursive page/paragraph bisection, `<PREVIOUS_CONTEXT_DO_NOT_REPEAT>` boundary deduplication, whole-book stratified Entity Consistency Dossier & Greek mixed-script quality gate, zero-tofu PDF glyph guard & URL wrapping, two-pass non-blank comic balloon renderer with natural CBZ page sorting & Zip Slip protection, 429 Circuit Breaker with automatic Gemini failover, universal `job_id` path-traversal validation, Storage Auto-Cleanup Garbage Collector, FastAPI lifespan, Nginx reverse proxy with SSE, Final Output Refinement stage, publication-grade AI translation prompts, Book Insights, optional user accounts with administrators (setup code, account tool, HTTPS proxies), 75 routes, and 62 automated test suites.*
 
 ---
 
@@ -79,6 +79,7 @@ A modern, high-performance local web application to **translate documents** betw
 <br>• **Translation evaluation set:** `eval/passages.json` + `scripts/eval_translation_quality.py`.
 <br>• **Reproducible installs:** constraints file `requirements-lock.txt`.
 <br>• **Code structure:** routers in `backend/api/`, frontend split into `app.js`, `insights.js` and `pairing.js`. |
+| **User accounts with administrators (Nov 2026)** |<br>• **Optional sign-in** (`BOOKAPP_AUTH=1`) for a server shared by several people (Ubuntu, Docker, Synology).<br>• **Two roles:** users see only their own jobs; administrators manage users, Gemini API keys and settings, see every job, and can make another user an administrator with the same rights. The last active administrator is always protected.<br>• **First administrator on a headless server:** a one-time setup code appears in the server log (`journalctl`, `docker logs`, Synology Container Manager) and in `data/setup_code.txt`; open `/setup`. Or run `python -m backend.auth create-admin NAME`, which also resets forgotten passwords.<br>• **Sessions:** "keep me signed in" lasts 60 days and renews on every visit. Temporary passwords must be changed at the first sign-in; 5 wrong passwords lock for 15 minutes.<br>• **Storage:** scrypt password hashes and hashed session tokens in `data/auth.db`; admin actions in an audit log.<br>• **Setup guide:** HTTPS with Caddy, nginx or Synology DSM in the Admin Manual. |
 | **Data-safety fixes (22 Nov 2026)** |<br>• **No more data loss on restart:** startup used to delete jobs named like test files (`book*`, `test_*`, `temp_*`…), records and uploads older than 24 hours and outputs older than 7 days. Jobs now stay until you delete them.<br>• **Formatting kept after editing:** Editor, AI Polish, cover changes, layout downloads and `/api/refine` no longer replace format-preserved DOCX/EPUB or comics with plain-text re-exports.<br>• **Audiobook Wait for Reset:** the web UI now really sends `wait` when a key is stored.<br>• **Real M4B:** MP4/AAC output with working cover + chapters; FFmpeg is bundled through `imageio-ffmpeg`. Mislabelled files from older versions are converted again on download.<br>• **Security:** formats, layouts, directions, quota choices and languages are validated (closing a path traversal through language names), and the batch queue escapes every value (closing a stored XSS).<br>• **Upgrading:** run `pip install -r requirements.txt`, then restart the server. |
 | **Reliability fixes (23 Nov 2026)** |<br>• **Free translation without a key:** Google's refusals are respected and MyMemory is used within its daily limit. A saved Gemini key stands in with few requests (this uses your Gemini allowance), and the job says which engine translated. Google currently refuses most automated key-free requests, so a long book without a key may stop with a message instead of being half translated.
 <br>• **English audiobooks with AI polish** no longer come out in Greek: English targets get English instructions, and an AI answer in the wrong language or with lost text never replaces the book's text.
@@ -94,7 +95,7 @@ A modern, high-performance local web application to **translate documents** betw
 <br>• **Queue and exports:** after a restart the queue comes back paused (a queue you paused stays paused, per-file settings are kept); a replaced export is kept in `temp/outputs/<job>/previous/`.
 <br>• **Docker:** the image no longer contains `config/settings.json`, which holds your API keys.
 <br>• **Upgrading:** interrupted AI jobs restart from the beginning once; books translated by older versions need translating again to benefit. Run `pip install -r requirements.txt` and restart the server. |
-| **Automated Test Suite (61 Suites)** | `run_all_tests.py` (`--fast` runs the 56 offline suites; suite names select individual ones) executes everything in a **throw-away sandbox**: a copy of the code on a free port, with an empty database and no API keys, so your jobs, files, settings and a running BookApp are never touched. Suites refuse to run outside it. Covers security (path traversal, Zip Slip, stored XSS), API contracts & state machine, mocked Gemini/GTX resilience, pipeline data integrity, comic/TTS edge cases, concurrency & lifecycle, Node.js VM UI tests, static code health, editorial pass, AI polisher, key pool & diagnostics, batch queue, output refinement, translation prompts, Book Insights, device pairing, audit regressions, and `test_data_safety_and_preservation.py` (no data loss on restart, format-preserving edits with randomized round-trips, real M4B, Wait for Reset, input validation). |
+| **Automated Test Suite (62 Suites)** | `run_all_tests.py` (`--fast` runs the 57 offline suites; suite names select individual ones) executes everything in a **throw-away sandbox**: a copy of the code on a free port, with an empty database and no API keys, so your jobs, files, settings and a running BookApp are never touched. Suites refuse to run outside it. Covers security (path traversal, Zip Slip, stored XSS), API contracts & state machine, mocked Gemini/GTX resilience, pipeline data integrity, comic/TTS edge cases, concurrency & lifecycle, Node.js VM UI tests, static code health, editorial pass, AI polisher, key pool & diagnostics, batch queue, output refinement, translation prompts, Book Insights, device pairing, user accounts, audit regressions, and `test_data_safety_and_preservation.py` (no data loss on restart, format-preserving edits with randomized round-trips, real M4B, Wait for Reset, input validation). |
 | **In-Place Format Preservation** | Translates `.docx` (preserving fonts, headings, bold/italic, tables, merged cells & embedded inline images `<w:drawing>`) and `.epub` (preserving spine order, nested HTML tags `<em>`/`<strong>`/`<blockquote>`, inline whitespace & HTML comments without double-translating) in-place with style-aware glossary & Greek typography cleanup. Later edits (Editor, AI Polish) are applied inside the same file (`backend/format_sync.py`); cover changes, layout downloads and refinement never rebuild it from plain text. |
 | **Cover Image Management** | Auto-extraction of original artwork from PDF/EPUB/DOCX (with proper handle cleanup), live preview thumbnail with status `✔ Cover active`, manual upload for custom artwork (`.jpg`, `.png`, `.webp`), removal button (`DELETE /api/cover/{job_id}`), and strict download isolation ensuring only book documents are served. Custom covers go into generated PDF/EPUB/DOCX exports; format-preserved DOCX/EPUB and comics keep their own artwork. |
 | **Literature / E-Reader Layout** | Dedicated `layout=literature` mode for novels and books: strips running headers/footers and page numbers, renders `*italic*` and `**bold**` emphasis natively (Georgia Italic in PDF, italic runs in DOCX, `<em>` in EPUB), isolates chapter headings and epigraphs, merges cross-page sentences, formats scene breaks (`* * *`), wraps long unbroken URLs cleanly within page margins, guarantees zero missing-glyph tofu boxes (`□`), and embeds full-bleed covers on page 1 of PDF/EPUB/DOCX. |
@@ -154,7 +155,7 @@ git clone https://github.com/kotsimp/BookApp.git
 cd BookApp
 docker compose up -d --build
 ```
-Access the application at **`http://localhost:8000`** (or your server's IP). All database files (`data/`), settings (`config/`), and outputs are automatically persisted outside the container.
+Access the application at **`http://localhost:8000`** (or your server's IP). For a server shared by several people, uncomment `BOOKAPP_AUTH=1` in `docker-compose.yml` to require sign-in. The first administrator is created with the setup code from `docker logs bookapp` (see the Admin Manual, *User Accounts & Administrators*). All database files (`data/`), settings (`config/`), and outputs are automatically persisted outside the container.
 
 Your settings and API keys (`config/settings.json`) are never copied into the image: they stay in `./config`, which the container mounts. Images built by versions before 23 Nov 2026 do contain that file, so delete them (`docker image rm bookapp:latest`) and build again; if such an image was ever shared, replace your keys.
 
@@ -175,7 +176,9 @@ BookApp/
 │   ├── book_insights.py     # Book Insights: AI summaries, synopses & their audio versions
 │   ├── ai_segment_translator.py # Format-preserving AI translation of DOCX/EPUB segments
 │   ├── device_pairing.py    # Optional password-free device pairing (BOOKAPP_PAIRING=1)
-│   ├── api/                 # API routers: refine, insights, pairing (+ shared common.py)
+│   ├── auth.py              # Optional user accounts & administrators (BOOKAPP_AUTH=1); tool: python -m backend.auth
+│   ├── request_context.py   # Signed-in user of a request (per-user job visibility & Gemini usage)
+│   ├── api/                 # API routers: refine, insights, pairing, auth (+ shared common.py)
 │   ├── genre_detector.py    # Document genre, tone & style auto-detection engine
 │   ├── storage_cleaner.py   # Temporary files & storage garbage collector
 │   ├── format_sync.py       # Applies later edits inside format-preserved DOCX/EPUB; guards them from re-export
@@ -195,17 +198,20 @@ BookApp/
 │   ├── glossary.json        # Categorized custom glossary terms (Technical, Literature, General)
 │   └── settings.json        # Local persistent settings (gitignored)
 ├── data/
-│   └── bookapp.db           # Persistent SQLite database (jobs, metadata & translation cache)
+│   ├── bookapp.db           # Persistent SQLite database (jobs, metadata & translation cache)
+│   └── auth.db              # User accounts (password & session hashes, audit log; BOOKAPP_AUTH=1)
 ├── frontend/
 │   ├── index.html           # Modern single-page interface with unified Upload & Batch Queue + Dark/Light theme
 │   ├── style.css            # Responsive CSS theme with theme variables
 │   ├── app.js               # Frontend state, batch queue, split-screen editor & voice preview
 │   ├── insights.js          # Book Insights tab
-│   └── pairing.js           # Device pairing panel (settings window)
+│   ├── pairing.js           # Device pairing panel (settings window)
+│   ├── auth.js              # Signed-in user bar, own account, user management (administrators)
+│   └── login.html           # Sign-in, first-time setup & temporary-password page
 ├── docs/
 │   ├── USER_MANUAL.md       # Complete user guide
 │   └── ADMIN_MANUAL.md      # Administrator deployment & technical manual
-├── tests/                   # 61 Automated Test Suites (sandboxed)
+├── tests/                   # 62 Automated Test Suites (sandboxed)
 ├── run_all_tests.py         # Master unified test runner
 ├── start_bookapp.bat        # Windows one-click desktop launcher
 ├── requirements.txt
@@ -242,10 +248,10 @@ BookApp/
 The master runner works in a throw-away copy of the project (free port, empty database, no API keys), so your jobs, files, settings and a running BookApp are never touched:
 
 ```bash
-# Run all 61 automated test suites (Full Suite)
+# Run all 62 automated test suites (Full Suite)
 .\.venv\Scripts\python run_all_tests.py
 
-# Run fast local suite (56 static/unit/security/contract/resilience/UI/queue/benchmark suites)
+# Run fast local suite (57 static/unit/security/contract/resilience/UI/queue/benchmark suites)
 .\.venv\Scripts\python run_all_tests.py --fast
 
 # Run individual suites

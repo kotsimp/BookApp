@@ -7,6 +7,7 @@ Supports both Manual Queue review + Start and Auto-Start Queue modes.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -15,6 +16,12 @@ from dataclasses import asdict, dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from backend.job_manager import get_job, cancel_job, update_job, clear_job_cancellation, INTERRUPTED_STEP, is_quota_error
+from backend.request_context import current_user
+
+
+def _visible(item: "QueueItem") -> bool:
+    """User accounts mode: a user sees and changes only the queue items of own jobs (admins and the processor: all)."""
+    return current_user() is None or get_job(item.job_id) is not None
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +160,8 @@ def get_queue_state() -> Dict[str, Any]:
     running_count = 0
 
     for item in _queue_items:
+        if not _visible(item):
+            continue
         job = get_job(item.job_id)
         progress = 0
         current_step = "⏳ Waiting in queue..."
@@ -419,7 +428,7 @@ def clear_queue() -> int:
     before = len(_queue_items)
     kept = []
     for it in _queue_items:
-        if it.status == "running":
+        if it.status == "running" or not _visible(it):
             kept.append(it)
         elif it.status in ("queued", "waiting_quota"):
             job = get_job(it.job_id)
@@ -435,7 +444,7 @@ def clear_queue() -> int:
 def get_completed_queue_job_ids() -> List[str]:
     """Returns job_ids of all completed queue items."""
     get_queue_state()  # ensure statuses are synced with JobManager
-    return [it.job_id for it in _queue_items if it.status == "done"]
+    return [it.job_id for it in _queue_items if it.status == "done" and _visible(it)]
 
 
 async def _process_queue_loop(
@@ -592,7 +601,7 @@ def apply_settings_to_queued_items(
 
     # Pre-validate against existing queued items so partial updates can't create source == target
     for item in _queue_items:
-        if item.status != "queued":
+        if item.status != "queued" or not _visible(item):
             continue
         eff_src = src_norm or (item.source_lang or "").strip().lower()
         eff_tgt = tgt_norm or (item.target_lang or "").strip().lower()
@@ -601,7 +610,7 @@ def apply_settings_to_queued_items(
 
     updated = 0
     for item in _queue_items:
-        if item.status != "queued":
+        if item.status != "queued" or not _visible(item):  # another user's documents keep their own settings
             continue
         if src_norm:
             item.source_lang = src_norm
@@ -659,7 +668,8 @@ def start_queue(
     if has_queued and (_queue_task is None or _queue_task.done()):
         try:
             loop = asyncio.get_running_loop()
-            _queue_task = loop.create_task(_process_queue_loop(execute_item))
+            # A fresh context: the processor serves every user's documents, not only those of who pressed Start
+            _queue_task = loop.create_task(_process_queue_loop(execute_item), context=contextvars.Context())
         except RuntimeError:
             _queue_task = None
     return get_queue_state()

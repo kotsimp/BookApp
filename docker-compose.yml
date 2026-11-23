@@ -14,3 +14,10 @@ services:
       - ./temp:/app/temp
     environment:
       - PYTHONUNBUFFERED=1
+      # User accounts with administrators (sign-in required). On the first start the server log
+      # (docker logs bookapp / Container Manager -> Log) shows a one-time setup code; open /setup and enter it.
+      # - BOOKAPP_AUTH=1
+      # Behind a reverse proxy (Synology DSM Reverse Proxy, nginx, Caddy, Traefik) that reaches the container over
+      # Docker's network: trust its X-Forwarded-For / X-Forwarded-Proto headers, so HTTPS and visitors' addresses are
+      # seen. Only use "*" when port 8000 is not reachable from untrusted networks except through the proxy.
+      # - FORWARDED_ALLOW_IPS=*

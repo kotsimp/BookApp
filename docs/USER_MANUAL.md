@@ -7,6 +7,8 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 
 ## 📑 Table of Contents
 1. [Accessing the Application](#1-accessing-the-application)
+   - [Signing In & Your Account](#-signing-in--your-account)
+   - [Managing Users (Administrators)](#-managing-users-administrators)
 2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
 3. [Document Translation](#3-document-translation)
    - [Supported File Formats](#supported-file-formats)
@@ -52,6 +54,29 @@ Open your modern web browser (Google Chrome, Microsoft Edge, Mozilla Firefox, Br
 You will see the main user interface with two primary tabs at the top:
 * 🌐 **Translate Document**
 * 🎧 **Generate Audiobook**
+
+### 🔐 Signing In & Your Account
+
+If your administrator has switched on user accounts, BookApp first shows a sign-in page:
+* **Username and password** are given to you by an administrator. The first password is **temporary**: right after signing in you choose your own (at least 10 characters; a phrase of a few words is ideal).
+* **Να παραμείνω συνδεδεμένος/η** (ticked by default) keeps you signed in on that device for 60 days, and every visit starts the 60 days again. If you use BookApp regularly, you stay signed in until you press **🚪 Αποσύνδεση**. Untick it on a shared computer: you are then signed out when the browser closes.
+* **👤 your name** (top right) shows your role, your last sign-in and your Gemini use today, and lets you **change your password**. Changing it signs you out on your other devices.
+* **Forgot your password?** Ask an administrator to reset it; you get a new temporary password.
+* **5 wrong passwords** pause sign-in to that account for 15 minutes.
+* **Privacy between users:** you see only your own jobs in Session History, the batch queue and everywhere else. The Gemini API keys and the shared settings are managed by the administrators, so the 🔑 button is not shown to you.
+
+### 👥 Managing Users (Administrators)
+
+Administrators see the **👥 Χρήστες** button next to their name:
+* **Create a user:** type a username, choose *Χρήστης* or *Διαχειριστής* and press **➕ Δημιουργία**. Leave the password field empty to get a temporary password, shown once with a **📋 Αντιγραφή** button. Give it to the person; they choose their own at the first sign-in.
+* **⭐ Κάνε διαχειριστή:** the user gets exactly your rights (users, API keys, settings, all jobs). **⬇️ Αφαίρεση δικαιωμάτων διαχειριστή** turns an administrator back into a user.
+* **🔑 Επαναφορά κωδικού:** a new temporary password; the user is signed out everywhere.
+* **⏸️ Απενεργοποίηση / ✅ Ενεργοποίηση:** blocks or restores sign-in; disabling signs the user out at once.
+* **🚪 Αποσύνδεση παντού:** ends all of the user's sessions (for example, a lost phone).
+* **🗑️ Διαγραφή:** you choose whether the user's jobs are transferred to you or deleted with their files.
+* There is always at least one active administrator: the app refuses to demote, disable or delete the last one, and you cannot disable or delete your own account.
+* **Session History** has a filter for administrators: *Οι εργασίες μου* (default, including jobs from before accounts were switched on), *Όλοι οι χρήστες*, or one user. With the filter on someone else's jobs, **🗑️ Clear All** deletes only those.
+* **📜 Ιστορικό ενεργειών διαχείρισης** at the bottom lists who created, promoted, reset, disabled or deleted which account.
 
 ---
 
@@ -453,7 +478,7 @@ Generating the same text twice reuses the saved result (no extra API usage). Pre
 
 ## 6. Session History & Task Management
 
-The **Session History** panel at the bottom of the page tracks all jobs:
+The **Session History** panel at the bottom of the page tracks all jobs (with user accounts: your own jobs; administrators can choose whose jobs to see):
 * **Reload & Full Settings Restoration:** Clicking any history entry restores the document, output format, layout style, language direction, and page metrics.
 * **Interrupted Job Resumption:** If an AI translation was paused, clicking **Start Translation** continues from the saved checkpoint (`.direct_ai_checkpoint.json`).
 * **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
@@ -481,7 +506,7 @@ The **Session History** panel at the bottom of the page tracks all jobs:
 
 #### ❓ What do the "🔄 Refresh" and "🔑 Gemini API Key" buttons do?
 * **🔄 Refresh** (icon at the right end of the tab bar): Instantly refreshes page state, session history, and server settings.
-* **🔑 Gemini API Key:** Opens the Multi-Key Pool modal with individual slot status and auto-save capabilities.
+* **🔑 Gemini API Key:** Opens the Multi-Key Pool modal with individual slot status and auto-save capabilities. With user accounts only administrators see it.
 
 #### ❓ Can I translate older Word (.doc) files?
 * Please open the file in Microsoft Word and save it as `.docx` before uploading.
@@ -493,7 +518,7 @@ When a translation, audiobook or Book Insights result finishes, a notification s
 Only on the computer that runs BookApp. The page shows them masked (for example `AIzaSy...4f2D`), and your browser no longer keeps a copy. To replace a key, type the new one into its slot and save.
 
 #### ❓ Can I use BookApp from my phone or another computer safely?
-Yes. Your administrator can turn on **device pairing**. Then, in 🔑 Gemini API Key → 📱 Συσκευές, create a link and open it once on the new device; after that it just works, with no password. Devices you haven't paired are refused, and you can revoke a device at any time.
+Yes. On a server shared by several people, your administrator switches on **user accounts**: you sign in with your username and password (see [Signing In & Your Account](#-signing-in--your-account)). For a single person at home, your administrator can instead turn on **device pairing**. Then, in 🔑 Gemini API Key → 📱 Συσκευές, create a link and open it once on the new device; after that it just works, with no password. Devices you haven't paired are refused, and you can revoke a device at any time.
 
 #### ❓ Do I need to pay for an API key?
 * **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and scanned comics.

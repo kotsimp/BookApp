@@ -44,3 +44,6 @@ data/batch_queue.json
 data/*.tmp
 config/*.corrupt
 config/*.tmp
+
+# One-time first-administrator setup code (user accounts mode)
+data/setup_code.txt
