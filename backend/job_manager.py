@@ -477,6 +477,7 @@ def _notify_subscribers(job: Job):
         "refinement_report": getattr(job, "refinement_report", None),
         "revision_report": getattr(job, "revision_report", None),
         "gemini_usage": getattr(job, "gemini_usage", None),
+        "max_quality": bool(getattr(job, "max_quality", False)),
     }
     try:
         running_loop = asyncio.get_running_loop()

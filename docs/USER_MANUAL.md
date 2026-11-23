@@ -271,7 +271,8 @@ If a translation or audiobook generation is interrupted (due to quota pause, com
 
 ### ⏱️ Live ETA, Speed & Hybrid Engine Badge
 The active progress card displays real-time telemetry:
-* **⏳ Time Remaining:** Live estimated time to completion (`~4m 20s`) based on true processing throughput (`24 pages/min` or `1.8 batches/s`).
+* **⏳ Time left:** the estimated time to completion (`~1 hour 53 minutes`) and the current speed (`2.0 pages/min`, or `parts/min` for audiobooks and documents translated in place). It is measured over the last few minutes, so it settles about a minute after the page opens, also when you reload the page or resume a job. It hides while nothing moves (for example while waiting for the Gemini limits to renew) and starts measuring again afterwards.
+  * With **Maximum quality** it shows `+ the 2nd AI pass afterwards`: the time is for the translation; the revision then shows its own time left in the progress line.
 * **🏷️ Engine Badge:** Live indicator of the active processing provider:
   * `✨ Gemini Flash` when translating with your configured Gemini API key.
   * `⚡ Free Engine` when using the free fallback translation engine.

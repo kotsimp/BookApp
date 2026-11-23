@@ -1245,7 +1245,7 @@ async function startTranslation(opts = {}) {
     trCancelBtn.innerHTML = '🛑 Cancel Translation';
   }
   setStatusBadge('tr', 'running');
-  state.tr.startTime = Date.now();
+  state.tr.etaSamples = [];
 
   try {
     const res = await fetch(`${API}/translate`, {
@@ -1403,7 +1403,7 @@ async function startAudiobook() {
     abCancelBtn.innerHTML = '🛑 Cancel Audiobook';
   }
   setStatusBadge('ab', 'running');
-  state.ab.startTime = Date.now();
+  state.ab.etaSamples = [];
 
   try {
     const hasKey = hasGeminiKey();  // not apiKey: keys live on the server, so that is always null
@@ -1677,6 +1677,35 @@ function pollProgress(prefix, jobId) {
   state[prefix].pollInterval = interval;
 }
 
+// Time left from the recent pace. Samples (time, done) start from what is already done when this page begins to
+// watch (a resumed or reloaded job is not divided by a few seconds of watching), and only the last few minutes count,
+// so a fast start from cached batches, the slow start and waits for Gemini limits fade out.
+const ETA_WINDOW_MS = 5 * 60 * 1000;
+const ETA_MIN_SPAN_S = 45;  // no estimate before this much watched progress
+
+function estimateTimeLeft(prefix, done, total, now = Date.now()) {
+  const st = state[prefix];
+  if (!Array.isArray(st.etaSamples) || st.etaTotal !== total) {  // another job or another phase
+    st.etaSamples = [];
+    st.etaTotal = total;
+  }
+  const samples = st.etaSamples;
+  const last = samples[samples.length - 1];
+  if (last && (done < last[1] || (done > last[1] && now - last[0] > ETA_WINDOW_MS))) {
+    samples.length = 0;  // went back, or moved again after a long pause (a wait for Gemini limits): measure afresh
+  }
+  if (!samples.length || samples[samples.length - 1][1] !== done) samples.push([now, done]);
+  else if (now - samples[samples.length - 1][0] > ETA_WINDOW_MS) return null;  // nothing moved for minutes
+  while (samples.length > 2 && now - samples[1][0] > ETA_WINDOW_MS) samples.shift();
+  if (samples.length < 3) return null;  // the first steps watched may be a burst from cache: no pace yet
+  const [t0, d0] = samples[0];
+  const span = (now - t0) / 1000;  // up to now: a pause since the last step slows the pace down too
+  const progressed = done - d0;
+  if (progressed <= 0 || span < ETA_MIN_SPAN_S) return null;
+  const perSecond = progressed / span;
+  return { seconds: (total - done) / perSecond, perMinute: perSecond * 60 };
+}
+
 function updateProgress(prefix, data) {
   const pct = data.progress || 0;
   const step = data.current_step || '';
@@ -1728,23 +1757,22 @@ function updateProgress(prefix, data) {
     }
   }
 
-  // Update Live ETA & Processing Speed
+  // Live time left & processing speed, from the recent pace
   const etaEl = document.getElementById(`${prefix}-progress-eta`);
   if (etaEl) {
-    if (!state[prefix].startTime && data.status === 'running') {
-      state[prefix].startTime = Date.now();
-    }
-    const elapsed = state[prefix].startTime ? (Date.now() - state[prefix].startTime) / 1000 : 0;
-    const done = Number(data.done_chunks || data.done_pages || 0);
-    const total = Number(data.total_chunks || data.total_pages || 0);
-    if (elapsed >= 3 && done > 0 && total > done && data.status === 'running') {
-      const rate = done / elapsed;
-      const remSec = Math.max(1, Math.round((total - done) / rate));
-      const remMin = Math.floor(remSec / 60);
-      const s = remSec % 60;
-      const timeStr = remMin > 0 ? `~${remMin}λ ${s}δ` : `~${s}δ`;
-      const unitStr = (prefix === 'tr' && data.total_pages > 0) ? `${Math.round(rate * 60)} σελ/λ` : `${rate.toFixed(1)} τμήματα/δ`;
-      etaEl.innerHTML = `⏳ Απομένουν: <strong>${timeStr}</strong> (${unitStr})`;
+    // pages when the job counts them (AI translation); other jobs count parts and leave done_pages at 0
+    const byPages = prefix === 'tr' && data.total_pages > 0 && (data.done_pages > 0 || !data.done_chunks);
+    const done = Number(byPages ? data.done_pages : (data.done_chunks || data.done_pages || 0));
+    const total = Number(byPages ? data.total_pages : (data.total_chunks || data.total_pages || 0));
+    const est = data.status === 'running' && total > done ? estimateTimeLeft(prefix, done, total) : null;
+    if (data.status !== 'running') state[prefix].etaSamples = [];  // a wait or a stop: the pace starts afresh
+    if (est) {
+      const time = est.seconds < 60 ? '<span>λιγότερο από 1 λεπτό</span>'
+        : `~<span>${formatMinutesEl(Math.round(est.seconds / 60))}</span>`;
+      const pace = `${est.perMinute < 10 ? est.perMinute.toFixed(1) : Math.round(est.perMinute)} ${byPages ? 'σελ/λ' : 'τμήματα/λ'}`;
+      // Maximum quality: the revision against the original comes after this and has its own time left
+      const second = data.max_quality && prefix === 'tr' ? ' · <span>+ το 2ο πέρασμα AI μετά</span>' : '';
+      etaEl.innerHTML = `⏳ Απομένουν: <strong>${time}</strong> (<span>${pace}</span>)${second}`;
       etaEl.style.display = 'inline-block';
     } else {
       etaEl.style.display = 'none';
@@ -1905,7 +1933,7 @@ function resetProgress(prefix, keepButtonsEnabled = false) {
   if (etaEl) { etaEl.style.display = 'none'; etaEl.textContent = ''; }
   const eng = document.getElementById(`${prefix}-engine-badge`);
   if (eng) eng.style.display = 'none';
-  state[prefix].startTime = null;
+  state[prefix].etaSamples = [];
   const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
   if (cancelBtn) {
     cancelBtn.disabled = false;

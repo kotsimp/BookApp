@@ -679,11 +679,13 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
-def _revision_time_left(elapsed: float, done: int, total: int) -> str:
-    """' · απομένουν ~12 λεπτά' from the pace so far ('' before the first part is back)."""
-    if done <= 0 or total <= done:
+def _revision_time_left(elapsed: float, done: int, total: int, start_done: int = 0) -> str:
+    """' · απομένουν ~12 λεπτά' from the pace so far ('' before the first part is back). `start_done` parts were
+    already done when the clock started (restored from a checkpoint on resume), so they do not count as speed."""
+    progressed = done - max(0, start_done)
+    if progressed <= 0 or total <= done:
         return ""
-    minutes = round(elapsed / done * (total - done) / 60)
+    minutes = round(elapsed / progressed * (total - done) / 60)
     if minutes < 1:
         return " · απομένει λιγότερο από 1 λεπτό"
     if minutes < 60:
@@ -699,10 +701,16 @@ async def _run_max_quality_revision(job_id, file_path, output_path, api_key, tar
     update_job(job_id, current_step="🏆 Αναθεώρηση της μετάφρασης με το πρωτότυπο (2ο πέρασμα AI, πολύ αργή διαδικασία)· "
                                     "ο χρόνος που απομένει φαίνεται μετά το πρώτο τμήμα…", progress=94)
     started = time.monotonic()
+    clock = {"t": started, "done": 0}
 
     def _prog(done, total):
+        now = time.monotonic()
+        if done < clock["done"] or (clock["done"] == 0 and done > 0 and now - started < 5):
+            # a resume reports the parts restored from its checkpoint at once: they are not speed
+            clock.update(t=now, done=done)
+        left = _revision_time_left(now - clock["t"], done, total, clock["done"])
         update_job(job_id, current_step=f"🏆 Αναθεώρηση με το πρωτότυπο (πολύ αργή διαδικασία): τμήμα {done}/{max(total, 1)}"
-                                        f"{_revision_time_left(time.monotonic() - started, done, total)}…")
+                                        f"{left}…")
 
     try:
         report = await revise_translation_against_source(
@@ -1194,6 +1202,7 @@ async def progress_stream(job_id: str):
                 "refinement_report": getattr(job, "refinement_report", None),
                 "revision_report": getattr(job, "revision_report", None),
                 "gemini_usage": getattr(job, "gemini_usage", None),
+                "max_quality": bool(getattr(job, "max_quality", False)),
             }
             yield f"data: {json.dumps(state)}\n\n"
 

@@ -884,6 +884,13 @@ assert.strictEqual(t('⚠️ 1 page(s) still contain text in the original langua
 assert.ok(t('⚠️ Audiobook ready! 3 part(s) in a script this voice cannot read were skipped; 2 part(s) read by Nestoras, ' +
   'because Athina returned no audio.', 'el').includes('παραλείφθηκαν· 2 τμήματα'), "';' is a question mark in Greek: '·'");
 assert.strictEqual(t('Λάθος όνομα χρήστη ή κωδικός.', 'en'), 'Wrong username or password.');
+// the pieces of the time left in the progress card
+assert.strictEqual(t('⏳ Απομένουν: ', 'en').trim(), '⏳ Time left:');
+assert.strictEqual(t('1 ώρα 53 λεπτά', 'en'), '1 hour 53 minutes');
+assert.strictEqual(t('λιγότερο από 1 λεπτό', 'en'), 'less than 1 minute');
+assert.strictEqual(t('5.0 σελ/λ', 'en'), '5.0 pages/min');
+assert.strictEqual(t('12 τμήματα/λ', 'en'), '12 parts/min');
+assert.strictEqual(t('+ το 2ο πέρασμα AI μετά', 'en'), '+ the 2nd AI pass afterwards');
 assert.strictEqual(t('⚠️ Something unknown. Another unknown sentence.', 'el'), '⚠️ Something unknown. Another unknown sentence.');
 process.stdout.write('OK');
 """
@@ -1016,6 +1023,100 @@ process.stdout.write('OK');
         res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Gemini keys window (8 slots, waiting status): OK")
+
+    def test_13_time_left_follows_the_recent_pace(self):
+        """The time left comes from the pace over the last minutes, counted from what the page first sees: a reload
+        in the middle of a long job does not divide hours of work by a few seconds, a fast start from cached batches
+        and a wait for Gemini limits fade out, the unit is right, and long times are in hours."""
+        print("-> 13. Testing the time-left estimate...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', dataset: {},
+    style: { display: '' }, setAttribute() {}, getAttribute() {}, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+vm.runInContext('Date.now = () => globalThis.__now;', ctx);
+const T0 = 1.8e12;
+const at = (sec) => { ctx.__now = T0 + sec * 1000; };
+const tr = (done, extra = {}) => ctx.updateProgress('tr', Object.assign({ status: 'running', progress: 50,
+  current_step: 'Single-Pass AI Translation', total_chunks: 80, done_chunks: Math.floor(done / 5),
+  total_pages: 400, done_pages: done }, extra));
+const eta = getEl('tr-progress-eta');
+const shown = () => eta.style.display !== 'none';
+
+// a reload in the middle: 200 of 400 pages were done hours ago, the page sees them at once
+at(0); tr(200);
+assert.ok(!shown(), 'no guess from the first look');
+at(60); tr(205);
+assert.ok(!shown(), 'one step is not a pace yet');
+at(120); tr(210);
+assert.ok(shown(), eta.innerHTML);
+assert.ok(eta.innerHTML.includes('~<span>38 λεπτά</span>'), eta.innerHTML);   // 190 left at 5 pages/min
+assert.ok(eta.innerHTML.includes('5.0 σελ/λ'), eta.innerHTML);
+assert.ok(!eta.innerHTML.includes('2ο πέρασμα'), 'no second pass without Maximum quality');
+
+// hours, and the second pass of Maximum quality is mentioned
+vm.runInContext('state.tr.etaSamples = [];', ctx);
+at(1000); tr(100, { max_quality: true });
+at(1060); tr(101, { max_quality: true });
+at(1120); tr(102, { max_quality: true });   // 1 page/min, 298 left
+assert.ok(eta.innerHTML.includes('~<span>4 ώρες 58 λεπτά</span>'), eta.innerHTML);
+assert.ok(eta.innerHTML.includes('+ το 2ο πέρασμα AI μετά'), eta.innerHTML);
+
+// a fast start from cached batches fades out: after five minutes only the real pace counts
+vm.runInContext('state.tr.etaSamples = [];', ctx);
+at(5000); tr(0);
+at(5005); tr(150);                           // restored from the checkpoint in a burst
+for (let k = 1; k <= 12; k++) { at(5005 + k * 60); tr(150 + 2 * k); }   // then 2 pages a minute
+assert.ok(eta.innerHTML.includes('2.0 σελ/λ'), eta.innerHTML);
+assert.ok(eta.innerHTML.includes('~<span>1 ώρα 53 λεπτά</span>'), eta.innerHTML);  // 226 left at 2 a minute
+
+// a long wait for Gemini limits: hidden while nothing moves, then measured afresh
+at(5005 + 12 * 60 + 400); tr(174);
+assert.ok(!shown(), 'nothing moved for minutes: no time left');
+at(9000); tr(176);
+assert.ok(!shown(), 'after the wait the pace starts again');
+at(9060); tr(178); at(9120); tr(180);
+assert.ok(shown() && eta.innerHTML.includes('2.0 σελ/λ'), eta.innerHTML);
+
+// not running (queued, waiting, stopped): hidden, and the next run measures afresh
+tr(180, { status: 'waiting_quota' });
+assert.ok(!shown());
+assert.strictEqual(vm.runInContext('state.tr.etaSamples.length', ctx), 0);
+
+// almost done
+vm.runInContext('state.tr.etaSamples = [];', ctx);
+at(20000); tr(390); at(20030); tr(394); at(20060); tr(398);
+assert.ok(eta.innerHTML.includes('<span>λιγότερο από 1 λεπτό</span>'), eta.innerHTML);
+
+// an audiobook counts parts, per minute
+const ab = (done) => ctx.updateProgress('ab', { status: 'running', progress: 10, current_step: '', total_chunks: 300,
+  done_chunks: done, total_pages: 0, done_pages: 0 });
+at(30000); ab(10); at(30030); ab(13); at(30060); ab(16);
+const abEta = getEl('ab-progress-eta');
+assert.ok(abEta.innerHTML.includes('6.0 τμήματα/λ'), abEta.innerHTML);
+assert.ok(abEta.innerHTML.includes('~<span>47 λεπτά</span>'), abEta.innerHTML);   // 284 left at 6 a minute
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Time left from the recent pace: OK")
 
 
 if __name__ == "__main__":

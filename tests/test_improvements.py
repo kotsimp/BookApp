@@ -98,6 +98,9 @@ class TestRevisionTimeLeft(unittest.TestCase):
         self.assertEqual(left(900.0, 1, 9), " · απομένουν ~2 ώρες")
         self.assertEqual(left(20.0, 9, 10), " · απομένει λιγότερο από 1 λεπτό")
         self.assertEqual(left(300.0, 10, 10), "")                   # finished
+        # a resume: 30 parts came back from the checkpoint at once, then 2 parts in 4 minutes
+        self.assertEqual(left(240.0, 32, 40, start_done=30), " · απομένουν ~16 λεπτά")
+        self.assertEqual(left(5.0, 30, 40, start_done=30), "")      # only restored parts so far: no guess
 
 
 class TestSlowModelMemory(unittest.TestCase):
