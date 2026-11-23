@@ -7,11 +7,14 @@ Supports both Manual Queue review + Start and Auto-Start Queue modes.
 """
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
+import os
+import time
+from dataclasses import asdict, dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from backend.job_manager import get_job, cancel_job, update_job, clear_job_cancellation
+from backend.job_manager import get_job, cancel_job, update_job, clear_job_cancellation, INTERRUPTED_STEP, is_quota_error
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,93 @@ _queue_paused: bool = False
 _queue_paused_for_quota: bool = False
 _queue_auto_start: bool = False
 MAX_QUEUE_ITEMS: int = 20
+QUOTA_RETRY_SECONDS = 60.0  # between automatic attempts while the pool claims quota but the models are cooling down
+_quota_paused_at: float = 0.0  # 0 after a restart: try at once
+
+
+def quota_retry_due() -> bool:
+    return time.time() - _quota_paused_at >= QUOTA_RETRY_SECONDS
+
+
+def _state_file():
+    from backend import database
+    return database.DB_DIR / "batch_queue.json"
+
+
+def save_queue() -> None:
+    """Persists the queue across restarts. API keys are never written."""
+    try:
+        items = []
+        for it in _queue_items:
+            entry = asdict(it)
+            entry.pop("api_key", None)
+            items.append(entry)
+        state = {"items": items, "paused": _queue_paused, "paused_for_quota": _queue_paused_for_quota,
+                 "auto_start": _queue_auto_start}
+        path = _state_file()
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning(f"[Queue] Could not save the queue: {e}")
+
+
+def restore_queue() -> None:
+    """
+    Rebuilds the queue at startup. Items waiting for quota keep waiting (the monitor resumes them); items that were
+    queued or running come back paused, so a restart never starts work without the user.
+    """
+    global _queue_paused, _queue_paused_for_quota, _queue_auto_start
+    if _queue_items:
+        return
+    try:
+        state = json.loads(_state_file().read_text(encoding="utf-8"))
+        entries = list(state["items"])
+    except (OSError, ValueError, KeyError, TypeError):
+        state, entries = {}, []
+    known = set(QueueItem.__dataclass_fields__) - {"api_key"}
+    for entry in entries:
+        try:
+            item = QueueItem(**{k: v for k, v in entry.items() if k in known})
+        except (TypeError, AttributeError):
+            continue
+        if get_job(item.job_id):
+            _queue_items.append(item)
+
+    # jobs left waiting by versions that did not save the queue
+    from backend.database import db_list_jobs
+    present = {it.job_id for it in _queue_items}
+    for row in db_list_jobs(limit=-1):
+        if row["status"] == "waiting_quota" and row["job_id"] not in present:
+            job = get_job(row["job_id"])
+            if job:
+                _queue_items.append(QueueItem(
+                    job_id=job.job_id, file_name=job.file_name, file_type=job.file_type,
+                    source_lang=job.source_lang, target_lang=job.target_lang,
+                    output_format=job.output_format or "pdf", layout_mode=job.layout_mode,
+                    reading_direction=job.reading_direction, ai_polish=job.ai_polish,
+                    is_comic=job.layout_mode == "comic", status="waiting_quota", quota_behavior="wait",
+                ))
+
+    unfinished = False
+    for item in _queue_items:
+        job = get_job(item.job_id)
+        if item.status in ("queued", "running"):
+            if item.status == "running" and job.status in ("done", "error"):
+                item.status = job.status
+                item.error = job.error
+                continue
+            item.status = "queued"
+            unfinished = True
+            clear_job_cancellation(item.job_id)
+            update_job(item.job_id, status="queued", current_step="⏳ Queued in batch (restored after restart)...")
+        elif item.status == "waiting_quota":
+            update_job(item.job_id, status="waiting_quota")
+    _queue_paused_for_quota = any(it.status == "waiting_quota" for it in _queue_items) and (
+        bool(state.get("paused_for_quota")) or not state.get("paused"))
+    _queue_paused = bool(unfinished or _queue_paused_for_quota or (_queue_items and state.get("paused")))
+    _queue_auto_start = bool(state.get("auto_start"))
+    save_queue()
 
 
 def is_mixed_queue() -> bool:
@@ -117,13 +207,19 @@ def get_queue_state() -> Dict[str, Any]:
     quota_exhausted = q_info["exhausted"]
     quota_message = q_info["message"]
     if quota_exhausted and q_info.get("cooldown_time_str"):
-        any_fallback = any(getattr(it, "quota_behavior", "wait") == "fallback" for it in _queue_items)
-        if any_fallback:
+        pending = [it for it in _queue_items if it.status not in ("done", "cancelled")] or _queue_items
+        modes = {getattr(it, "quota_behavior", "wait") or "wait" for it in pending}
+        if modes == {"wait", "fallback"}:
+            behavior_text = (
+                "Τα έγγραφα με επιλογή «Αναμονή» περιμένουν την ανανέωση ορίου (και σταματούν την ουρά μέχρι τότε)· "
+                "όσα έχουν fallback συνεχίζουν με τη βασική μηχανή μετάφρασης (χωρίς AI polish)."
+            )
+        elif modes == {"fallback"}:
             behavior_text = "Η ουρά συνεχίζει με τη βασική μηχανή μετάφρασης (χωρίς AI polish) για τα έγγραφα με επιλογή fallback."
         else:
             behavior_text = "Η ουρά βρίσκεται σε αυτόματη αναμονή ανανέωσης ορίου (100% ποιότητα Gemini AI Polish) και θα συνεχίσει αυτόματα μόλις μηδενίσει ο χρόνος."
         quota_message = (
-            f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+            f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
             f"{behavior_text} "
             f"Ανανέωση ορίου σε ~{q_info['cooldown_time_str']} ή προσθέστε API Key στις Ρυθμίσεις για άμεση συνέχιση."
         )
@@ -226,6 +322,7 @@ def add_to_queue(
                 _queue_auto_start = False
             clear_job_cancellation(job_id)
             update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
+            save_queue()
             return existing
 
     if len(_queue_items) >= MAX_QUEUE_ITEMS:
@@ -257,6 +354,7 @@ def add_to_queue(
         _queue_auto_start = False
     clear_job_cancellation(job_id)
     update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued in batch...")
+    save_queue()
     return item
 
 
@@ -273,6 +371,7 @@ def retry_queue_item(job_id: str) -> QueueItem:
             item.error = None
             clear_job_cancellation(job_id)
             update_job(job_id, status="queued", progress=0, error=None, current_step="⏳ Queued for retry...")
+            save_queue()
             return item
     raise KeyError(f"Job '{job_id}' not found in queue.")
 
@@ -283,6 +382,7 @@ def set_queue_auto_start(enabled: bool) -> bool:
         _queue_auto_start = False
         return False
     _queue_auto_start = bool(enabled)
+    save_queue()
     return _queue_auto_start
 
 
@@ -290,42 +390,45 @@ def pause_queue() -> bool:
     global _queue_paused, _queue_paused_for_quota
     _queue_paused = True
     _queue_paused_for_quota = False
+    save_queue()
     return _queue_paused
 
 
 def remove_from_queue(job_id: str) -> bool:
     """Removes a job from the queue (cancelling it if currently running, or resetting queued status to idle)."""
-    global _queue_paused
+    global _queue_paused, _queue_paused_for_quota
     for idx, item in enumerate(_queue_items):
         if item.job_id == job_id:
             if item.status == "running":
                 cancel_job(job_id)
-            elif item.status == "queued":
+            elif item.status in ("queued", "waiting_quota"):
                 job = get_job(job_id)
-                if job and job.status == "queued":
+                if job and job.status in ("queued", "waiting_quota"):
                     update_job(job_id, status="idle", current_step="Ready")
             _queue_items.pop(idx)
             if not _queue_items:
-                _queue_paused = False
+                _queue_paused = _queue_paused_for_quota = False
+            save_queue()
             return True
     return False
 
 
 def clear_queue() -> int:
     """Clears all non-running items from the queue (returns number removed)."""
-    global _queue_items, _queue_paused
+    global _queue_items, _queue_paused, _queue_paused_for_quota
     before = len(_queue_items)
     kept = []
     for it in _queue_items:
         if it.status == "running":
             kept.append(it)
-        elif it.status == "queued":
+        elif it.status in ("queued", "waiting_quota"):
             job = get_job(it.job_id)
-            if job and job.status == "queued":
+            if job and job.status in ("queued", "waiting_quota"):
                 update_job(it.job_id, status="idle", current_step="Ready")
     _queue_items = kept
     if not _queue_items:
-        _queue_paused = False
+        _queue_paused = _queue_paused_for_quota = False
+    save_queue()
     return before - len(_queue_items)
 
 
@@ -342,7 +445,7 @@ async def _process_queue_loop(
     Each item runs in its own isolated child Task so cancelling a single running item
     never terminates the queue processor loop — it cleanly moves on to the next item.
     """
-    global _queue_paused, _queue_paused_for_quota, _queue_task
+    global _queue_paused, _queue_paused_for_quota, _queue_task, _quota_paused_at
     logger.info("Smart Batch Queue processor started.")
     try:
         while not _queue_paused:
@@ -352,6 +455,7 @@ async def _process_queue_loop(
 
             next_item.status = "running"
             next_item.error = None
+            save_queue()
             logger.info(f"[Queue] Starting job {next_item.job_id} ({next_item.file_name})")
             item_task = asyncio.create_task(execute_item(next_item))
             try:
@@ -362,10 +466,11 @@ async def _process_queue_loop(
                     next_item.error = job.error
                     if job.status in ("error", "waiting_quota"):
                         err_str = str(job.error or "").lower()
-                        if any(k in err_str for k in ("quota", "resource_exhausted", "429")) or job.status == "waiting_quota":
+                        if is_quota_error(err_str) or job.status == "waiting_quota":
                             if getattr(next_item, "quota_behavior", "wait") == "wait":
                                 _queue_paused = True
                                 _queue_paused_for_quota = True
+                                _quota_paused_at = time.time()
                                 next_item.status = "waiting_quota"
                                 update_job(
                                     next_item.job_id,
@@ -379,8 +484,13 @@ async def _process_queue_loop(
                                 break
                 elif not job:
                     next_item.status = "cancelled"
+                elif job.status == "idle" and job.current_step == INTERRUPTED_STEP:
+                    next_item.status = "queued"  # server shutdown: continue after the restart
+                    _queue_paused = True
+                    break
                 else:
                     next_item.status = "done"
+                save_queue()
             except asyncio.CancelledError:
                 cur_task = asyncio.current_task()
                 cancelling_fn = getattr(cur_task, "cancelling", None) if cur_task is not None else None
@@ -397,10 +507,11 @@ async def _process_queue_loop(
                 logger.error(f"[Queue] Job {next_item.job_id} failed: {ex}")
                 err_str = str(ex).lower()
                 from backend.ai_polisher import DailyQuotaExhaustedError
-                if isinstance(ex, DailyQuotaExhaustedError) or any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+                if isinstance(ex, DailyQuotaExhaustedError) or is_quota_error(err_str):
                     if getattr(next_item, "quota_behavior", "wait") == "wait":
                         _queue_paused = True
                         _queue_paused_for_quota = True
+                        _quota_paused_at = time.time()
                         next_item.status = "waiting_quota"
                         update_job(
                             next_item.job_id,
@@ -413,6 +524,7 @@ async def _process_queue_loop(
                         )
                         break
     finally:
+        save_queue()
         if _queue_task is asyncio.current_task():
             _queue_task = None
         logger.info("Smart Batch Queue processor finished/idle.")
@@ -438,7 +550,7 @@ def resume_queue_after_quota(
     for item in _queue_items:
         if item.status in ("waiting_quota", "error"):
             err_str = str(item.error or "").lower()
-            if item.status == "waiting_quota" or any(k in err_str for k in ("quota", "resource_exhausted", "429")):
+            if item.status == "waiting_quota" or is_quota_error(err_str):
                 if getattr(item, "quota_behavior", "wait") == "wait":
                     item.status = "queued"
                     item.error = None
@@ -451,7 +563,9 @@ def resume_queue_after_quota(
                     )
                     resumed_any = True
 
-    if resumed_any:
+    save_queue()
+    # also when the waiting file was removed meanwhile: the files behind it must not stay stuck
+    if resumed_any or any(it.status == "queued" for it in _queue_items):
         logger.info("[Queue] Auto-resumed queued items after Gemini quota reset. Starting queue processor.")
         start_queue(execute_item)
         return True
@@ -529,6 +643,8 @@ def apply_settings_to_queued_items(
             if ai_polish is not None:
                 item.ai_polish = bool(ai_polish)
         updated += 1
+    if updated:
+        save_queue()
     return updated
 
 
@@ -538,6 +654,7 @@ def start_queue(
     """Starts or resumes background serial queue processing."""
     global _queue_task, _queue_paused
     _queue_paused = False
+    save_queue()
     has_queued = any(it.status == "queued" for it in _queue_items)
     if has_queued and (_queue_task is None or _queue_task.done()):
         try:

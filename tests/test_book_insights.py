@@ -675,5 +675,31 @@ class TestExportAudioAndSafety(InsightsBase):
         self.assertEqual(st, 404)
 
 
+class TestInsightText(unittest.TestCase):
+    def test_only_meta_lines_are_dropped(self):
+        from backend import book_insights
+        for line, language in (("Ακολουθεί η εξέγερση των εργατών και η ήττα τους.", "greek"),
+                               ("Λέξεις και σιωπή είναι τα δύο θέματα του έργου.", "greek"),
+                               ("Σημείωση και υστερόγραφο κλείνουν το μυθιστόρημα.", "greek"),
+                               ("Here is where the story turns against the captain.", "english"),
+                               ("Note the recurring image of the sea in every chapter.", "english")):
+            self.assertIn(line, book_insights.normalize_output(f"Start of it.\n\n{line}", language))
+        for line in ("Here is the summary:", "Word count: 245", "**Word count:** 245", "(245 words)",
+                     "Ακολουθεί η περίληψη:", "Note: written from the notes.", "This synopsis covers the whole book."):
+            self.assertEqual(book_insights.normalize_output(f"{line}\n\nThe text.", "english"), "The text.", line)
+
+    def test_sections_keep_the_order_of_the_book(self):
+        from backend import book_insights
+        text = "first paragraph\n\n" + "giant " * 40 + "\n\nlast paragraph"
+        sections = book_insights.split_sections(text, max_chars=100)
+        self.assertEqual("".join("".join(sections).split()), "".join(text.split()))
+
+    def test_a_leaked_request_label_is_rejected(self):
+        from backend import book_insights
+        text = "The captain counts the boats. " * 30 + "\n--- INPUT TEXT ---"
+        critical, _warnings = book_insights.validate_output(text, "short_summary", "english", 100, 300, text * 5, "english")
+        self.assertIn("prompt text leaked into output", critical)
+
+
 if __name__ == "__main__":
     unittest.main()

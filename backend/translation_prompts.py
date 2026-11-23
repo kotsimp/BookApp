@@ -17,7 +17,7 @@ Design goals (publication quality for a demanding reader):
 Bump PROMPT_VERSION whenever prompts change (it is part of the direct-translation checkpoint signature).
 """
 
-PROMPT_VERSION = "2026.11-q2"
+PROMPT_VERSION = "2026.11-q3"
 
 
 def is_greek(lang: str) -> bool:
@@ -147,7 +147,7 @@ STYLE_PROMPTS = {
     ),
     "audiobook": (
         "Είσαι έμπειρος επιμελητής σεναρίων εκφώνησης για Audiobooks (Spoken Word & Neural TTS Script Editor). "
-        "Προετοίμασε το κείμενο ώστε μια νευρωνική φωνή εκφώνησης (Nestoras/Athina στο Edge-TTS) να το απαγγείλει με "
+        "Προετοίμασε το κείμενο ώστε μια νευρωνική φωνή εκφώνησης (Nestoras στο Edge-TTS) να το απαγγείλει με "
         "άψογη, ανθρώπινη ροή και σωστή προφορά.\n"
         "0. ΠΙΣΤΟΤΗΤΑ: ΜΗΝ παραφράζεις, ΜΗΝ συντομεύεις και ΜΗΝ ξαναγράφεις προτάσεις. Αλλάζεις ΜΟΝΟ ό,τι χρειάζεται για "
         "σωστή εκφώνηση (προφορά, ολογραφία, μη εκφωνήσιμα σύμβολα). Λέξεις, σειρά και ύφος του συγγραφέα μένουν ίδια.\n"
@@ -200,10 +200,44 @@ ENGLISH_POLISH_PROMPT = (
 )
 
 
+_KEEP_ENGLISH = (
+    "LANGUAGE: the text is English and stays English. Never translate any of it, and write every name in Latin "
+    "letters.\n"
+)
+ENGLISH_SCRIPT_PROMPTS = {
+    "audiobook": (
+        "You are an experienced editor of audiobook narration scripts. Prepare the English text so that a neural "
+        "voice reads it fluently, with correct pronunciation.\n"
+        f"{_KEEP_ENGLISH}"
+        "FIDELITY: do not paraphrase, shorten or rewrite sentences. Change only what correct narration needs: the "
+        "author's words, order and style stay.\n"
+        "1. Write out numbers, years, dates, times, percentages, currencies, units, ordinals and Roman numerals as "
+        "they are spoken ('2006' -> 'two thousand and six', '10:30' -> 'half past ten', 'Chapter IV' -> 'Chapter "
+        "four'), and expand abbreviations ('Dr.' -> 'Doctor', 'e.g.' -> 'for example'). Acronyms stay acronyms.\n"
+        "2. Remove what is not spoken: footnote marks ([1], [14]), page markers (=== PAGE X ===), URLs, repeated "
+        "running headers and end-of-line hyphenation. Write words set in capitals for emphasis in lower case.\n"
+        "3. Replace parentheses, slashes and brackets with commas for natural pauses, without changing the syntax. "
+        "Keep dialogue quotation marks and paragraph breaks.\n"
+        "4. Return only the finished script, without any comment."
+    ),
+    "poetry": (
+        "You are an editor of poetry and drama for recorded recitation. Prepare the English poem for a neural voice "
+        "without changing any of the poet's words, except as follows.\n"
+        f"{_KEEP_ENGLISH}"
+        "1. Keep every verse on its own line and the same blank lines between stanzas. Never join verses into prose.\n"
+        "2. Do not add punctuation at line ends where the poet has none: the line runs on into the next.\n"
+        "3. Write out numbers, years and abbreviations as they are spoken, and remove footnote numbers, running "
+        "headers and page markers (=== PAGE X ===).\n"
+        "4. Return only the poem, without any comment."
+    ),
+}
+
+
 def build_polish_prompt(style: str, target_lang: str = "greek") -> str:
     """System prompt for polishing an existing draft (or preparing an audiobook script)."""
     if style in ("audiobook", "poetry"):
-        return STYLE_PROMPTS[style]                      # language-aware internally
+        # the Greek script prompts made Gemini translate English books into Greek
+        return STYLE_PROMPTS[style] if is_greek(target_lang) else ENGLISH_SCRIPT_PROMPTS[style]
     if not is_greek(target_lang):
         return ENGLISH_POLISH_PROMPT
     return STYLE_PROMPTS.get(style, STYLE_PROMPTS["formal"])

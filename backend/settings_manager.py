@@ -19,14 +19,33 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 _settings_lock = threading.RLock()
 
 
+def _read_settings_text() -> str:
+    """
+    The file's text. Windows lets a virus scanner, a backup tool or another process hold the file for a moment:
+    that is waited out, and an unreadable file raises - it is not an empty one.
+    """
+    for attempt in range(8):
+        try:
+            return SETTINGS_FILE.read_text(encoding="utf-8")
+        except (PermissionError, BlockingIOError) as e:
+            if attempt == 7:
+                raise OSError(f"The settings file cannot be read right now: {e}") from e
+            time.sleep(0.05 * (attempt + 1))
+    return ""
+
+
 def load_settings() -> Dict[str, Any]:
-    """Loads settings from config/settings.json, backing up corrupt files instead of silently losing them."""
+    """
+    Loads settings from config/settings.json, backing up corrupt files instead of silently losing them.
+    Raises OSError while the file cannot be read, so that a save never replaces it with a nearly empty one.
+    """
     with _settings_lock:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         if not SETTINGS_FILE.exists():
             return {}
+        raw = _read_settings_text()
         try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             if isinstance(data, dict):
                 return data
         except Exception as e:
@@ -73,7 +92,11 @@ def get_setting(key: str, default: Optional[Any] = None) -> Optional[Any]:
     if env_val:
         return env_val
     with _settings_lock:
-        settings = load_settings()
+        try:
+            settings = load_settings()
+        except OSError as e:
+            logger.warning(f"{e}: using the default for '{key}'.")
+            return default
         return settings.get(key, default)
 
 

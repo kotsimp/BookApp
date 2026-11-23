@@ -15,3 +15,10 @@ def require_sandbox() -> None:
 
 
 require_sandbox()
+
+try:
+    import _offline_translation
+except ImportError:
+    from tests import _offline_translation
+
+_offline_translation.install()  # the suites must not spend the free services' daily allowance

@@ -444,6 +444,8 @@ body::after {
   box-shadow: 0 0 0 3px var(--violet-glow);
 }
 
+input.form-input { background-image: none; cursor: text; } /* the arrow belongs to lists only */
+
 /* Native option lists: opaque, theme-aware colours (a hard-coded dark background made options unreadable in the
    light theme, where the text colour is dark). Applies to every <select> in the app. */
 select option,
@@ -780,7 +782,7 @@ select option:disabled {
   color: #f87171;
 }
 
-.history-grid { display: grid; gap: 10px; }
+.history-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 
 .history-item {
   background: var(--bg-card);
@@ -823,7 +825,7 @@ select option:disabled {
 }
 
 .toast {
-  background: var(--bg-card);
+  background: var(--bg-option); /* opaque: the translucent card colour vanished over the reader's paper */
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 14px 20px;
@@ -840,7 +842,7 @@ select option:disabled {
 .toast-success { border-color: rgba(16,185,129,0.4); }
 .toast-error   { border-color: rgba(244,63,94,0.4); }
 .toast-info    { border-color: rgba(6,182,212,0.4); }
-.toast-warning { border-color: rgba(245,158,11,0.55); color: #f59e0b; background: rgba(245,158,11,0.08); }
+.toast-warning { border-color: rgba(245,158,11,0.55); color: #f59e0b; }
 
 /* ---- Animations ---- */
 @keyframes pulse-dot {
@@ -1698,13 +1700,14 @@ select option:disabled {
 
 .reader-split-content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
   max-width: 1060px;
   margin: 0 auto;
 }
 
 .reader-split-col {
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1814,4 +1817,55 @@ select option:disabled {
 @media (max-width: 640px) {
   .ins-basic-grid, .ins-adv-grid { grid-template-columns: 1fr; }
   .ins-result-body { padding: 14px; max-height: none; }
+}
+
+/* ---- File names, paths and messages have no spaces to break at: these break them anywhere ---- */
+.toast, .error-card, .queue-item, .history-item, .selected-file, .progress-step, .progress-label, .ab-track-subtitle,
+.reader-body, .glossary-table td:nth-child(2), #ins-error, #ins-result-title, #ins-result-warnings, #ai-polish-step,
+#ai-polish-quota-warning-banner, #smart-resume-banner, #home-gemini-quota-banner, #queue-quota-warning-banner,
+#tr-quota-warning-banner, #ab-quota-warning-banner, #tr-result-quota-notice, #tr-genre-hint, #comic-format-hint,
+#tr-cover-status, #ins-use-current-btn, .ins-reason, [id$="-progress-detail"], [id$="-result-meta"], [id$="-file-meta"] {
+  overflow-wrap: anywhere;
+}
+.ab-track-info, .ab-track-info > div, .ab-chapter-select-wrap, .reader-meta { min-width: 0; max-width: 100%; }
+.ab-track-title { max-width: min(320px, 100%); }
+.reader-title { min-width: 0; }
+.form-select-sm { max-width: 100%; }
+#ins-use-current-btn { white-space: normal; }
+button:not(#ins-use-current-btn), .btn:not(#ins-use-current-btn), .btn-sm, .queue-badge, #tr-genre-applied-badge {
+  overflow-wrap: normal; /* controls inside those containers keep their words whole */
+}
+
+/* ---- Phones: long labels wrap instead of pushing controls off the screen (last, to win over the rules above) ---- */
+@media (max-width: 900px) {
+  .btn, .btn-sm { white-space: normal; max-width: 100%; }
+}
+@media (max-width: 640px) {
+  .editor-actions, .audio-convert-group { max-width: 100%; }
+  .hero { padding-top: 72px; } /* room for the Refresh and theme buttons above the badge */
+  .audio-convert-group { flex-wrap: wrap; justify-content: center; }
+  .selected-file, #tr-cover-preview-box, .ab-speed-pills, .genre-badge-hint { flex-wrap: wrap; }
+  .genre-badge-hint > span:first-child { flex: 1 1 200px; min-width: 0; } /* the badge moves below the sentence */
+  .selected-file > .file-info { flex-basis: 140px; } /* the buttons move below rather than squeeze the name away */
+  #tr-cover-preview-box > div:last-child { min-width: 0; flex-basis: 160px !important; } /* over its inline flex:1 */
+  .glossary-pagination, .glossary-page-btns { flex-wrap: wrap; }
+  .queue-item-top { flex-wrap: wrap; }
+  .queue-item-info { flex-basis: 100%; }
+  .queue-item-top > div:last-child { flex-wrap: wrap; max-width: 100%; }
+}
+@media (max-width: 640px) { /* four columns do not fit: category and delete on one line, both terms below */
+  .glossary-table thead { display: none; }
+  .glossary-table, .glossary-table tbody { display: block; }
+  .glossary-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 0;
+  }
+  .glossary-table td { grid-column: 1 / -1; border: 0; padding: 3px 10px; overflow-wrap: anywhere; }
+  .glossary-table td:first-child:not([colspan]) { grid-column: 1; }
+  .glossary-table td:nth-child(4) { grid-column: 2; grid-row: 1; }
+}
+@media (max-width: 359px) {
+  #tr-layout-selector { grid-template-columns: 1fr !important; }
 }

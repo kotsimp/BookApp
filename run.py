@@ -72,7 +72,7 @@ def main():
     if not installed_from_req:
         core_pkgs = [
             "fastapi", "uvicorn", "python-multipart", "aiofiles", "aiohttp",
-            "pymupdf", "python-docx", "beautifulsoup4",
+            "pymupdf", "python-docx", "beautifulsoup4", "pydantic", "lxml", "mutagen", "Pillow",
             "deep-translator", "edge-tts", "EbookLib", "imageio-ffmpeg",
         ]
         for pkg in core_pkgs:

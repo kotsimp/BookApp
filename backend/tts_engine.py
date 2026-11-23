@@ -4,14 +4,19 @@ Supports Greek (el-GR) and English (en-US) with multiple voice options.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
+import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
 import edge_tts
+from edge_tts.exceptions import NoAudioReceived
 from backend.parsers import parse_document, split_into_chunks
 from backend.job_manager import update_job
 
@@ -21,17 +26,36 @@ logger = logging.getLogger(__name__)
 VOICES = {
     "greek": {
         "Nestoras (Male)": "el-GR-NestorasNeural",
-        "Athina (Female)": "el-GR-AthinaNeural",
     },
     "english": {
         "Aria (Female)": "en-US-AriaNeural",
         "Guy (Male)": "en-US-GuyNeural",
         "Jenny (Female)": "en-US-JennyNeural",
-        "Davis (Male)": "en-US-DavisNeural",
+        "Brian (Male)": "en-US-BrianNeural",
         "Emma (Female)": "en-GB-SoniaNeural",
         "Ryan (Male)": "en-GB-RyanNeural",
     },
 }
+
+# Saved jobs and settings may still name these: Davis was retired by Microsoft (Brian reads), and Athina was removed
+# because Microsoft's service refuses most of that voice's requests (Nestoras reads)
+_RETIRED_VOICES = {
+    "en-us-davisneural": "en-US-BrianNeural", "davis (male)": "en-US-BrianNeural", "davis": "en-US-BrianNeural",
+    "el-gr-athinaneural": "el-GR-NestorasNeural", "athina (female)": "el-GR-NestorasNeural", "athina": "el-GR-NestorasNeural",
+}
+# Who reads a part that a voice refuses (the service answers "no audio"). Greek has a single voice, so no substitute.
+_FALLBACK_VOICES = {
+    "en-US-AriaNeural": "en-US-JennyNeural",
+    "en-US-JennyNeural": "en-US-AriaNeural",
+    "en-GB-SoniaNeural": "en-US-AriaNeural",
+    "en-US-GuyNeural": "en-US-BrianNeural",
+    "en-US-BrianNeural": "en-US-GuyNeural",
+    "en-GB-RyanNeural": "en-US-GuyNeural",
+}
+_TTS_PIECE_STEPS = ((500, 3), (160, 4), (60, 5))  # (characters per request, attempts) after a whole part was refused
+_RETRY_WAITS = (1.5, 5.0, 12.0)                   # between the attempts of a whole part
+_OUTAGE_PAUSE = 30.0                              # before the second round of a voice that has no substitute
+_MIN_BYTES_PER_LETTER = 40                        # normal speech is over 250 at 48 kbit/s
 
 # Max chars per TTS request (~1200 chars allows fast concurrent synthesis while staying well within edge-tts limits)
 TTS_CHUNK_SIZE = 1200
@@ -63,7 +87,7 @@ def split_into_voice_segments(
     """
     Splits text into (chunk_text, voice_code) segments.
     Supports:
-    1. Explicit tags: [Nestoras]: ..., [Athina]: ..., [VoiceName]: ...
+    1. Explicit tags: [Nestoras]: ..., [Aria]: ..., [VoiceName]: ...
     2. Automatic dialogue alternation: Dialogue lines (starting with '—' or enclosed in «...»)
        are routed to dialogue_voice_code, narration is routed to default_voice_code.
     """
@@ -72,11 +96,12 @@ def split_into_voice_segments(
 
     alias_map = {
         "nestoras": "el-GR-NestorasNeural",
-        "athina": "el-GR-AthinaNeural",
+        "athina": "el-GR-NestorasNeural",
         "aria": "en-US-AriaNeural",
         "guy": "en-US-GuyNeural",
         "jenny": "en-US-JennyNeural",
-        "davis": "en-US-DavisNeural",
+        "davis": "en-US-BrianNeural",
+        "brian": "en-US-BrianNeural",
         "sonia": "en-GB-SoniaNeural",
         "ryan": "en-GB-RyanNeural",
         "narrator": default_voice_code,
@@ -99,7 +124,7 @@ def split_into_voice_segments(
                 current_lines.append("")
             continue
 
-        # 1. Explicit speaker tag: e.g. [Athina]: ... or [Nestoras]: ...
+        # 1. Explicit speaker tag: e.g. [Nestoras]: ... or [Aria]: ...
         tag_match = re.match(r"^\[([a-zA-Z\u0370-\u03ff\s]+)\]\s*:\s*(.*)$", stripped)
         if tag_match:
             speaker_tag = tag_match.group(1).strip().lower()
@@ -203,7 +228,7 @@ async def synthesize_voice_preview(
         raise ValueError(f"Invalid voice code: {voice_code!r}")
     base_temp = Path(__file__).resolve().parent.parent / "temp" / "previews"
     base_temp.mkdir(parents=True, exist_ok=True)
-    out_file = base_temp / f"preview_{voice_code}.mp3"
+    voice_code = _RETIRED_VOICES.get(voice_code.lower(), voice_code)
     tmp_file = base_temp / f"preview_{voice_code}_{uuid.uuid4().hex[:8]}.tmp"
 
     sample_text = text or (
@@ -212,9 +237,17 @@ async def synthesize_voice_preview(
         else "Hello! This is a preview of the neural voice narration for BookApp."
     )
 
-    communicate = edge_tts.Communicate(sample_text, voice_code, rate="-10%")
+    # one file per voice and text, so two previews cannot hand each other's audio out
+    out_file = base_temp / f"preview_{voice_code}_{hashlib.sha256(sample_text.encode('utf-8')).hexdigest()[:10]}.mp3"
     try:
-        await asyncio.wait_for(communicate.save(str(tmp_file)), timeout=30.0)
+        for try_no in range(5):
+            try:
+                await _synthesize(sample_text, voice_code, str(tmp_file), {"rate": "-10%"}, timeout=45.0)
+                break
+            except (NoAudioReceived, IncompleteAudio):  # a busy voice usually answers on a repeat
+                if try_no == 4:
+                    raise
+                await asyncio.sleep(0.5 * (try_no + 1))
         for attempt in range(4):
             try:
                 os.replace(tmp_file, out_file)
@@ -406,10 +439,13 @@ def _resolve_voice_code(language: str, voice_name: Optional[str], fallback_defau
         lang_norm = "english"
     lang_map = VOICES.get(lang_norm, {})
     if voice_name:
+        retired = _RETIRED_VOICES.get(voice_name.strip().lower())
+        if retired in lang_map.values():
+            return retired
         # Exact display-name match
         if voice_name in lang_map:
             return lang_map[voice_name]
-        # Raw Edge-TTS voice code match (e.g. 'el-GR-AthinaNeural')
+        # Raw Edge-TTS voice code match (e.g. 'el-GR-NestorasNeural')
         for code in lang_map.values():
             if code.lower() == voice_name.strip().lower():
                 return code
@@ -467,6 +503,15 @@ async def generate_audiobook(
         lang_norm = "english"
     voice_code = _resolve_voice_code(lang_norm, voice_name, fallback_default=True)
     dialogue_voice_code = _resolve_voice_code(lang_norm, dialogue_voice, fallback_default=False) if dialogue_voice else None
+    if dialogue_voice_code == voice_code:
+        dialogue_voice_code = None
+    labels = {code: label for group in VOICES.values() for label, code in group.items()}
+    retired_notices = [
+        f"{asked} is no longer offered, so {labels.get(used, used).split(' ')[0]} reads instead"
+        for asked, used in {name: _RETIRED_VOICES.get(name.strip().lower())
+                            for name in (voice_name, dialogue_voice) if name}.items()
+        if used and used in VOICES.get(lang_norm, {}).values()
+    ]
 
     from backend.job_manager import is_job_cancelled
     if is_job_cancelled(job_id):
@@ -512,9 +557,10 @@ async def generate_audiobook(
             if quota_behavior == "fallback":
                 logger.info(f"[{job_id}] No Gemini API key provided -> Defaulting to free neural TTS without Gemini polish.")
                 update_job(job_id, current_step="ℹ️ Δωρεάν μοντέλο: Εκφώνηση με νευρωνικές φωνές Edge-TTS...")
-                from backend.typography import format_greek_typography
-                from backend.glossary import apply_glossary
-                raw_text = format_greek_typography(apply_glossary(raw_text, "greek", style=polish_style))
+                if lang_norm == "greek":
+                    from backend.typography import format_greek_typography
+                    from backend.glossary import apply_glossary
+                    raw_text = format_greek_typography(apply_glossary(raw_text, "greek", style=polish_style, translated=True))
             else:
                 err_msg = "Gemini API key is required for AI Audiobook Polish. Επιλέξτε 'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο' για εκφώνηση χωρίς κλειδί."
                 update_job(job_id, status="error", error=err_msg)
@@ -551,15 +597,34 @@ async def generate_audiobook(
     )
     if not voice_segments:
         voice_segments = [(c, voice_code) for c in split_into_chunks(raw_text, TTS_CHUNK_SIZE)]
+    if voice_code.lower().startswith("el"):
+        # an English speaker tag in a Greek book: that voice cannot read Greek, so the narrator does
+        voice_segments = [
+            (seg, voice_code if not code.lower().startswith("el") and any("Ͱ" <= ch <= "Ͽ" for ch in seg) else code)
+            for seg, code in voice_segments
+        ]
     total_chunks = len(voice_segments)
 
+    # Finished parts survive a failure, a cancel or a restart, so Resume narrates only what is missing. The file name
+    # covers everything that shapes the sound: change the text, voice or pacing and the part is narrated again.
+    parts_dir = Path(output_path).parent / ".tts_parts"
+
+    def kept_part(idx: int) -> Path:
+        seg_text, seg_voice = voice_segments[idx]
+        spec = json.dumps([_clean_tts_text(seg_text, narration_style=style), seg_voice,
+                           effective_rate, effective_pitch, effective_volume], ensure_ascii=False)
+        return parts_dir / f"{hashlib.sha256(spec.encode('utf-8')).hexdigest()}.audio"
+
+    reusable = sum(1 for i in range(total_chunks) if _has_bytes(kept_part(i))) if parts_dir.is_dir() else 0
     start_progress = 25 if ai_polish else 10
-    diag_str = f" + {dialogue_voice}" if dialogue_voice else ""
+    diag_str = f" + {labels.get(dialogue_voice_code, dialogue_voice_code)}" if dialogue_voice_code else ""
+    resumed_str = f" ({reusable} already narrated)" if reusable else ""
     update_job(job_id,
                total_chunks=total_chunks,
                done_chunks=0,
                progress=start_progress,
-               current_step=f"🎙️ Generating neural audio in {total_chunks} parts using {voice_name}{diag_str} ({style})...")
+               current_step=f"🎙️ Generating neural audio in {total_chunks} parts{resumed_str} using "
+                            f"{labels.get(voice_code, voice_code)}{diag_str} ({style})...")
 
     logger.info(
         f"[{job_id}] TTS: {total_chunks} chunks, voice={voice_code}{diag_str}, "
@@ -570,6 +635,7 @@ async def generate_audiobook(
     temp_dir = Path(output_path).parent / f"tts_tmp_{job_id}"
     temp_dir.mkdir(parents=True, exist_ok=True)
     sem = asyncio.Semaphore(TTS_CONCURRENCY)
+    tts_state = TtsState(cancelled=lambda: is_job_cancelled(job_id))
     completed = 0
     ticker_stop = asyncio.Event()
 
@@ -583,16 +649,34 @@ async def generate_audiobook(
                 j = get_job(job_id)
                 if j and j.status == "running":
                     cur_prog = j.progress or start_progress
-                    if cur_prog < 88:
+                    # creep towards the next finished part only: a part can take over a minute
+                    below_next = start_progress + int((min(completed + 1, total_chunks) / total_chunks) * (88 - start_progress)) - 1
+                    if cur_prog < below_next:
                         update_job(
                             job_id,
-                            progress=min(88, cur_prog + 2),
+                            progress=cur_prog + 1,
                             current_step=f"🎙️ Synthesizing audio (part {min(completed + 1, total_chunks)}/{total_chunks})...",
                         )
             except Exception:
                 pass
 
     ticker_task = asyncio.create_task(_progress_ticker())
+
+    async def _narrate_part(idx: int) -> None:
+        seg_text, seg_voice = voice_segments[idx]
+        target = temp_dir / f"chunk_{idx:06d}.mp3"
+        used = await _tts_chunk_with_retry(
+            seg_text,
+            seg_voice,
+            str(target),
+            rate=effective_rate,
+            pitch=effective_pitch,
+            volume=effective_volume,
+            narration_style=style,
+            state=tts_state,
+        )
+        if used == seg_voice and _has_bytes(target):  # a substitute's recording is never kept as this voice's
+            _link_or_copy(target, kept_part(idx))
 
     async def _process_chunk(idx: int, item: tuple[str, str]) -> Optional[str]:
         nonlocal completed
@@ -604,18 +688,12 @@ async def generate_audiobook(
             completed += 1
             return None
         chunk_path = temp_dir / f"chunk_{idx:06d}.mp3"
-        async with sem:
-            if is_job_cancelled(job_id):
-                raise asyncio.CancelledError("Audiobook generation was cancelled.")
-            await _tts_chunk_with_retry(
-                chunk,
-                chunk_voice,
-                str(chunk_path),
-                rate=effective_rate,
-                pitch=effective_pitch,
-                volume=effective_volume,
-                narration_style=style,
-            )
+        kept = kept_part(idx)
+        if not (_has_bytes(kept) and _link_or_copy(kept, chunk_path)):
+            async with sem:
+                if is_job_cancelled(job_id):
+                    raise asyncio.CancelledError("Audiobook generation was cancelled.")
+                await _narrate_part(idx)
         completed += 1
         pct = start_progress + int((completed / total_chunks) * (88 - start_progress))
         update_job(
@@ -628,10 +706,13 @@ async def generate_audiobook(
 
     try:
         try:
-            results = await asyncio.gather(*(_process_chunk(i, item) for i, item in enumerate(voice_segments)))
+            from backend.async_utils import gather_or_cancel
+            results = await gather_or_cancel(_process_chunk(i, item) for i, item in enumerate(voice_segments))
         except asyncio.CancelledError:
-            logger.info(f"[{job_id}] Audiobook generation was cancelled.")
-            update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+            # only the user's Cancel is a cancellation; a server shutdown leaves the job resumable
+            if is_job_cancelled(job_id):
+                logger.info(f"[{job_id}] Audiobook generation was cancelled.")
+                update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
             raise
         finally:
             ticker_stop.set()
@@ -642,11 +723,21 @@ async def generate_audiobook(
                 pass
 
         chunk_files = [p for p in results if p]
+        # Sections that must produce audio (a scene break, or a script the voice cannot read, is legitimately silent)
+        expected_indices = [
+            i for i, (seg_text, seg_voice) in enumerate(voice_segments)
+            if seg_text.strip() and is_speakable(_clean_tts_text(seg_text, narration_style=style), seg_voice)
+        ]
 
         from backend.job_manager import is_job_cancelled
         if is_job_cancelled(job_id):
             update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
             raise asyncio.CancelledError("Audiobook generation was cancelled by user.")
+
+        if expected_indices and not any(_has_bytes(temp_dir / f"chunk_{i:06d}.mp3") for i in expected_indices):
+            error = _not_narrated([i + 1 for i in expected_indices], total_chunks)
+            update_job(job_id, status="error", error=error)
+            raise NarrationError(error)  # nothing to assemble: no connection, or the service is down
 
         # Concatenate all chunks into final MP3 / M4B
         update_job(job_id,
@@ -667,12 +758,14 @@ async def generate_audiobook(
         # to M4B later (download endpoint) gets the same chapters.
         part_records = [(voice_segments[i][0], r) for i, r in enumerate(results) if r]
         chapters = await asyncio.to_thread(compute_chapter_marks, part_records)
-        if chapters:
-            try:
-                Path(output_path).with_suffix(".chapters.json").write_text(
-                    json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
-            except Exception as ch_err:
-                logger.debug(f"[{job_id}] Chapter marks not saved: {ch_err}")
+        marks_file = Path(output_path).with_suffix(".chapters.json")
+        try:
+            if chapters:
+                marks_file.write_text(json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
+            else:
+                marks_file.unlink(missing_ok=True)  # the marks of an earlier recording are wrong for this one
+        except Exception as ch_err:
+            logger.warning(f"[{job_id}] Chapter marks not saved: {ch_err}")
 
         if output_path.lower().endswith(".m4b"):
             temp_cat_mp3 = temp_dir / "full_concat.mp3"
@@ -706,23 +799,11 @@ async def generate_audiobook(
             if is_refinement_enabled(getattr(_job, "final_refinement", None) if _job else None):
                 update_job(job_id, current_step="🔍 Τελικός έλεγχος ποιότητας ηχητικού βιβλίου...", progress=98)
 
-                # Sections that must produce audio (segments that clean to empty text are legitimately silent)
-                expected_indices = [
-                    i for i, (seg_text, _v) in enumerate(voice_segments)
-                    if seg_text.strip() and _clean_tts_text(seg_text, narration_style=style)
-                ]
-
                 async def _resynthesize(idx: int) -> bool:
                     if is_job_cancelled(job_id):
                         return False
-                    seg_text, seg_voice = voice_segments[idx]
-                    target = temp_dir / f"chunk_{idx:06d}.mp3"
-                    await _tts_chunk_with_retry(
-                        seg_text, seg_voice, str(target),
-                        rate=effective_rate, pitch=effective_pitch, volume=effective_volume,
-                        narration_style=style,
-                    )
-                    return target.exists() and target.stat().st_size > 0
+                    await _narrate_part(idx)
+                    return _has_bytes(temp_dir / f"chunk_{idx:06d}.mp3")
 
                 async def _reassemble(files: list[str], dest: str) -> None:
                     if dest.lower().endswith(".m4b"):
@@ -755,15 +836,42 @@ async def generate_audiobook(
             raise
         except Exception as ref_err:
             logger.warning(f"[{job_id}] Final audiobook refinement failed ({ref_err}); original audio preserved.", exc_info=True)
+
+        silent = []
+        for i in expected_indices:
+            part = temp_dir / f"chunk_{i:06d}.mp3"
+            if not part.is_file() or part.stat().st_size == 0:
+                silent.append(i + 1)
+        if silent:
+            # never hand out a book with holes in it as finished
+            Path(output_path).unlink(missing_ok=True)
+            error = _not_narrated(silent, total_chunks)
+            update_job(job_id, status="error", error=error)
+            raise NarrationError(error)
     finally:
-        # Always clean up temp directory (even on concatenation/M4B/disk errors)
-        import shutil
+        # Always clean up temp directory (even on concatenation/M4B/disk errors); finished parts stay for Resume
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+    shutil.rmtree(parts_dir, ignore_errors=True)  # the book is complete
+    final_step = "Audiobook ready!"
+    notices = list(retired_notices)
+    unreadable = sum(1 for text, code in voice_segments
+                     if any(ch.isalpha() for ch in text) and not is_speakable(text, code))
+    if unreadable:
+        notices.append(f"{unreadable} part(s) in a script this voice cannot read were skipped")
+    if tts_state.substituted:
+        names = {code: label.split(" ")[0] for group in VOICES.values() for label, code in group.items()}
+        swaps = "; ".join(f"{count} part(s) read by {names.get(used, used)}, because {names.get(wanted, wanted)} returned no audio"
+                          for (wanted, used), count in tts_state.substituted.items())
+        notices.append(swaps)
+    if notices:
+        final_step = f"⚠️ Audiobook ready! {'; '.join(notices)}."
+        logger.warning(f"[{job_id}] {final_step}")
 
     update_job(job_id,
                status="done",
                progress=100,
-               current_step="Audiobook ready!",
+               current_step=final_step,
                output_path=output_path,
                done_chunks=total_chunks)
 
@@ -775,8 +883,10 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
     """Prepares text for TTS, preserving natural breath pauses, elisions, and poetic rhythm without unnatural voids."""
     if not text:
         return ""
+    from backend.exporter import _plain_emphasis
+    text = _plain_emphasis(text)  # '**word**' is formatting, not two asterisks to read out
 
-    # Remove bullet symbols and non-pronounceable markers that cause edge-tts Athina to fail
+    # Remove bullet symbols and non-pronounceable markers that edge-tts refuses
     text = re.sub(r"[•▪▫◦■□✓➢❖✔✉]", " ", text)
     text = re.sub(r"[\ue000-\uf8ff]", " ", text)
 
@@ -827,44 +937,226 @@ def _clean_tts_text(text: str, narration_style: str = "literature") -> str:
     return text.strip()
 
 
+class NarrationError(RuntimeError):
+    """Parts of the book got no audio: a failure of the voice service, whatever the Gemini quota is."""
+
+
+def _not_narrated(silent: list, total: int) -> str:
+    shown = ", ".join(map(str, silent[:8]))
+    return (f"{len(silent)} of {total} parts could not be narrated (parts {shown}): the voice service "
+            "returned no complete audio. The finished parts are kept: press Resume in a few minutes.")
+
+
+class IncompleteAudio(RuntimeError):
+    """The service closed the stream before the end of the text."""
+
+
+class TtsState:
+    """What one narration learned about its voices."""
+
+    def __init__(self, cancelled=None):
+        self.cancelled = cancelled or (lambda: False)
+        self.failures: dict[str, int] = {}      # consecutive parts a voice failed completely
+        self.refused: dict[str, bool] = {}      # whether the voice said no the last time, or could not be reached
+        self.substituted: dict[tuple[str, str], int] = {}
+
+
+def _readable_chars(voice: str) -> str:
+    return r"[0-9A-Za-zÀ-ɏͰ-Ͽἀ-῿]" if voice.lower().startswith("el") else r"[0-9A-Za-zÀ-ɏ]"
+
+
+def is_speakable(text: str, voice: str) -> bool:
+    """False for text without anything the voice can read (scene breaks, a quotation in another script)."""
+    return bool(re.search(_readable_chars(voice), text or ""))
+
+
+def _has_bytes(path) -> bool:
+    try:
+        return Path(path).stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _replace_file(src: Path, dest: Path) -> None:
+    for attempt in range(5):
+        try:
+            os.replace(src, dest)
+            return
+        except PermissionError:  # a virus scanner can hold a new file for a moment
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+def _link_or_copy(src: Path, dest: Path) -> bool:
+    staged = dest.with_name(f".{uuid.uuid4().hex}.tmp")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(src, staged)
+        except OSError:
+            shutil.copyfile(src, staged)
+        _replace_file(staged, dest)
+        return True
+    except OSError as e:
+        logger.warning(f"Could not re-use a narrated part ({e}).")
+        return False
+    finally:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _write_audio(path: str, data: bytes) -> None:
+    """Never writes into an existing file: a narrated part may share its bytes (hard link) with the copy kept for Resume."""
+    Path(path).unlink(missing_ok=True)
+    Path(path).write_bytes(data)
+
+
+async def _synthesize(text: str, voice: str, path: str, prosody: dict, timeout: Optional[float] = None) -> None:
+    """
+    Writes the complete audio of `text` to `path`, or raises. edge-tts keeps whatever arrived when the service closes
+    the stream early and reports nothing: only a stream ended by the service's "turn.end" counts as complete.
+    The default limit grows with the text, because the Greek service delivers at about the speed of speech.
+    """
+    staged = Path(f"{path}.part")
+    communicate = edge_tts.Communicate(text, voice, **prosody)
+    try:
+        await asyncio.wait_for(communicate.save(str(staged)), timeout=timeout or 90.0 + 0.3 * len(text))
+        if not _has_bytes(staged):
+            raise NoAudioReceived("No audio was received.")
+        size = staged.stat().st_size
+        stream = getattr(communicate, "state", None)
+        if isinstance(stream, dict):
+            ended = stream.get("cumulative_audio_bytes")  # counts only the audio of finished turns
+            letters = len(re.findall(_readable_chars(voice), text))
+            if (ended is not None and ended != size) or (letters >= 80 and size < _MIN_BYTES_PER_LETTER * letters):
+                raise IncompleteAudio(f"{size} bytes for {len(text)} characters")
+        _replace_file(staged, Path(path))
+    finally:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+async def _narrate_in_pieces(text: str, voice: str, output_path: str, prosody: dict, timeout: Optional[float],
+                             state: TtsState, step: int = 0) -> Optional[bytes]:
+    """Audio of `text` made from shorter requests; None when a piece gets no audio at the smallest size either."""
+    size, attempts = _TTS_PIECE_STEPS[step]
+    smallest = step + 1 == len(_TTS_PIECE_STEPS)
+    piece_file = Path(f"{output_path}.piece")
+    audio = bytearray()
+    try:
+        for piece in split_into_chunks(text, size):
+            if not is_speakable(piece, voice):
+                continue
+            got = None
+            for attempt in range(attempts):
+                if attempt:
+                    await asyncio.sleep(1.0 * attempt)
+                if state.cancelled():
+                    return None
+                request = piece
+                if smallest and attempt + 1 == attempts:  # the last resort: without exotic symbols
+                    plain = re.sub(r"[^\w\s\.,;:!?\-«»'\"()–—%$€]", " ", piece)
+                    request = re.sub(r"\s+", " ", plain).strip() or piece
+                try:
+                    await _synthesize(request, voice, str(piece_file), prosody, timeout)
+                    got = piece_file.read_bytes()
+                    break
+                except Exception as e:
+                    logger.info(f"TTS piece attempt {attempt + 1}/{attempts} failed ({voice}, {len(piece)} chars): {e}")
+            if got is None and not smallest:
+                got = await _narrate_in_pieces(piece, voice, output_path, prosody, timeout, state, step + 1)
+            if got is None:
+                return None
+            audio += got
+        return bytes(audio) or None
+    finally:
+        piece_file.unlink(missing_ok=True)
+
+
 async def _tts_chunk_with_retry(
     text: str,
     voice: str,
     output_path: str,
-    retries: int = 3,
+    retries: int = 4,
     rate: str = "-12%",
     pitch: str = "-1Hz",
     volume: str = "+0%",
     narration_style: str = "literature",
-    timeout_seconds: float = 60.0,
-):
-    """Generates TTS for a text chunk with retry logic and timeout, maintaining consistent voice throughout."""
+    timeout_seconds: Optional[float] = None,
+    state: Optional["TtsState"] = None,
+) -> Optional[str]:
+    """
+    Generates TTS for a text chunk and returns the voice that read it. A refused chunk is asked again, then in
+    shorter pieces, then (English) read by another voice of the same language, recorded in ``state``. None and an
+    empty file mean failure (or text with nothing to speak).
+    """
     clean_text = _clean_tts_text(text, narration_style=narration_style)
-    if not clean_text:
-        Path(output_path).write_bytes(b"")
-        return
+    if not is_speakable(clean_text, voice):
+        _write_audio(output_path, b"")
+        return None
+    state = state or TtsState()
+    prosody = {"rate": rate, "pitch": pitch, "volume": volume}
 
-    for attempt in range(retries):
-        try:
-            communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch, volume=volume)
-            await asyncio.wait_for(communicate.save(output_path), timeout=timeout_seconds)
-            if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
-                return
-            await asyncio.sleep(0.5 * (attempt + 1))
-        except Exception as e:
-            wait = (attempt + 1) * 1.0
-            logger.warning(f"TTS attempt {attempt+1} failed ({voice}): {e}. Retrying in {wait}s...")
-            # On retry, aggressively clean any exotic punctuation while keeping text
-            if attempt >= 0:
-                cleaned_retry = re.sub(r"[^\w\s\.,;:!?\-«»'\"()–—%$€]", " ", clean_text)
-                cleaned_retry = re.sub(r"\s+", " ", cleaned_retry).strip()
-                if cleaned_retry:
-                    clean_text = cleaned_retry
-            await asyncio.sleep(wait)
+    async def whole(voice_code: str) -> tuple[bool, bool]:
+        """(succeeded, the service refused or cut the audio)"""
+        refused = False
+        for attempt in range(retries):
+            if attempt:
+                await asyncio.sleep(_RETRY_WAITS[min(attempt, len(_RETRY_WAITS)) - 1])
+            if state.cancelled():
+                break
+            try:
+                await _synthesize(clean_text, voice_code, output_path, prosody, timeout_seconds)
+                return True, False
+            except Exception as e:
+                refused = refused or isinstance(e, (NoAudioReceived, IncompleteAudio))
+                logger.warning(f"TTS attempt {attempt + 1}/{retries} failed ({voice_code}, {len(clean_text)} chars): "
+                               f"{type(e).__name__}: {e}")
+        return False, refused
 
-    # If all retries fail, create a silent placeholder without mixing voices
+    substitute = _FALLBACK_VOICES.get(voice)
+    refused = state.refused.get(voice, True)
+    if state.failures.get(voice, 0) < 3:
+        for round_no in range(2 if retries > 1 else 1):
+            if round_no:
+                await asyncio.sleep(_OUTAGE_PAUSE)
+            if state.cancelled():
+                break
+            done, refused = await whole(voice)
+            if not done:
+                if state.cancelled():
+                    break
+                if not refused:
+                    continue  # no connection, or no answer in time: ask again later, shorter would not help
+                audio = await _narrate_in_pieces(clean_text, voice, output_path, prosody, timeout_seconds, state)
+                if not audio:
+                    if substitute:
+                        break
+                    continue
+                _write_audio(output_path, audio)
+            state.failures.pop(voice, None)
+            return voice
+        if not state.cancelled():
+            state.failures[voice] = state.failures.get(voice, 0) + 1
+            state.refused[voice] = refused  # only a voice that says no is replaced by another
+
+    if refused and substitute and not state.cancelled() and is_speakable(clean_text, substitute):
+        done, _ = await whole(substitute)
+        if done:
+            key = (voice, substitute)
+            state.substituted[key] = state.substituted.get(key, 0) + 1
+            logger.warning(f"{voice} returned no audio for a part; it was read by {substitute}.")
+            return substitute
+
+    # If all retries fail, leave an empty file: the caller retries it or reports the failure
     logger.error(f"TTS failed after retries for chunk with {voice}. Writing empty file.")
-    Path(output_path).write_bytes(b"")
+    _write_audio(output_path, b"")
+    return None
 
 
 async def _concatenate_mp3s(chunk_files: list[str], output_path: str):

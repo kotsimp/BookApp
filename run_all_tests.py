@@ -4,7 +4,8 @@ Features:
 1. Runs every suite in a throw-away copy of the project, on a free port, with an empty database and no API keys.
    Your jobs, files, settings and a running BookApp (port 8000) are never touched.
 2. Auto-discovers and executes all test suites in tests/, against its own temporary Uvicorn backend.
-3. '--fast' skips the suites that need the internet.
+3. Free translation is answered offline (tests/_offline_translation.py): the real services' daily allowance is the
+   user's. BOOKAPP_LIVE_TESTS=1 uses them. '--fast' skips the slower end-to-end suites.
 4. Names select suites:  python run_all_tests.py test_output_refinement test_book_insights
 """
 
@@ -46,7 +47,7 @@ def _run_in_sandbox() -> int:
     work = Path(tempfile.mkdtemp(prefix="bookapp-tests-"))
     sandbox = work / "app"
     ignore = shutil.ignore_patterns(
-        ".git", ".venv", "venv", "__pycache__", ".pytest_cache", "settings*.json*", "settings*.tmp", "*.log",
+        ".git", ".venv", "venv", "__pycache__", ".pytest_cache", "settings*.json*", "settings*.tmp", "*.log", ".env*",
     )
 
     def ignore_top(folder, names):
@@ -90,7 +91,9 @@ def _is_server_up() -> bool:
 
 def _start_temp_server():
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", str(PORT), "--log-level", "error"],
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, 'tests'); import _sandbox_guard, uvicorn; "  # free translation is offline here
+         f"uvicorn.run('backend.main:app', host='127.0.0.1', port={PORT}, log_level='error')"],
         cwd=str(BASE_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

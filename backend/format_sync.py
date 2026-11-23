@@ -14,20 +14,18 @@ non-whitespace characters. Edits are found between the old and the new text and 
 nodes through those characters, so whitespace that differs between the two never matters.
 """
 
-import copy
 import difflib
 import io
 import json
 import logging
 import os
-import posixpath
 import re
 import uuid
-import zipfile
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import unquote
+
+from backend.document_blocks import XML_INVALID_RE, open_package
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +35,6 @@ COMIC_SUFFIXES = {".pdf", ".cbz", ".cbr", ".epub"}
 _PARA_SPLIT_RE = re.compile(r"\n[^\S\n]*\n\s*")
 _PAGE_MARKER_RE = re.compile(r"^=== PAGE \d+ ===[ \t]*$", re.MULTILINE)
 _TOKEN_RE = re.compile(r"\s+|\w+|[^\w\s]")
-_XML_INVALID_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
 
 class FormatSyncError(RuntimeError):
@@ -193,11 +190,52 @@ def edit_nodes(nodes: List[str], old: str, new: str) -> List[str]:
     return out
 
 
+def _best_shifts(old: List[str], new: List[str]) -> List[int]:
+    """
+    Unequal replacement: for each paragraph of the shorter side, how far right its partner sits on the longer side.
+    The shifts never decrease (order is kept) and maximise the total resemblance.
+    """
+    longer_old = len(old) > len(new)
+    short, long = (new, old) if longer_old else (old, new)
+    spare = len(long) - len(short)
+    matcher = difflib.SequenceMatcher(None, autojunk=False)
+    if not short or not spare:
+        return [0] * len(short)
+
+    def alike(k: int, shift: int) -> float:
+        matcher.set_seqs(short[k], long[k + shift])
+        return matcher.quick_ratio()
+
+    if len(short) * (spare + 1) > 60_000:  # too large to align paragraph by paragraph: one common shift
+        step = max(1, len(short) // 50)
+        best_shift = max(range(spare + 1), key=lambda s: sum(alike(k, s) for k in range(0, len(short), step)))
+        return [best_shift] * len(short)
+
+    total = [0.0] * (spare + 1)
+    choices: List[List[int]] = []
+    for k in range(len(short)):
+        best, best_at, row, came_from = float("-inf"), 0, [], []
+        for shift in range(spare + 1):
+            if total[shift] > best:
+                best, best_at = total[shift], shift
+            row.append(best + alike(k, shift))
+            came_from.append(best_at)
+        total = row
+        choices.append(came_from)
+    at = max(range(spare + 1), key=total.__getitem__)
+    shifts = [0] * len(short)
+    for k in range(len(short) - 1, -1, -1):
+        shifts[k] = at
+        at = choices[k][at]
+    return shifts
+
+
 def _plan(block_texts: List[str], old_text: str, new_text: str) -> List[Tuple]:
     """
-    Turns a text change into block operations:
-    ("edit", block, old_para, new_para) | ("delete", block) |
-    ("insert", anchor_block, before?, [paragraphs], at_end?).
+    Turns a text change into block operations, in the order they are applied:
+    ("edit", block, old_para, new_para) while every slot is still where it was read,
+    ("insert", anchor_block, before?, [paragraphs], neighbour_block?) while every anchor is still attached,
+    ("delete", block) last.
     """
     old, new = split_paragraphs(old_text), split_paragraphs(new_text)
     old_keys = [_key(p) for p in old]
@@ -241,232 +279,85 @@ def _plan(block_texts: List[str], old_text: str, new_text: str) -> List[Tuple]:
             raise FormatSyncError(f"paragraph {i + 1} has no counterpart in the document")
         return None
 
-    ops: List[Tuple] = []
+    edits: List[Tuple] = []
+    leading: List[Tuple] = []
+    following_text: List[Tuple] = []
+    deletes: List[Tuple] = []
     for tag, i1, i2, j1, j2 in _matcher(old, new).get_opcodes():
         if tag == "equal":
             continue
         n_old, n_new = i2 - i1, j2 - j1
-        pairs = min(n_old, n_new)
-        shift_old = shift_new = 0
-        if pairs and n_old != n_new:
-            # paragraphs added/removed next to edited ones: pair each edit with the paragraph it resembles most
-            def score(s: int) -> float:
-                return sum(_matcher(old[i1 + k + (s if n_old > n_new else 0)],
-                                    new[j1 + k + (s if n_new > n_old else 0)]).quick_ratio() for k in range(pairs))
-            shift = max(range(abs(n_old - n_new) + 1), key=score)
-            shift_old, shift_new = (shift, 0) if n_old > n_new else (0, shift)
+        # paragraphs added/removed next to edited ones: pair each edit with the paragraph it resembles most
+        shifts = _best_shifts(old[i1:i2], new[j1:j2])
+        pairs = [(i1 + k + (s if n_old > n_new else 0), j1 + k + (s if n_new > n_old else 0))
+                 for k, s in enumerate(shifts)]
 
-        for k in range(pairs):
-            o, n = i1 + shift_old + k, j1 + shift_new + k
+        for o, n in pairs:
             if old[o] != new[n]:
                 target = block(o)
                 if target is not None:
-                    ops.append(("edit", target, old[o], new[n]))
+                    edits.append(("edit", target, old[o], new[n]))
+        kept = {o for o, _ in pairs}
         for o in range(i1, i2):
-            if not (i1 + shift_old <= o < i1 + shift_old + pairs):
+            if o not in kept:
                 target = block(o)
                 if target is not None:
-                    ops.append(("delete", target))
+                    deletes.append(("delete", target))
 
-        head = new[j1:j1 + shift_new]
-        tail = new[j1 + shift_new + pairs:j2]
-        for paras, at in ((head, i1 + shift_old), (tail, i1 + shift_old + pairs)):
-            if not paras:
-                continue
-            preceding, following = mapped(at - 1, -1), mapped(at, 1)
-            if at > 0:
-                block(at - 1)  # refuses when the text around the insertion has drifted from the document
-            if preceding is not None:
-                ops.append(("insert", preceding, False, paras, following is None))
-            elif following is not None:
-                ops.append(("insert", following, True, paras, False))
-            else:
-                raise FormatSyncError("the document has no paragraph to attach new text to")
-    # insertions first (their anchors must still be attached), deletions last
-    return sorted(ops, key=lambda op: ("insert", "edit", "delete").index(op[0]))
+        at, next_new = i1, j1
+        for o, n in pairs + [(i2, j2)]:
+            paras = new[next_new:n]
+            if paras:
+                preceding, following = mapped(at - 1, -1), mapped(at, 1)
+                if at > 0:
+                    block(at - 1)  # refuses when the text around the insertion has drifted from the document
+                if preceding is not None:
+                    following_text.append(("insert", preceding, False, paras, following))
+                elif following is not None:
+                    leading.append(("insert", following, True, paras, None))
+                else:
+                    raise FormatSyncError("the document has no paragraph to attach new text to")
+            at, next_new = o + 1, n + 1
+    # bottom-up, so that two insertions after one paragraph keep their order
+    return edits + leading + following_text[::-1] + deletes
 
 
 # ---------------------------------------------------------------------------
-# DOCX
+# Applying the plan
 # ---------------------------------------------------------------------------
 
-def _patch_docx(path: Path, old_text: str, new_text: str) -> Optional[bytes]:
-    import docx
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from docx.text.paragraph import Paragraph
-
-    doc = docx.Document(str(path))
-    # same traversal as format_preserver.translate_docx_in_place
-    paragraphs, seen = list(doc.paragraphs), set()
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                if cell._tc not in seen:
-                    seen.add(cell._tc)
-                    paragraphs.extend(cell.paragraphs)
-    blocks = []
-    for p in paragraphs:
-        if p.text.strip():
-            nodes = [t for r in p.runs for t in r._r.findall(qn("w:t"))]
-            blocks.append((p, nodes))
-
-    ops = _plan(["".join(t.text or "" for t in nodes) for _p, nodes in blocks], old_text, new_text)
-    if not ops:
-        return None
-
-    def set_text(node, value: str) -> None:
-        node.text = value
-        node.set(qn("xml:space"), "preserve")
-
+def patch_document(path: Path, old_text: str, new_text: str) -> Optional[bytes]:
+    """
+    The document with the edit applied, or None when nothing in it changes.
+    Verified by reading it back: when the result would not say exactly `new_text`, the edit is refused.
+    """
+    package = open_package(path)
+    blocks = package.body
+    texts = [b.text for b in blocks]
+    ops = _plan(texts, old_text, new_text)
     for op in ops:
-        p, nodes = blocks[op[1]]
+        block = blocks[op[1]]
         if op[0] == "edit":
-            values = [t.text or "" for t in nodes]
-            for node, before, after in zip(nodes, values, edit_nodes(values, op[2], op[3])):
+            values = block.values
+            for slot, before, after in zip(block.slots, values, edit_nodes(values, op[2], op[3])):
                 if before != after:
-                    set_text(node, after)
+                    package.set_value(slot, after)
         elif op[0] == "insert":
-            before_anchor, paras, at_end = op[2], op[3], op[4]
-            if at_end and p._p.getparent().tag == qn("w:tc"):
-                for text in paras:
-                    doc.add_paragraph(text)  # after a trailing table: the end of the body, not the last cell
-                continue
-            is_heading = ((p.style.name if p.style is not None else "") or "").lower().startswith(("heading", "title"))
-            anchor = p._p
-            for text in paras:
-                new_p = OxmlElement("w:p")
-                if not is_heading:  # body text typed next to a heading must not become a heading
-                    if p._p.pPr is not None:
-                        props = copy.deepcopy(p._p.pPr)
-                        for sect in props.findall(qn("w:sectPr")):
-                            props.remove(sect)
-                        new_p.append(props)
-                run = Paragraph(new_p, p._parent).add_run(text)
-                if not is_heading and nodes and nodes[0].getparent().rPr is not None:
-                    run._r.insert(0, copy.deepcopy(nodes[0].getparent().rPr))
-                if before_anchor:
-                    anchor.addprevious(new_p)
-                else:
-                    anchor.addnext(new_p)
-                    anchor = new_p
+            before = op[2]
+            neighbour = blocks[op[4]] if op[4] is not None else None
+            if not before and neighbour is not None and block.owner in neighbour.owner.iterancestors():
+                block, neighbour, before = neighbour, block, True  # the next paragraph is nested in this one
+            package.insert(block, op[3], before=before, neighbour=neighbour)
         else:
-            el, parent = p._p, p._p.getparent()
-            keep_tags = ("drawing", "pict", "object", "sectPr", "bookmarkStart", "hyperlink", "br")
-            must_keep = any(True for _ in el.iter(*[qn(f"w:{t}") for t in keep_tags]))
-            only_in_cell = parent.tag == qn("w:tc") and len(parent.findall(qn("w:p"))) == 1
-            if must_keep or only_in_cell:
-                for node in nodes:
-                    set_text(node, "")
-            else:
-                parent.remove(el)
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-
-# ---------------------------------------------------------------------------
-# EPUB (edited inside the zip: untouched entries stay byte-identical)
-# ---------------------------------------------------------------------------
-
-_BLOCK_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "dt", "dd", "blockquote")
-_SKIP_TAGS = ("script", "style", "img", "svg", "br", "hr")
-
-
-def _epub_document_names(zf: zipfile.ZipFile) -> List[str]:
-    from bs4 import BeautifulSoup
-    container = BeautifulSoup(zf.read("META-INF/container.xml"), "xml")
-    opf_name = container.find("rootfile")["full-path"]
-    manifest = BeautifulSoup(zf.read(opf_name), "xml").find("manifest")
-    base = posixpath.dirname(opf_name)
-    present = set(zf.namelist())
-    names = []
-    for item in manifest.find_all("item"):
-        if "nav" in (item.get("properties") or "").split():
-            continue  # generated from the table of contents on save: never holds translated text
-        if item.get("media-type") in ("application/xhtml+xml", "text/html"):
-            name = posixpath.normpath(posixpath.join(base, unquote(item["href"])))
-            if name in present:
-                names.append(name)
-    return names
-
-
-def _patch_epub(path: Path, old_text: str, new_text: str) -> Optional[bytes]:
-    from bs4 import BeautifulSoup, NavigableString
-    from bs4.element import PreformattedString
-
-    with zipfile.ZipFile(path) as zf:
-        soups, blocks = {}, []
-        for name in _epub_document_names(zf):
-            # XML parser: keeps case-sensitive names such as viewBox and epub:type
-            soup = soups[name] = BeautifulSoup(zf.read(name), "xml")
-
-            def collect(tag, acc):
-                for child in tag.children:
-                    if isinstance(child, NavigableString):
-                        if not isinstance(child, PreformattedString):  # not comments, CDATA, instructions
-                            acc.append(child)
-                    elif child.name not in _SKIP_TAGS and child.name not in _BLOCK_TAGS:
-                        collect(child, acc)
-
-            for tag in soup.find_all(list(_BLOCK_TAGS)):
-                acc: List = []
-                collect(tag, acc)
-                if any(str(s).strip() for s in acc):
-                    blocks.append((name, soup, tag, acc))
-
-        ops = _plan(["".join(str(s) for s in b[3]) for b in blocks], old_text, new_text)
-        if not ops:
-            return None
-
-        changed = set()
-        for op in ops:
-            name, soup, tag, nodes = blocks[op[1]]
-            changed.add(name)
-            if op[0] == "edit":
-                values = [str(s) for s in nodes]
-                for node, before, after in zip(nodes, values, edit_nodes(values, op[2], op[3])):
-                    if before != after:
-                        node.replace_with(NavigableString(after))
-            elif op[0] == "insert":
-                before_anchor, paras, at_end = op[2], op[3], op[4]
-                container = tag.find_parent(["table", "dl"]) if at_end else None
-                anchor = container or tag
-                inside = container is None and tag.name in ("td", "th", "dt", "dd")
-                new_name = tag.name if container is None and tag.name in ("p", "li") else "p"
-                for text in paras:
-                    el = soup.new_tag(new_name, namespace=tag.namespace)
-                    el.string = text
-                    if new_name == tag.name:
-                        for attr in ("class", "style"):
-                            if tag.get(attr):
-                                el[attr] = tag[attr]
-                    if inside:
-                        if before_anchor:
-                            tag.insert(0, el)
-                        else:
-                            tag.append(el)
-                    elif before_anchor:
-                        anchor.insert_before(el)
-                    else:
-                        anchor.insert_after(el)
-                        anchor = el
-            else:
-                must_keep = tag.name in ("td", "th", "dt", "dd") or tag.get("id") or tag.find(
-                    list(_BLOCK_TAGS) + ["img", "svg", "image"]) or tag.find(id=True)
-                if must_keep:
-                    for node in nodes:
-                        node.replace_with(NavigableString(""))
-                else:
-                    tag.decompose()
-
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as out:
-            for info in zf.infolist():  # keeps order and compression (mimetype stays first and stored)
-                data = str(soups[info.filename]).encode("utf-8") if info.filename in changed else zf.read(info)
-                out.writestr(info, data)
-        return buf.getvalue()
+            package.remove(block)
+    if not package.changed:
+        return None
+    data = package.to_bytes()
+    if [_key(t) for t in texts] == [_key(p) for p in split_paragraphs(old_text)]:  # text and document were in step
+        written = [_key(b.text) for b in type(package)(io.BytesIO(data)).body]
+        if written != [_key(p) for p in split_paragraphs(new_text)]:
+            raise FormatSyncError("the edit cannot be placed in the document without changing other text")
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -481,14 +372,13 @@ def sync_text(txt_file: Path, new_text: str, protected: Set[Path]) -> List[str]:
     txt_file = Path(txt_file)
     targets = [p for p in sorted(protected) if p.stem == txt_file.stem and p.suffix.lower() in (".docx", ".epub")]
     old_text = txt_file.read_text(encoding="utf-8") if txt_file.is_file() else ""
-    safe_text = _XML_INVALID_RE.sub("", new_text or "")
+    safe_text = XML_INVALID_RE.sub("", new_text or "")
 
     staged: List[Tuple[Path, bytes]] = []
     if split_paragraphs(old_text) != split_paragraphs(safe_text):
         for doc_path in targets:
-            patch = _patch_docx if doc_path.suffix.lower() == ".docx" else _patch_epub
             try:
-                data = patch(doc_path, old_text, safe_text)
+                data = patch_document(doc_path, old_text, safe_text)
             except FormatSyncError:
                 raise
             except Exception as e:

@@ -190,7 +190,7 @@ class TestConcurrencyPersistenceAndLifecycle(unittest.TestCase):
                 previews.mkdir(parents=True)
 
                 (active_up / "book.pdf").write_bytes(b"active")
-                (stale_up / "old.pdf").write_bytes(b"stale")
+                (stale_up / "partial.tmp").write_bytes(b"stale")  # scratch only: folders holding books are never removed
                 stale_prev = previews / "preview_old.mp3"
                 stale_prev.write_bytes(b"mp3data")
 

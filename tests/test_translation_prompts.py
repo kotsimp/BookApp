@@ -83,7 +83,10 @@ class TestPromptLibrary(unittest.TestCase):
         self.assertIs(tp.build_polish_prompt("literature", "greek"), tp.STYLE_PROMPTS["literature"])
         self.assertEqual(tp.build_polish_prompt("literature", "english"), tp.ENGLISH_POLISH_PROMPT)
         self.assertEqual(tp.build_polish_prompt("formal", "en"), tp.ENGLISH_POLISH_PROMPT)
-        self.assertIs(tp.build_polish_prompt("audiobook", "english"), tp.STYLE_PROMPTS["audiobook"])
+        self.assertIs(tp.build_polish_prompt("audiobook", "greek"), tp.STYLE_PROMPTS["audiobook"])
+        for style in ("audiobook", "poetry"):  # the Greek script prompt made Gemini translate English books into Greek
+            self.assertIs(tp.build_polish_prompt(style, "english"), tp.ENGLISH_SCRIPT_PROMPTS[style])
+            self.assertNotRegex(tp.build_polish_prompt(style, "english"), "[Ͱ-Ͽ]")
         lit = tp.STYLE_PROMPTS["literature"]
         self.assertIn("ΕΛΑΧΙΣΤΗ ΑΝΑΓΚΑΙΑ ΠΑΡΕΜΒΑΣΗ", lit)
         self.assertIn("πρωτότυπο κείμενο", lit)

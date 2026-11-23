@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.9.3" />
+  <link rel="stylesheet" href="style.css?v=2.9.4" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -86,7 +86,7 @@
           <span style="font-size:1.35rem">⚠️</span>
           <div>
             <strong>Ημερήσιο Όριο Google Gemini (Free Tier Quota):</strong>
-            <span id="home-gemini-quota-text">Εξαντλήθηκε το ημερήσιο όριο χρήσης (15 RPM / 1.500 RPD).</span>
+            <span id="home-gemini-quota-text">Εξαντλήθηκε το ημερήσιο όριο χρήσης.</span>
           </div>
         </div>
         <button type="button" class="btn btn-sm btn-outline" onclick="openApiKeyModal()" style="border-color:var(--amber); color:var(--amber); font-weight:600; white-space:nowrap; padding:5px 12px">
@@ -141,10 +141,10 @@
           <span class="file-badge">PDF</span>
           <span class="file-badge">DOCX</span>
           <span class="file-badge">EPUB</span>
-          <span class="file-badge" style="border-color:var(--violet, #7c3aed); color:var(--violet-light, #a78bfa)">CBZ / COMIC</span>
+          <span class="file-badge" style="border-color:var(--violet, #7c3aed); color:var(--violet-light, #a78bfa)">CBZ / CBR COMIC</span>
           <span class="file-badge" style="border-color:rgba(16,185,129,0.45); color:var(--emerald)">MAX 20 FILES</span>
         </div>
-        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.zip" multiple hidden onchange="handleFileSelect(event, 'tr')" />
+        <input type="file" id="tr-file-input" accept=".pdf,.docx,.epub,.cbz,.cbr,.zip" multiple hidden onchange="handleFileSelect(event, 'tr')" />
       </div>
 
       <div class="selected-file" id="tr-selected-file">
@@ -240,35 +240,35 @@
           <span id="tr-format-badge-note" style="font-size:0.75rem; color:var(--text-muted); text-transform:none; font-weight:normal"></span>
         </label>
         <div class="format-selector" id="tr-format-selector">
-          <button class="format-btn active" data-format="txt" onclick="selectFormat('txt', this)" id="fmt-txt">
+          <button class="format-btn active" data-format="txt" onclick="selectFormat('txt', this, true)" id="fmt-txt">
             <span class="format-icon">📄</span>
             <span class="format-label">TXT</span>
             <span class="format-desc">Plain text</span>
           </button>
-          <button class="format-btn" data-format="docx" onclick="selectFormat('docx', this)" id="fmt-docx">
+          <button class="format-btn" data-format="docx" onclick="selectFormat('docx', this, true)" id="fmt-docx">
             <span class="format-icon">📘</span>
             <span class="format-label">DOCX</span>
             <span class="format-desc">Word document</span>
           </button>
-          <button class="format-btn" data-format="pdf" onclick="selectFormat('pdf', this)" id="fmt-pdf">
+          <button class="format-btn" data-format="pdf" onclick="selectFormat('pdf', this, true)" id="fmt-pdf">
             <span class="format-icon">📕</span>
             <span class="format-label">PDF</span>
             <span class="format-desc">PDF file</span>
           </button>
-          <button class="format-btn" data-format="epub" onclick="selectFormat('epub', this)" id="fmt-epub">
+          <button class="format-btn" data-format="epub" onclick="selectFormat('epub', this, true)" id="fmt-epub">
             <span class="format-icon">📗</span>
             <span class="format-label">EPUB</span>
             <span class="format-desc">E-book</span>
           </button>
-          <button class="format-btn" data-format="cbz" onclick="selectFormat('cbz', this)" id="fmt-cbz">
+          <button class="format-btn" data-format="cbz" onclick="selectFormat('cbz', this, true)" id="fmt-cbz">
             <span class="format-icon">📦</span>
             <span class="format-label">CBZ</span>
             <span class="format-desc">Comic Archive</span>
           </button>
-          <button class="format-btn" data-format="cbr" onclick="selectFormat('cbr', this)" id="fmt-cbr">
+          <button class="format-btn" data-format="cbr" onclick="selectFormat('cbr', this, true)" id="fmt-cbr">
             <span class="format-icon">🗂️</span>
             <span class="format-label">CBR</span>
-            <span class="format-desc">Comic Book</span>
+            <span class="format-desc">Comic (RAR)</span>
           </button>
         </div>
         <div id="comic-format-hint" style="display:none; font-size:0.8rem; color:var(--amber); margin-top:8px; padding:8px 12px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; align-items:center; gap:8px">
@@ -396,7 +396,7 @@
 
       <div class="info-box mode-advanced-only">
         <span class="info-box-icon">ℹ️</span>
-        <span>Translation uses Google Translate via a free API — no key required. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
+        <span>Free translation tries Google, then MyMemory (a small daily limit). Google often refuses: a free Gemini key is then needed and used automatically. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
       </div>
 
       <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
@@ -703,7 +703,7 @@
         </span>
       </div>
 
-      <div class="form-group mode-advanced-only" style="margin-top:10px">
+      <div class="form-group mode-advanced-only" id="ab-multi-voice-group" style="margin-top:10px">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer">
           <input type="checkbox" id="ab-multi-voice" onchange="toggleMultiVoiceSelect()" style="width:18px;height:18px;accent-color:var(--violet)" />
           <span style="font-size:0.9rem">🎭 <strong>Multi-Voice Dramatization (Πολυφωνική Αφήγηση)</strong>: Ξεχωριστή φωνή για διαλόγους</span>
@@ -1154,7 +1154,7 @@
         </div>
 
         <div style="margin-top:10px; padding:8px 12px; background:rgba(124,58,237,0.06); border:1px solid rgba(124,58,237,0.2); border-radius:8px; font-size:0.78rem; color:var(--text-secondary); line-height:1.4">
-          💡 <strong>Αυτόματη Εναλλαγή Χωρίς Κόστος ($0):</strong> Συνδέστε δωρεάν API Keys από έως 4 διαφορετικούς λογαριασμούς Google (4 x 1.500 = <strong>έως 6.000 αιτήματα/ημέρα</strong>). Μόλις το βασικό κλειδί εξαντλήσει το όριό του (429 / Quota), η εφαρμογή μεταβαίνει αυτόματα στο επόμενο εφεδρικό χωρίς καμία διακοπή!
+          💡 <strong>Αυτόματη Εναλλαγή Χωρίς Κόστος ($0):</strong> Συνδέστε δωρεάν API Keys από έως 4 διαφορετικούς λογαριασμούς Google. Η Google ορίζει <strong>ημερήσιο όριο ανά μοντέλο</strong> (σε ορισμένα μόνο 20 αιτήματα/ημέρα). Όταν ένα όριο εξαντληθεί (429 / Quota), η εφαρμογή συνεχίζει αυτόματα με άλλο μοντέλο ή με το επόμενο εφεδρικό κλειδί, όσο υπάρχει διαθέσιμο όριο.
         </div>
 
         <!-- Device pairing (only shown when BOOKAPP_PAIRING=1) -->
@@ -1325,7 +1325,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.10.0"></script>
+<script src="app.js?v=2.11.2"></script>
 <script src="insights.js?v=2.9.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 </body>

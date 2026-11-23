@@ -2,7 +2,7 @@
 tests/test_new_api_endpoints.py - Automated HTTP Integration Suite for Modern Endpoints.
 Tests:
 1. POST /api/detect-genre (with sample_text, text, empty text, various literary genres).
-2. GET /api/tts/preview (instant audio sample generation for Nestoras and Athina).
+2. GET /api/tts/preview (instant audio samples; removed Athina answers as Nestoras).
 3. GET /api/cache/stats (database cache hit/miss statistics).
 4. POST /api/admin/cleanup (storage cleaner garbage collector trigger).
 """
@@ -116,7 +116,7 @@ class TestNewAPIEndpoints(unittest.TestCase):
         self.assertEqual(ctype, "audio/mpeg")
         self.assertGreater(len(audio_bytes), 1000, "Preview audio stream must not be empty")
 
-        # Test Athina voice
+        # A saved Athina choice still answers (read by Nestoras)
         status, ctype, audio_bytes_athina = http_get("/tts/preview?voice=el-GR-AthinaNeural")
         self.assertEqual(status, 200)
         self.assertEqual(ctype, "audio/mpeg")

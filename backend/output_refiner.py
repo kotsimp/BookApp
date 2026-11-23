@@ -162,7 +162,7 @@ _GR = "α-ωΑ-Ωάέήίόύώϊϋΐΰ"
 
 # Unambiguous errors -> auto-corrected.
 _SAFE_CALQUE_FIXES = [
-    (re.compile(r"\bγια σίγουρα\b", re.IGNORECASE), "σίγουρα", "Literal calque 'για σίγουρα'"),
+    (re.compile(r"\bγια σίγουρα\b(?=[ \t]*(?:[.,;:!»…)\n]|$))", re.IGNORECASE), "σίγουρα", "Literal calque 'για σίγουρα'"),
     (re.compile(r"\bπιάστηκε με κόκκινο χέρι\b", re.IGNORECASE), "πιάστηκε επ' αυτοφώρω", "Literal calque of 'caught red-handed'"),
     (re.compile(r"\bπάρε μια ματιά\b", re.IGNORECASE), "ρίξε μια ματιά", "Literal calque of 'take a look'"),
 ]
@@ -179,13 +179,16 @@ _ADVISORY_CALQUES = [
 
 # Function-word stutters only: repeated content words may be deliberate emphasis ("Όχι όχι", "σιγά σιγά").
 _GREEK_FUNCTION_WORDS = (
-    "και|το|τα|τη|την|της|του|των|τον|τις|τους|ο|η|οι|στο|στη|στην|στα|στον|στις|στους|"
-    "για|με|σε|από|που|είναι|θα|να|ότι|πως|δε|δεν|μη|μην|ένα|μια|ένας"
+    # only words whose doubling is never correct: 'της της έδωσε', 'ένα ένα', 'ό,τι έγινε έγινε', 'που και που' are
+    "και|των|ο|η|οι|στο|στη|στην|στα|στον|στις|στους|για|σε|από|θα|να|ότι|δε|δεν"
 )
-_GREEK_STUTTER_PATTERN = re.compile(rf"(?<![{_GR}\w])({_GREEK_FUNCTION_WORDS})([ \t]+)\1(?![{_GR}\w])", re.IGNORECASE)
+_GREEK_STUTTER_PATTERN = re.compile(
+    rf"(?<![{_GR}\w])({_GREEK_FUNCTION_WORDS})([ \t]+)\1(?![{_GR}\w])(?![ \t]+κ(?:ι|αι)[ \t]+αν\b)", re.IGNORECASE
+)
 
 _ENGLISH_STUTTER_PATTERN = re.compile(
-    r"\b(the|and|of|in|to|is|it|that|for|with|as|on|at|by|this|be|from|a|an)([ \t]+)\1\b",
+    # not 'that that', 'had had', 'is is', 'in in', 'a a': they can be correct
+    r"\b(the|and|of|to|with|from|an|on(?=[ \t]+on[ \t]+(?:the|an?)\b))([ \t]+)\1\b",
     re.IGNORECASE,
 )
 
@@ -314,7 +317,12 @@ def inspect_text_quality(
         for m in _MISSING_INITIAL_ACCENT_PATTERN.finditer(text):
             issues.append(RefinementIssue("grammar", f"Missing accent on capitalised word: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
+        from backend import typography
+        # looked up at run time: the files may be updated under a still-running older server
+        is_corrupt_greek_word = getattr(typography, "is_corrupt_greek_word", lambda _word: True)
         for m in re.finditer(rf"(?<![\w])[{_GR}]+[A-Za-z]+[{_GR}]*(?![\w])", text):
+            if not is_corrupt_greek_word(m.group(0)):
+                continue
             issues.append(RefinementIssue("grammar", f"Latin characters inside Greek word: '{m.group(0)}'", m.group(0),
                                           "warning", _line_of(text, m.start()), True))
         for m in re.finditer(r"(?<![\w])(δε|μη)[ \t]+(?=[κπτξψ]|μπ|ντ|γκ|τσ|τζ|[αεηιουωάέήίόύώ])\w+", text, re.IGNORECASE):
@@ -364,6 +372,10 @@ _GREEK_ORDINALS = {
     "Πρώτη", "Δεύτερη", "Τρίτη", "Τέταρτη", "Πέμπτη", "Έκτη", "Έβδομη", "Όγδοη", "Ένατη", "Δέκατη",
 }
 _SECTION_WORDS = {"Κεφάλαιο", "Μέρος", "Βιβλίο", "Πράξη", "Σκηνή", "Ενότητα"}
+# A capital after these is normally a name ('από τη Λισαβόνα', 'της Μαρίας')
+_BEFORE_A_NAME = set(
+    "ο η το οι τα του της των τον την τη τους τις στο στον στη στην στου στους στις στα με από για σε προς κατά".split()
+)
 _CAP_WORD_RE = re.compile(rf"^[Α-ΩΆΈΉΊΌΎΏ][{_GR}]+$")
 
 
@@ -388,24 +400,40 @@ def greek_sentence_case_headings(text: str) -> str:
         next_blank = i == len(lines) - 1 or not lines[i + 1].strip()
         return bool(prev_blank and next_blank)
 
+    headings = [is_heading(i) for i in range(len(lines))]
+    names = set()  # capitalised mid-sentence in the running text: a name, whatever else the word means
+    for ln, heading in zip(lines, headings):
+        if not heading:
+            names.update(re.findall(rf"(?<=[α-ωάέήίόύώ,] )[Α-ΩΆΈΉΊΌΎΏ][{_GR}]+", ln))
+
     for i in range(len(lines)):
-        if not is_heading(i):
+        if not headings[i]:
             continue
         words = lines[i].split(" ")
         caps = [k for k, w in enumerate(words) if k > 0 and _CAP_WORD_RE.match(w.strip(":"))]
         if len(caps) < 2:
             continue   # a single capitalised word is most likely a name
-        new_words = list(words)
+        ordinals, common = {}, {}
+        names_here = set()
+        whole = True
         for k in caps:
             w = words[k]
             core = w.rstrip(":")
-            after_colon = words[k - 1].endswith(":")
-            if after_colon:
+            if words[k - 1].endswith(":"):
                 continue
             lower = core[0].lower() + core[1:]
-            ordinal = core in _GREEK_ORDINALS and words[k - 1].rstrip(":") in _SECTION_WORDS
-            if ordinal or lower in lowercase_vocab:
-                new_words[k] = lower + w[len(core):]
+            if core in _GREEK_ORDINALS and words[k - 1].rstrip(":") in _SECTION_WORDS:
+                ordinals[k] = lower + w[len(core):]
+            elif lower in lowercase_vocab and core not in names:
+                common[k] = lower + w[len(core):]
+            elif core in names or words[k - 1] in _BEFORE_A_NAME or k - 1 in names_here:
+                names_here.add(k)
+            else:
+                whole = False  # neither known as a common word nor evidently a name
+        new_words = list(words)
+        # All or nothing: 'Το Σιωπηλό Λιμάνι' must not become 'Το Σιωπηλό λιμάνι'
+        for k, w in {**ordinals, **(common if whole else {})}.items():
+            new_words[k] = w
         lines[i] = " ".join(new_words)
     return "\n".join(lines)
 

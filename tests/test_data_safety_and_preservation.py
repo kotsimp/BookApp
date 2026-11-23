@@ -186,8 +186,11 @@ class TestNoDataLossOnRestart(JobCase):
             for d in (recovered, empty, upload):
                 d.mkdir(parents=True)
             (recovered / "x.epub").write_bytes(b"work")
+            lost_db = root / "uploads" / "no-record"
+            lost_db.mkdir(parents=True)
+            (lost_db / "book.pdf").write_bytes(b"only copy")
             old = time.time() - 60 * 86400
-            for d in (recovered, empty, upload):
+            for d in (recovered, empty, upload, lost_db):
                 os.utime(d, (old, old))
             with mock.patch.object(storage_cleaner, "TEMP_DIR", root):
                 with mock.patch.object(storage_cleaner, "_known_job_ids", return_value=None):
@@ -195,6 +198,7 @@ class TestNoDataLossOnRestart(JobCase):
                     self.assertTrue(empty.exists() and upload.exists(), "deleted although the job list was unknown")
                 storage_cleaner.clean_temp_storage(24)
             self.assertTrue((recovered / "x.epub").exists(), "recoverable output deleted")
+            self.assertTrue((lost_db / "book.pdf").exists(), "upload deleted because the database had no record")
             self.assertFalse(empty.exists() or upload.exists(), "true orphans should still be removed")
 
     def test_history_is_not_limited_to_100_jobs(self):
@@ -269,7 +273,7 @@ class TestFormattingPreserved(JobCase):
                 job, _out, txt, doc, text = self.translated(kind)
                 for step in range(4):
                     paras = format_sync.split_paragraphs(text)
-                    i = rng.randrange(1, len(paras) - (2 if kind == "epub" else 0))  # EPUB: last 2 are navigation
+                    i = rng.randrange(1, len(paras))
                     words = paras[i].split()
                     action = rng.choice(("word", "append", "drop", "insert") if len(paras) > 3 else ("word", "append"))
                     marker = f"NEW{seed}X{step}"
@@ -292,7 +296,7 @@ class TestFormattingPreserved(JobCase):
                         self.fail(f"{kind} seed {seed} step {step}: ordinary {action} edit was refused")
                     text = new
                     content = key(reader(doc))
-                    for p in (paras[:-2] if kind == "epub" else paras):
+                    for p in paras:
                         self.assertIn(key(p), content, f"{kind} seed {seed} step {step} ({action})")
 
     def test_edit_that_cannot_be_placed_changes_nothing(self):
@@ -534,6 +538,51 @@ class TestInputValidationAndEscaping(JobCase):
         )
         self.assertIsNone(re.search(r"<img", html, re.IGNORECASE), "server value reached innerHTML unescaped")
         self.assertIn("&lt;img", html.lower())
+
+
+class TestSettingsFileLocked(unittest.TestCase):
+    """Windows lets a virus scanner or another process hold a file for a moment: the API keys must survive that."""
+
+    def setUp(self):
+        from backend import settings_manager
+        self.sm = settings_manager
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.file = Path(self.dir.name) / "settings.json"
+        self.file.write_text(json.dumps({"gemini_api_keys": ["k1", "k2"], "default_quota_behavior": "wait"}), "utf-8")
+        for patch in (mock.patch.object(settings_manager, "SETTINGS_FILE", self.file),
+                      mock.patch.object(settings_manager, "CONFIG_DIR", Path(self.dir.name)),
+                      mock.patch.object(settings_manager.time, "sleep", lambda _s: None)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def locked(self, times):
+        real = Path.read_text
+        calls = {"n": 0}
+
+        def read_text(path, *a, **k):
+            if Path(path) == self.file and calls["n"] < times:
+                calls["n"] += 1
+                raise PermissionError(13, "The process cannot access the file because it is being used")
+            return real(path, *a, **k)
+
+        return mock.patch.object(Path, "read_text", read_text)
+
+    def test_a_moment_of_locking_is_waited_out(self):
+        with self.locked(2):
+            self.sm.save_setting("final_refinement_enabled", True)
+        saved = json.loads(self.file.read_text("utf-8"))
+        self.assertEqual(saved["gemini_api_keys"], ["k1", "k2"])
+        self.assertTrue(saved["final_refinement_enabled"])
+
+    def test_a_file_that_stays_locked_is_never_overwritten(self):
+        before = self.file.read_bytes()
+        with self.locked(10 ** 6):
+            with self.assertRaises(OSError):
+                self.sm.save_setting("final_refinement_enabled", True)
+            with self.assertRaises(OSError):
+                self.sm.delete_setting("default_quota_behavior")
+        self.assertEqual(self.file.read_bytes(), before)
 
 
 if __name__ == "__main__":

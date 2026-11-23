@@ -7,6 +7,7 @@ import uuid
 import time
 import json
 import asyncio
+import re
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ class Job:
     max_quality: bool = False  # Advanced Mode: second AI pass revising the translation against the original
     revision_report: Optional[dict] = None  # result of the maximum-quality revision pass
     gemini_usage: Optional[dict] = None  # Gemini requests/tokens consumed by the last run of this job
+    audiobook_options: Optional[dict] = None  # settings of the last audiobook run, restored by Smart Resume
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -115,6 +117,7 @@ def _job_to_db_dict(job: Job) -> dict:
             "max_quality": bool(getattr(job, "max_quality", False)),
             "revision_report": getattr(job, "revision_report", None),
             "gemini_usage": getattr(job, "gemini_usage", None),
+            "audiobook_options": getattr(job, "audiobook_options", None),
         },
     }
 
@@ -164,6 +167,7 @@ def _job_from_db_row(row: dict) -> Job:
         max_quality=bool(meta.get("max_quality", False)),
         revision_report=meta.get("revision_report") if isinstance(meta.get("revision_report"), dict) else None,
         gemini_usage=meta.get("gemini_usage") if isinstance(meta.get("gemini_usage"), dict) else None,
+        audiobook_options=meta.get("audiobook_options") if isinstance(meta.get("audiobook_options"), dict) else None,
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -178,6 +182,38 @@ def _job_from_db_row(row: dict) -> Job:
 # Global in-memory registry
 _jobs: dict[str, Job] = {}
 _active_tasks: dict[str, asyncio.Task] = {}
+
+
+INTERRUPTED_STEP = "Ready to resume (saved checkpoint)"
+
+
+def mark_interrupted(job_id: str) -> None:
+    """A task was cancelled: by the user (status already 'cancelled'), otherwise by a server shutdown."""
+    job = _jobs.get(job_id)
+    if not job:
+        return
+    if job.status == "cancelled":
+        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+    elif job.status in ("idle", "queued", "running"):  # a cancellation arriving late never undoes done / error
+        update_job(job_id, status="idle", current_step=INTERRUPTED_STEP)
+
+
+def is_resumable(job: "Job") -> bool:
+    """True for work that stopped before finishing and is not going to continue by itself."""
+    if not job.mode or job.status not in ("idle", "error"):
+        return False
+    return job.status == "error" or job.current_step == INTERRUPTED_STEP or bool(job.done_chunks or job.done_pages)
+
+
+def is_quota_error(message: Optional[str]) -> bool:
+    """Recognises quota stops by their text, including the Greek messages BookApp itself raises."""
+    text = re.sub(r"\S+\.(?:pdf|docx|doc|epub|txt|cbz|cbr|zip)\b", " ", (message or "").lower())  # not file names
+    return bool(re.search(r"(?<![\w.-])429(?![\w-])", text)) or any(
+        k in text for k in ("quota", "resource_exhausted", "εξαντλήθηκε", "εξάντλησης", "are in cooldown"))
+
+
+def is_quota_stop(job: "Job") -> bool:
+    return job.status == "error" and is_quota_error(job.error)
 
 
 def register_task(job_id: str, task: asyncio.Task) -> None:

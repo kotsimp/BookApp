@@ -102,6 +102,10 @@ def _read_raw_file() -> Dict[str, Any]:
             return migrated
     except Exception as e:
         logger.warning(f"Could not read glossary file: {e}")
+        try:  # the next saved term replaces the file: keep the user's copy first (as settings_manager does)
+            GLOSSARY_FILE.with_name("glossary.json.corrupt").write_bytes(GLOSSARY_FILE.read_bytes())
+        except OSError as copy_error:
+            logger.warning(f"Could not back up the unreadable glossary: {copy_error}")
 
     return {
         "_version": 2,
@@ -354,11 +358,106 @@ def _apply_terms_single_pass(text: str, active_terms: list[tuple[str, str, re.Pa
     return text
 
 
+_GREEK_RE = re.compile(r"[Ͱ-Ͽἀ-῿]")
+_TOKEN_SIGNS = ("://", "@", "www.", "/", "\\", "_", "`", "=", "<", ">", "#", "$")  # links, paths, code
+_QUOTE_PAIRS = (("«", "»"), ("“", "”"), ("‘", "’"), ('"', '"'), ("`", "`"), ("*", "*"), ("(", ")"), ("[", "]"))
+
+
+def _enclosed(line: str, start: int, end: int) -> bool:
+    """Inside quotation marks, code, emphasis or brackets: a title, a quotation or an existing explanation."""
+    before, after = line[:start], line[end:]
+    for left, right in _QUOTE_PAIRS:
+        if left == right:
+            if before.count(left) % 2 and right in after:
+                return True
+        elif before.rfind(left) > before.rfind(right) and right in after:
+            return True
+    return False
+
+
+def _gloss_of(replacement: str) -> str:
+    """'πυρήνας λειτουργικού συστήματος (kernel)' -> 'πυρήνας λειτουργικού συστήματος'."""
+    bare = re.sub(r"\s*\([^()]*\)\s*$", "", replacement).strip()
+    if not bare or not _GREEK_RE.search(bare):
+        return ""
+    return bare.replace("(", "[").replace(")", "]")
+
+
+def _in_translation(text: str, start: int, end: int, term: str, replacement: str, explained: set) -> Optional[str]:
+    """
+    What an English term left inside a finished translation becomes; None leaves it as it is.
+
+    A Greek noun cannot take its place: its case and gender are unknown ("το kernel" is not "το πυρήνας"). So the
+    word stays and its translation follows it once, in parentheses. Alone on its line it is replaced.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line = text[line_start:len(text) if line_end < 0 else line_end]
+    a, b = start - line_start, end - line_start
+    before, found, after = line[:a], line[a:b], line[b:]
+
+    left_token = re.search(r"\S*$", before).group()
+    right_token = re.match(r"\S*", after).group()
+    if any(sign in left_token or sign in right_token for sign in _TOKEN_SIGNS):
+        return None
+    if re.search(r"\w[.:]$", before) or re.match(r"[.:]\w", after):
+        return None  # kernel.org, report.backup, localhost:backup
+    if not _GREEK_RE.search(before + after):
+        alone = not re.search(r"[^\W\d_]", before + after) and not _enclosed(line, a, b)
+        if not alone:
+            return None  # an English sentence: a quotation, a citation, code
+        return replacement[:1].upper() + replacement[1:] if found[:1].isupper() else replacement
+
+    note = re.match(r"\s*\(([^()]*)\)", after)
+    gloss = _gloss_of(replacement)
+    key = term.lower()
+    if note and gloss and note.group(1).strip() == gloss:
+        explained.add(key)
+    if note or _enclosed(line, a, b):
+        return None
+    if re.search(r"[A-Za-z][\w'’-]*[ \t]+$", before) or re.match(r"[ \t]+[A-Za-z]", after):
+        return None  # part of a longer English phrase or name
+    if term.islower():
+        sentence_start = not before.strip(" \t-–—•") or re.search(r"[.!?;:][ \t]+$", before)
+        capitals = re.findall(r"(?:^|\s)([A-Z])", found)
+        if capitals and (len(capitals) > 1 or not sentence_start):
+            return None  # capitals make it a name or a title
+    elif " " not in replacement and not term.isupper() and term[:1].isupper():
+        return replacement  # a name the user spells in Greek (Frodo -> Φρόντο): the article is already chosen
+    if key in explained or not gloss or re.search(rf"(?<!\w){re.escape(term)}(?!\w)", gloss, re.IGNORECASE):
+        return None
+    explained.add(key)
+    return f"{found} ({gloss})"
+
+
+def _apply_to_translation(
+    text: str, active_terms: list[tuple[str, str, re.Pattern]], explained: Optional[set] = None
+) -> str:
+    found = sorted(
+        ((m.start(), m.end(), term, replacement)
+         for term, replacement, pattern in active_terms for m in pattern.finditer(text) if m.end() > m.start()),
+        key=lambda item: (item[0], -item[1]),
+    )
+    explained = set() if explained is None else explained
+    out, done = [], 0
+    for start, end, term, replacement in found:
+        if start < done:
+            continue  # inside a longer term
+        changed = _in_translation(text, start, end, term, replacement, explained)
+        out.append(text[done:start])
+        out.append(text[start:end] if changed is None else changed)
+        done = end
+    out.append(text[done:])
+    return "".join(out)
+
+
 def apply_glossary(
     text: str,
     target_lang: str = "greek",
     category: Optional[str] = None,
     style: Optional[str] = None,
+    translated: bool = False,
+    explained: Optional[set] = None,
 ) -> str:
     """
     Applies glossary replacements to text using word-boundary substitutions.
@@ -366,6 +465,9 @@ def apply_glossary(
     Includes fast substring pre-filtering for high performance across 1000+ terms.
     When style is literary/comic/audiobook/poetry, excludes technical/IT categories and skips
     English-only bibliographic citation lines.
+    ``translated``: `text` is a finished Greek translation. Then English quotations, titles, links and code stay,
+    and a term inside a Greek sentence is explained, not replaced (see _in_translation). Give the fragments of one
+    document the same ``explained`` set, so that each term is explained once.
     """
     if not text or not isinstance(target_lang, str) or target_lang.lower() not in ("greek", "el"):
         return text
@@ -384,6 +486,8 @@ def apply_glossary(
     ]
     if not active_terms:
         return text
+    if translated:
+        return _apply_to_translation(text, active_terms, explained)
 
     protect_citations = (style or "").lower() in ("literature", "audiobook", "poetry", "natural")
     if not protect_citations:

@@ -41,11 +41,11 @@ _SEGMENT_PROTOCOL_EN = (
 )
 
 
-def _batches(segments: List[str]) -> List[List[int]]:
+def _batches(segments: List[str], max_chars: int = MAX_BATCH_CHARS) -> List[List[int]]:
     out, cur, size = [], [], 0
     for i, s in enumerate(segments):
         ln = len(s) + 8
-        if cur and (size + ln > MAX_BATCH_CHARS or len(cur) >= MAX_BATCH_SEGMENTS):
+        if cur and (size + ln > max_chars or len(cur) >= MAX_BATCH_SEGMENTS):
             out.append(cur)
             cur, size = [], 0
         cur.append(i)
@@ -77,10 +77,13 @@ async def translate_segments_with_gemini(
     quota_behavior: str = "wait",
     progress: Optional[Callable[[int, int], None]] = None,
     fallback_translate: Optional[Callable[[str], "asyncio.Future"]] = None,
+    max_batch_chars: int = MAX_BATCH_CHARS,
 ) -> List[str]:
     """Translates segments in order; the result list is aligned 1:1 with the input."""
     import aiohttp
-    from backend.ai_polisher import _call_gemini_api, _extract_entity_dossier, DailyQuotaExhaustedError
+    from backend.ai_polisher import (
+        _call_gemini_api, _extract_entity_dossier, _script_counts, english_glossary_rules, DailyQuotaExhaustedError,
+    )
     from backend.translation_prompts import build_direct_translation_prompt, dossier_header, is_greek
     from backend.glossary import load_glossary
 
@@ -110,7 +113,9 @@ async def translate_segments_with_gemini(
                 system += dossier_header("translation", target_lang) + dossier + "\n"
         glossary = load_glossary(style=style) or {}
         low = full_text.lower()
-        matched = [(k, v) for k, v in glossary.items() if k.lower() in low][:50]
+        matched = [(k, v) for k, v in glossary.items() if k.lower() in low][:50] if greek else []
+        if not greek:
+            system += english_glossary_rules(glossary, full_text)
         if matched:
             system += "\n--- GLOSSARY ---\n" + "\n".join(f"- {k} -> {v}" for k, v in matched) + "\n"
 
@@ -118,7 +123,7 @@ async def translate_segments_with_gemini(
         done = 0
         quota_hit = False
         # batch over the non-empty segments only; _batches returns positions in `todo`
-        batches = [[todo[k] for k in b] for b in _batches([segments[i] for i in todo])]
+        batches = [[todo[k] for k in b] for b in _batches([segments[i] for i in todo], max_batch_chars)]
 
         async def _translate_batch(ids: List[int], depth: int = 0):
             nonlocal quota_hit
@@ -140,6 +145,11 @@ async def translate_segments_with_gemini(
                 logger.warning(f"AI segment batch failed ({e}); falling back for {len(ids)} segments.")
                 return
             got = parse_segments(out, list(range(1, len(ids) + 1)))
+            if not greek:  # a segment left in Greek is not an English translation
+                for k, value in list(got.items()):
+                    in_greek, in_latin = _script_counts(value)
+                    if in_greek >= 20 and in_greek > in_latin:
+                        del got[k]
             missing = [k for k in range(1, len(ids) + 1) if k not in got]
             if len(missing) > max(2, len(ids) // 4) and len(ids) > 1 and depth < 2:
                 mid = len(ids) // 2
@@ -158,15 +168,13 @@ async def translate_segments_with_gemini(
             if progress:
                 progress(done, len(todo))
 
-        await asyncio.gather(*(_run(b) for b in batches))
+        from backend.async_utils import gather_or_cancel
+        await gather_or_cancel(_run(b) for b in batches)
 
     fallbacks = [i for i in todo if not (results[i] or "").strip()]
     if fallbacks:
         logger.info(f"AI segment translation: {len(fallbacks)}/{len(todo)} segments translated by the free engine.")
     for i in fallbacks:
-        try:
-            results[i] = await fallback_translate(segments[i])
-        except Exception as e:
-            logger.warning(f"Fallback translation failed for a segment ({e}); keeping source text.")
-            results[i] = segments[i]
+        # a failure stops the job: source text must not be passed off as a translation
+        results[i] = await fallback_translate(segments[i])
     return [r if r is not None else "" for r in results]

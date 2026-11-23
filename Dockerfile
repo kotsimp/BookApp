@@ -10,12 +10,14 @@ WORKDIR /app
 
 # Install system dependencies:
 # - ffmpeg: required for M4B audiobook export and audio conversion
+# - libarchive-tools: bsdtar, which reads RAR-based .cbr comics
 # - fonts-dejavu-core & fonts-dejavu-extra: ensures clean Unicode Greek Serif & Sans glyphs in generated PDFs and comic speech balloons
 # - fonts-liberation: metric-compatible fallback fonts
 # - fontconfig: font management and discovery
 # - ca-certificates: secure HTTPS connections for APIs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    libarchive-tools \
     fonts-dejavu-core \
     fonts-dejavu-extra \
     fonts-liberation \

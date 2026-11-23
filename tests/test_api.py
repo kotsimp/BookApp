@@ -80,7 +80,7 @@ status, data = api_get("/voices")
 assert status == 200
 assert "english" in data
 assert "greek" in data
-assert len(data["greek"]) >= 2
+assert list(data["greek"]) == ["Nestoras (Male)"]  # Athina was removed: the service refused that voice
 assert len(data["english"]) >= 4
 print(f"  GET /voices: OK (english: {len(data['english'])} voices, greek: {len(data['greek'])} voices)")
 
@@ -280,7 +280,7 @@ try:
     cancel_docx_path = "temp/test_cancel.docx"
     c_doc = Document()
     for p_i in range(10):
-        c_doc.add_paragraph(f"Long paragraph number {p_i} with multiple sentences. Testing cancellation responsiveness.")
+        c_doc.add_paragraph(f"Long paragraph number {p_i} with multiple sentences. Testing cancellation responsiveness of a slow service.")
     c_doc.save(cancel_docx_path)
     status, data = api_post_file("/upload", cancel_docx_path, "test_cancel.docx")
     assert status == 200

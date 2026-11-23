@@ -19,6 +19,7 @@ import time
 import threading
 import urllib.request
 import unittest
+from unittest.mock import AsyncMock
 from pathlib import Path
 
 import docx
@@ -397,7 +398,7 @@ class TestE2ERegressionGuard(unittest.TestCase):
             t0 = time.time()
             with patch("backend.translator._translate_gtx", side_effect=always_429), \
                  patch("backend.settings_manager.get_setting", return_value=""), \
-                 patch("deep_translator.MyMemoryTranslator.translate", return_value="Δοκιμή"):
+                 patch.object(tr_mod, "_translate_mymemory_async", new=AsyncMock(return_value="Δοκιμή")):
                 out = asyncio.run(tr_mod._translate_with_retry(
                     "Unique circuit breaker probe " + str(time.time()),
                     "english",

@@ -40,3 +40,7 @@ config/settings.json
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/batch_queue.json
+data/*.tmp
+config/*.corrupt
+config/*.tmp

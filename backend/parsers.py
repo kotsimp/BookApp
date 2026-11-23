@@ -5,6 +5,7 @@ Returns text in manageable chunks suitable for translation and TTS.
 
 import re
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Generator
 
@@ -101,59 +102,163 @@ def _is_standalone_page_number(line: str) -> bool:
     return False
 
 
-def _clean_page_blocks(page) -> str:
+_HEADER_WINDOW = 6  # pages to either side that are compared to find running headers and footers
+
+
+def _page_number_value(line: str) -> int:
+    """The number printed by a line that may be a page number ('12', '- 12 -', 'xiv'), else 0."""
+    s = line.strip().strip("-–—").strip()
+    if re.fullmatch(r"\d{1,4}", s):
+        return int(s)
+    if _is_standalone_page_number(line):
+        values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+        digits = [values.get(c, 0) for c in s.upper()]
+        return sum(-v if i + 1 < len(digits) and v < digits[i + 1] else v for i, v in enumerate(digits))
+    return 0
+
+
+def _may_number_page(value: int, page_no: int) -> bool:
+    """1981, 1982... on consecutive pages are years of a diary, unless the document really is about that long."""
+    return bool(value) and (value < 1000 or abs(value - page_no) <= 300)
+
+
+def _page_lines(page) -> list[dict]:
+    """The text lines of a page in content order, with position, font size and margin."""
+    import pymupdf
+
+    height = page.rect.height
+    out = []
+    data = page.get_text("dict", flags=pymupdf.TEXTFLAGS_BLOCKS)
+    for block_no, block in enumerate(data.get("blocks", [])):
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            text = "".join(s.get("text", "") for s in spans).strip()
+            if not text:
+                continue
+            y0, y1 = line["bbox"][1], line["bbox"][3]
+            zone = "top" if 0 < height and y0 < height * 0.12 else ("bottom" if 0 < height and y1 > height * 0.88 else "")
+            out.append({
+                "block": block_no, "text": text, "y0": y0, "y1": y1, "zone": zone,
+                "size": max(s.get("size", 0.0) for s in spans),
+            })
+    return out
+
+
+def _same_running_line(line: dict, other: dict, pages_apart: int, page_no: int) -> bool:
+    if other["zone"] != line["zone"] or abs(other["y0"] - line["y0"]) > 3 or abs(other["size"] - line["size"]) > 0.7:
+        return False
+    a, b = " ".join(line["text"].split()).casefold(), " ".join(other["text"].split()).casefold()
+    if a == b:
+        return True
+    if _CHAPTER_HEADING_GUARD_RE.match(line["text"]):
+        return False  # 'Chapter 1', 'Chapter 2' are headings
+    if _page_number_value(line["text"]):
+        return False  # numbers alone are judged as page numbers, not as running lines
+    if re.sub(r"\d+", "#", a) != re.sub(r"\d+", "#", b):
+        return False
+    # the same words around a number that counts the pages ('Blindsight 6', 'Blindsight 7')
+    return any(int(y) - int(x) == pages_apart and _may_number_page(int(x), page_no)
+               for x, y in zip(re.findall(r"\d+", a), re.findall(r"\d+", b)))
+
+
+def _labels_are_printed(doc, lines_of) -> bool:
     """
-    Extracts text blocks from a PyMuPDF page while stripping running headers and footers
-    (such as author names, book titles, and page numbers at the top/bottom margins).
+    True when the PDF's own page labels are the numbers printed in its margins (pages sampled across the book):
+    then a page's label says which of its margin numbers is the page number.
     """
-    blocks = page.get_text("blocks")
-    h = page.rect.height
-    body_blocks = []
+    try:
+        if not doc.get_page_labels():
+            return False
+        total = len(doc)
+        printed = matched = 0
+        for i in sorted(set(range(0, total, max(1, total // 40)))):
+            values = {_page_number_value(ln["text"]) for ln in lines_of(i) if ln["zone"] and len(ln["text"]) <= 100}
+            values.discard(0)
+            if values:
+                printed += 1
+                matched += _page_number_value(doc[i].get_label() or "") in values
+        return matched >= 3 and matched >= 0.6 * printed
+    except Exception as e:  # unreadable labels: the evidence below still decides
+        logger.debug(f"PDF page labels not used: {e}")
+        return False
 
-    for b in blocks:
-        if b[6] != 0:  # Skip image blocks
-            continue
-        t = b[4].strip()
-        if not t:
-            continue
-        y0, y1 = b[1], b[3]
-        is_top = h > 0 and y0 < (h * 0.12)
-        is_bottom = h > 0 and y1 > (h * 0.88)
-        lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
 
-        if is_top:
-            # 1. Pure page numbers or numbers enclosed in dashes/spaces at top
-            while lines and _is_standalone_page_number(lines[0]):
-                lines.pop(0)
+def _clean_page_blocks(page, lines_of=None, labels_printed: bool = False) -> str:
+    """
+    Extracts a page's text without running headers, footers and page numbers.
 
-            # 2. Triplet header: Author\nPageNumber\nTitle (e.g. Peter Watts\n6\nBlindsight)
-            if len(lines) >= 3 and lines[1].isdigit() and len(lines[0]) < 50 and len(lines[2]) < 50:
-                lines = lines[3:]
-            # 3. Pair header: Title\nPageNumber or PageNumber\nTitle
-            elif len(lines) >= 2 and lines[1].isdigit() and len(lines[0]) < 50 and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”")):
-                lines = lines[2:]
-            elif len(lines) >= 2 and lines[0].isdigit() and len(lines[1]) < 50 and not lines[1].endswith((".", "!", "?", ";", ":", "»", '"', "”")):
-                lines = lines[2:]
-            # 4. Standalone short header block (< 55 chars) with no sentence-ending punctuation
-            #    (never strip genuine chapter/section headings!)
-            elif (
-                len(lines) == 1
-                and len(lines[0]) < 55
-                and not lines[0].endswith((".", "!", "?", ";", ":", "»", '"', "”"))
-                and not lines[0][0].islower()
-                and not _CHAPTER_HEADING_GUARD_RE.match(lines[0])
+    A margin line is removed only with evidence: it is repeated at the same place on neighbouring pages, or it is a
+    number that counts the pages. A short line near the top alone proves nothing: it may be the book's or chapter's
+    title, a line of dialogue or a date. Anything larger than the body text is a heading and always stays.
+    When the PDF's page labels are its printed numbers (labels_printed), a number equal to the page's label is
+    the page number, also where no neighbour proves it.
+    """
+    doc, number = page.parent, page.number
+    if lines_of is None:
+        lines_of = lru_cache(maxsize=None)(lambda i: _page_lines(doc[i]))
+    lines = lines_of(number)
+    if not lines:
+        return ""
+
+    margin = [ln for ln in lines if ln["zone"] and len(ln["text"]) <= 100]
+    dropped: set[int] = set()
+    if margin:
+        first, last = max(0, number - _HEADER_WINDOW), min(len(doc), number + _HEADER_WINDOW + 1)
+        near = [(i, lines_of(i)) for i in range(first, last) if i != number]
+
+        # size of the running text: the size most characters around this page are set in
+        weights: dict[float, int] = {}
+        for other_lines in [lines] + [other for _, other in near]:
+            for ln in other_lines:
+                if not ln["zone"]:
+                    size = round(ln["size"], 1)
+                    weights[size] = weights.get(size, 0) + len(ln["text"])
+        body_size = max(weights, key=weights.get) if weights else float("inf")
+        small = [ln for ln in margin if ln["size"] <= body_size * 1.25]
+
+        decorated, counting = [], []
+        for ln in small:
+            value = _page_number_value(ln["text"])
+            if not value:
+                continue
+            if re.fullmatch(r"[-–—]\s*\d{1,4}\s*[-–—]", ln["text"]):
+                decorated.append(ln)
+            elif _may_number_page(value, number + 1) and any(
+                other["zone"] == ln["zone"] and abs(other["y0"] - ln["y0"]) <= 4
+                and (other_value := _page_number_value(other["text"])) and other_value - value == i - number
+                for i, other_lines in near for other in other_lines
             ):
-                lines = []
+                counting.append(ln)
+        # A page has one number. When more lines count up (a numbered poem and the folio), the others are the book's.
+        numbers = decorated
+        if not numbers and counting:
+            foot = [ln for ln in counting if ln["zone"] == "bottom"]
+            outer = max(foot, key=lambda ln: ln["y1"]) if foot else min(counting, key=lambda ln: ln["y0"])
+            numbers = [ln for ln in counting
+                       if ln["zone"] == outer["zone"] and _page_number_value(ln["text"]) == _page_number_value(outer["text"])]
+        if labels_printed:  # the number that is the page's label is its folio; without one, the evidence above
+            label = _page_number_value(page.get_label() or "")
+            numbers = [ln for ln in small if label and _page_number_value(ln["text"]) == label] or numbers
+        dropped.update(id(ln) for ln in numbers)
 
-        if is_bottom:
-            # Strip running footers at bottom (e.g. page numbers)
-            while lines and _is_standalone_page_number(lines[-1]):
-                lines.pop()
+        for ln in small:
+            if id(ln) in dropped:
+                continue
+            repeats = [i for i, other_lines in near
+                       if any(_same_running_line(ln, other, i - number, number + 1) for other in other_lines)]
+            if any(abs(i - number) <= 3 for i in repeats) and (len(repeats) >= 2 or numbers):
+                dropped.add(id(ln))
 
-        if lines:
-            body_blocks.append("\n".join(lines))
-
-    return "\n\n".join(body_blocks)
+    blocks: list[list[str]] = []
+    block_no = None
+    for ln in lines:
+        if id(ln) in dropped:
+            continue
+        if ln["block"] != block_no:
+            blocks.append([])
+            block_no = ln["block"]
+        blocks[-1].append(ln["text"])
+    return "\n\n".join("\n".join(b) for b in blocks)
 
 
 def parse_pdf(file_path: str) -> Generator[dict, None, None]:
@@ -168,11 +273,13 @@ def parse_pdf(file_path: str) -> Generator[dict, None, None]:
             raise ValueError("PDF file is password-protected / encrypted and cannot be read without a password.")
         total_pages = len(doc)
         logger.info(f"PDF has {total_pages} pages: {file_path}")
+        lines_of = lru_cache(maxsize=4 * _HEADER_WINDOW)(lambda i: _page_lines(doc[i]))
+        labels_printed = _labels_are_printed(doc, lines_of)
         for page_num in range(total_pages):
             page = doc[page_num]
             # Try block extraction with header/footer removal first
-            text = _clean_page_blocks(page)
-            if not text.strip():
+            text = _clean_page_blocks(page, lines_of, labels_printed)
+            if not text.strip() and not lines_of(page_num):  # not a page that held only its header and number
                 text = _extract_page_text(page)
             text = _clean_text(text)
             char_count = len(text.strip())
@@ -191,19 +298,55 @@ def count_pdf_pages(file_path: str) -> int:
 # DOCX Parsing via python-docx
 # ---------------------------------------------------------------------------
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+_M_TEXT = "{http://schemas.openxmlformats.org/officeDocument/2006/math}t"
+
+
+def _docx_paragraph_texts(root) -> list[str]:
+    """
+    Every paragraph under `root` in reading order, as the reader sees it: tables where they stand (also nested), text
+    boxes, content controls, fields, links and tracked insertions; no tracked deletions, no duplicate fallback copies.
+    """
+    hidden = {f"{_W}del", f"{_W}moveFrom", _MC_FALLBACK}
+    not_text = hidden | {f"{_W}pPr", f"{_W}rPr", f"{_W}instrText", f"{_W}p"}  # a nested w:p is a paragraph of its own
+    marks = {f"{_W}tab": "\t", f"{_W}ptab": "\t", f"{_W}br": "\n", f"{_W}cr": "\n", f"{_W}noBreakHyphen": "-"}
+
+    def collect(el, out: list[str]) -> None:
+        for child in el:
+            tag = child.tag
+            if tag in not_text:
+                continue
+            if tag in (f"{_W}t", _M_TEXT):
+                out.append(child.text or "")
+            elif tag in marks:
+                out.append(marks[tag])
+            else:
+                collect(child, out)
+
+    found = []
+    for p in root.iter(f"{_W}p"):
+        pieces: list[str] = []
+        collect(p, pieces)
+        text = "".join(pieces)
+        if text.strip() and not any(a.tag in hidden for a in p.iterancestors()):
+            found.append(text)
+    return found
+
+
 def _extract_docx_paragraphs_and_tables(doc) -> list[str]:
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-    seen_tcs = set()
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                tc_id = id(cell._tc)
-                if tc_id in seen_tcs:
-                    continue
-                seen_tcs.add(tc_id)
-                for p in cell.paragraphs:
-                    if p.text.strip():
-                        paragraphs.append(p.text)
+    """The body in reading order, then its footnotes and endnotes (they were silently lost on conversion)."""
+    from lxml import etree
+
+    paragraphs = _docx_paragraph_texts(doc.element.body)
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+    for kind in ("/footnotes", "/endnotes"):
+        for rel in doc.part.rels.values():
+            if rel.reltype.endswith(kind) and not rel.is_external:
+                try:
+                    paragraphs += _docx_paragraph_texts(etree.fromstring(rel.target_part.blob, parser))
+                except etree.XMLSyntaxError as e:
+                    logger.warning(f"Skipped unreadable {kind[1:]}: {e}")
     return paragraphs
 
 
@@ -272,24 +415,59 @@ def _get_epub_spine_items(book):
     return ordered
 
 
+_HTML_INLINE = frozenset(
+    "a abbr acronym b bdi bdo big cite code data del dfn em font i ins kbd label mark q rp rt ruby s samp small span "
+    "strike strong sub sup time tt u var wbr math mi mn mo mrow msup msub mtext msqrt semantics".split()
+)
+
+
+def _html_to_text(html) -> str:
+    """Plain text of a page: a paragraph per block, inline markup never breaks a sentence or a word."""
+    from bs4 import BeautifulSoup
+    from bs4.element import CData, NavigableString, Tag
+
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.find("body") or soup
+    out: list[str] = []
+    stack = [("node", root, False)]
+    while stack:
+        kind, node, verbatim = stack.pop()
+        if kind == "text":
+            out.append(node)
+            continue
+        if not isinstance(node, Tag):
+            if type(node) in (NavigableString, CData):  # not comments, doctypes or processing instructions
+                out.append(str(node) if verbatim else re.sub(r"[ \t\r\n\f]+", " ", str(node)))
+            continue
+        name = node.name.rsplit(":", 1)[-1].lower()
+        if name in ("style", "script", "template", "title"):
+            continue
+        if name == "br":
+            out.append("\n")  # an unclosed <br> may have swallowed the rest of the paragraph as children
+        is_block = name != "br" and name not in _HTML_INLINE and name != "img"
+        if is_block:
+            out.append("\n\n")
+            stack.append(("text", "\n\n", False))
+        keep_lines = verbatim or name == "pre"
+        stack.extend(("node", child, keep_lines) for child in reversed(node.contents))
+    text = re.sub(r"[ \t]*\n[ \t]*", "\n", "".join(out))
+    text = re.sub(r"(?<=\S)[ \t]{2,}", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def parse_epub(file_path: str) -> Generator[dict, None, None]:
     """
     Yields dicts: {page: int, text: str} for each chapter of an EPUB in spine reading order,
     stripping <style> and <script> blocks cleanly.
     """
     from ebooklib import epub
-    from bs4 import BeautifulSoup
 
     book = epub.read_epub(file_path)
     items = _get_epub_spine_items(book)
     total = max(1, len(items))
 
     for idx, item in enumerate(items, 1):
-        soup = BeautifulSoup(item.get_content(), "html.parser")
-        for junk in soup(["style", "script"]):
-            junk.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        text = _clean_text(text)
+        text = _clean_text(_html_to_text(item.get_content()))
         if text.strip():
             yield {"page": idx, "text": text, "total": total}
 
@@ -520,6 +698,9 @@ def detect_is_graphic_novel(file_path: str, file_type: str, file_name: str = "")
 # Helpers
 # ---------------------------------------------------------------------------
 
+_LIGATURES = {0xFB00: "ff", 0xFB01: "fi", 0xFB02: "fl", 0xFB03: "ffi", 0xFB04: "ffl", 0xFB05: "st", 0xFB06: "st"}
+
+
 def _clean_text(text: str) -> str:
     """Remove excessive whitespace, control characters, and proprietary Wingdings PUA symbols."""
     # Map common Wingdings/Symbol Private Use Area (PUA) characters to standard Unicode
@@ -540,6 +721,12 @@ def _clean_text(text: str) -> str:
 
     # Standardize line endings
     text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+    # PDF ligature glyphs ('efficient' stored with a single ffi character) break search, translation and speech
+    for code, letters in _LIGATURES.items():
+        text = text.replace(chr(code), letters)
+    # A soft hyphen only marks where a word may break
+    text = re.sub(chr(0xAD) + r'(?:\n[ \t]*)?', '', text)
 
     # De-hyphenate line-wrapped words: e.g. "repre-\nsentation" -> "representation", "δια-\nδικασία" -> "διαδικασία"
     text = re.sub(r'([a-zA-Z\u0370-\u03FF\u1F00-\u1FFF])-[\n]+\s*([a-zA-Z\u0370-\u03FF\u1F00-\u1FFF])', r'\1\2', text)

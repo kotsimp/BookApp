@@ -7,6 +7,7 @@ pydantic>=2.14.2
 pymupdf>=1.28.2
 python-docx>=1.2.0
 EbookLib>=0.21
+lxml>=5.0
 beautifulsoup4>=4.15.0
 deep-translator>=1.11.4
 edge-tts>=7.3.1

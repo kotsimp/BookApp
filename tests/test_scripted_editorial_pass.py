@@ -191,8 +191,13 @@ class TestScriptedEditorialPass(unittest.TestCase):
             fix_stutters_and_duplicate_tokens("Παραπομπές\n\nΠαραπομπές\n\n1. Watts, P."),
             "Παραπομπές\n\n1. Watts, P.",
         )
+        # possessive + object clitic is correct Greek ("our ship gave us hope"): deleting one changes the meaning
         self.assertEqual(
             fix_stutters_and_duplicate_tokens("το σκάφος μας μας έδωσε ελπίδα."),
+            "το σκάφος μας μας έδωσε ελπίδα.",
+        )
+        self.assertEqual(
+            fix_stutters_and_duplicate_tokens("το σκάφος μας μας μας έδωσε ελπίδα."),
             "το σκάφος μας έδωσε ελπίδα.",
         )
 

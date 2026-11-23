@@ -23,6 +23,8 @@ from typing import Optional, Callable, Any
 
 import aiohttp
 
+from backend.async_utils import gather_or_cancel
+
 logger = logging.getLogger(__name__)
 
 # Prompts live in backend/translation_prompts.py (versioned, language-aware, generic — no title-specific terms)
@@ -170,10 +172,10 @@ EXCLUDE_PATTERNS = [
 ]
 
 PREFERRED_FLASH_MODELS = [
-    # Full Flash models (high translation quality, 1,500 RPD / 15 RPM)
+    # Full Flash models (high translation quality, small daily free limit)
     "gemini-3.5-flash",
     "gemini-flash-latest",
-    # High-throughput Flash-Lite models (1,500 RPD / 15 RPM fallback)
+    # High-throughput Flash-Lite models (fallback)
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-flash-lite-latest",
@@ -298,7 +300,7 @@ def get_gemini_quota_info() -> dict[str, Any]:
         time_str = f"{rem_sec}δ"
 
     msg = (
-        f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Google Free Tier 15 RPM / 1500 RPD). "
+        f"Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier). "
         f"Έτοιμο ξανά στις {reset_time_str} (απομένουν ~{time_str}). "
         f"Μπορείτε να αλλάξετε API Key στις Ρυθμίσεις (Settings) για άμεση συνέχιση."
     )
@@ -313,6 +315,12 @@ def get_gemini_quota_info() -> dict[str, Any]:
     }
 
 
+# Any of these ends an answer early, also when part of the text has already arrived
+_INTERRUPTED_REASONS = frozenset({
+    "SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST", "SPII", "LANGUAGE", "OTHER", "MALFORMED_RESPONSE",
+})
+
+
 class _TruncatedOutputError(RuntimeError):
     """Raised when Gemini finishes with MAX_TOKENS so the caller can split the batch and retry."""
 
@@ -321,10 +329,14 @@ class _ContentBlockedError(RuntimeError):
     """Raised when Gemini returns an empty/blocked response (SAFETY, PROHIBITED_CONTENT, RECITATION)."""
 
 
+# A real tag: name, then only name=value attributes ("a<b and c>d" is a comparison, not a tag)
 _HTML_INLINE_TAG_RE = re.compile(
-    r"</?(?:i|b|em|strong|u|s|span|p|br|div|font|sup|sub|small|big|mark|del|ins|a|h[1-6])\b[^>]*>",
+    r"</?(i|b|em|strong|u|s|span|p|br|div|font|sup|sub|small|big|mark|del|ins|a|h[1-6])"
+    r"(?:\s+[A-Za-z_:][\w:.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+))*\s*/?>",
     re.IGNORECASE,
 )
+# The book's own bracketed notes, in either language
+_SOURCE_NOTE_RE = re.compile(r"\[\s*(?:Σημ|Σ\.\s?τ\.|Note\b|N\.\s?[BT]|Editor|Translator|Ed\.|Tr\.)", re.IGNORECASE)
 _LLM_SPECIAL_TOKEN_RE = re.compile(
     r"<(?:/?(?:bos|eos|pad|unk|sep|cls|mask|start_of_turn|end_of_turn|thought|think)|\|[^|\n]{1,32}\|)>",
     re.IGNORECASE,
@@ -356,7 +368,7 @@ _COT_BLOCK_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _LEAKED_PROMPT_HEADER_RE = re.compile(
-    r"^---\s*(?:ΠΡΟΗΓΟΥΜΕΝΟ\s+ΑΠΟΣΠΑΣΜΑ|ΠΡΩΤΟΤΥΠΟ\s+ΚΕΙΜΕΝΟ\s+ΑΝΑΦΟΡΑΣ|ΠΡΟΣΧΕΔΙΟ\s+ΕΛΛΗΝΙΚΗΣ\s+ΜΕΤΑΦΡΑΣΗΣ|ΚΕΙΜΕΝΟ\s+ΠΡΟΣ\s+ΕΠΙΜΕΛΕΙΑ)[^\n]*---\s*$",
+    r"^---\s*(?:ΠΡΟΗΓΟΥΜΕΝΟ\s+ΑΠΟΣΠΑΣΜΑ|ΠΡΩΤΟΤΥΠΟ\s+ΚΕΙΜΕΝΟ\s+ΑΝΑΦΟΡΑΣ|ΠΡΟΣΧΕΔΙΟ\s+ΕΛΛΗΝΙΚΗΣ\s+ΜΕΤΑΦΡΑΣΗΣ|ΚΕΙΜΕΝΟ\s+ΠΡΟΣ\s+ΕΠΙΜΕΛΕΙΑ|INPUT\s+TEXT)[^\n]*---\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -377,14 +389,20 @@ _MIXED_HOMOGLYPHS = {
 }
 
 
-def fix_mixed_script_words(text: str) -> str:
-    """Repairs subword token bleed where Latin letters leaked inside Greek words."""
+def fix_mixed_script_words(text: str, source_text: str = "") -> str:
+    """
+    Repairs subword token bleed where Latin letters leaked inside Greek words. Scientific symbols (TNFα, NFκB, kΩ)
+    and tokens the source itself contains are left alone.
+    """
     if not text:
         return text
+    from backend.typography import is_corrupt_greek_word
 
     def _repair_tok(match):
         w = match.group(0)
         if "http" in w or "@" in w or _SCI_UNIT_RE.match(w):
+            return w
+        if not is_corrupt_greek_word(w) or (source_text and w in source_text):
             return w
         # Common multi-letter subwords
         w = w.replace('ka', 'κα').replace('ri', 'ρι').replace('el', 'ει').replace('ANES', 'ανες')
@@ -426,7 +444,7 @@ def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
     return "".join(text_parts).strip(), finish_reason
 
 
-def sanitize_ai_output(text: str) -> str:
+def sanitize_ai_output(text: str, source_text: str = "") -> str:
     """
     Defensively removes LLM artifacts from generated/polished text:
     - HTML/XML inline tags ('εισπ</i>νευστική' -> 'εισπνευστική')
@@ -437,59 +455,76 @@ def sanitize_ai_output(text: str) -> str:
     - Subword token bleed (mixed Greek/Latin chars repaired)
     - Markdown code fences wrapping prose
     - Broken hyphenated Greek words ('υποσχέ- θηκαν' -> 'υποσχέθηκαν')
+
+    ``source_text`` is what the model was given: whatever of the above the book itself contains is content
+    (a book about HTML, a translator's note) and is kept.
     """
     if not text:
         return text
+    src = source_text or ""
 
     # NFC: models sometimes emit polytonic-block or decomposed accents (e.g. U+1FCB 'Ή', 'Η'+U+0301) that look right
     # but break search, glossary matching, PDF fonts and TTS; NFC maps them to the standard monotonic code points.
     cleaned = unicodedata.normalize("NFC", text).strip()
     # Strip outer markdown code fence if the model wrapped the whole output
-    cleaned = re.sub(r"^```(?:markdown|text|el|greek)?\s*\n?", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+    if "```" not in src:
+        cleaned = re.sub(r"^```(?:markdown|text|el|greek)?\s*\n?", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\n?```\s*$", "", cleaned)
 
     # Strip echoed read-only previous context blocks, wrapper tags, and leaked '[... ...]' snippets
     cleaned = _LEAKED_PREV_CTX_BLOCK_RE.sub("", cleaned)
     cleaned = _LEAKED_WRAPPER_TAG_RE.sub("", cleaned)
-    cleaned = _LEAKED_ELLIPSIS_BRACKET_RE.sub("\n", cleaned)
+    if "[..." not in src and "[…" not in src:
+        cleaned = _LEAKED_ELLIPSIS_BRACKET_RE.sub("\n", cleaned)
 
     # Strip LLM special tokens and leaked inline HTML tags
-    cleaned = _LLM_SPECIAL_TOKEN_RE.sub("", cleaned)
-    cleaned = _HTML_INLINE_TAG_RE.sub("", cleaned)
-    cleaned = _EDITOR_NOTE_RE.sub("", cleaned)
+    src_tokens = {t.lower() for t in _LLM_SPECIAL_TOKEN_RE.findall(src)}
+    cleaned = _LLM_SPECIAL_TOKEN_RE.sub(lambda m: m.group(0) if m.group(0).lower() in src_tokens else "", cleaned)
+    src_tags = {m.group(1).lower() for m in _HTML_INLINE_TAG_RE.finditer(src)}
+    cleaned = _HTML_INLINE_TAG_RE.sub(lambda m: m.group(0) if m.group(1).lower() in src_tags else "", cleaned)
+    if not _SOURCE_NOTE_RE.search(src):
+        cleaned = _EDITOR_NOTE_RE.sub("", cleaned)
     cleaned = _LEAKED_PROMPT_HEADER_RE.sub("", cleaned)
 
     # Repair any mixed-script subword token bleed
-    cleaned = fix_mixed_script_words(cleaned)
+    cleaned = fix_mixed_script_words(cleaned, src)
 
     # Remove Chain-of-Thought / self-review blocks (from first leaked review heading to end or per-line)
-    out_lines: list[str] = []
-    in_cot_tail = False
-    for ln in cleaned.splitlines():
-        if re.search(r"\*\*Review\s+against\s+Rules|\*\*Final\s+Polish\s*:\*\*|Proceed\s+to\s+output\s+(?:pure\s+)?translated\s+text", ln, re.IGNORECASE):
-            in_cot_tail = True
-            continue
-        if in_cot_tail:
-            # Stop skipping once a real page marker (1-line or 3-line translator format) resumes
-            if re.match(r"^\s*={3,}\s*PAGE\s+\d+\s*={3,}\s*$", ln) or re.match(r"^\s*PAGE\s+\d+\s*$", ln) or re.match(r"^\s*={6,}\s*$", ln):
-                in_cot_tail = False
-                out_lines.append(ln)
-            continue
-        if _COT_BLOCK_LINE_RE.match(ln):
-            continue
-        out_lines.append(ln)
-    cleaned = "\n".join(out_lines)
+    cot_start = re.compile(
+        r"\*\*Review\s+against\s+Rules|\*\*Final\s+Polish\s*:\*\*|Proceed\s+to\s+output\s+(?:pure\s+)?translated\s+text",
+        re.IGNORECASE,
+    )
+    src_reviews = bool(src) and (bool(cot_start.search(src)) or any(_COT_BLOCK_LINE_RE.match(ln) for ln in src.splitlines()))
+    if not src_reviews:
+        out_lines: list[str] = []
+        in_cot_tail = False
+        for ln in cleaned.splitlines():
+            if cot_start.search(ln):
+                in_cot_tail = True
+                continue
+            if in_cot_tail:
+                # Stop skipping once a real page marker (1-line or 3-line translator format) resumes
+                if re.match(r"^\s*={3,}\s*PAGE\s+\d+\s*={3,}\s*$", ln) or re.match(r"^\s*PAGE\s+\d+\s*$", ln) or re.match(r"^\s*={6,}\s*$", ln):
+                    in_cot_tail = False
+                    out_lines.append(ln)
+                continue
+            if _COT_BLOCK_LINE_RE.match(ln):
+                continue
+            out_lines.append(ln)
+        cleaned = "\n".join(out_lines)
 
-    # Collapse spaces left behind by removed editor notes (without breaking paragraph newlines)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    # Collapse spaces left behind by removed editor notes (without breaking paragraph newlines or the book's indents)
+    indented = bool(re.search(r"(?m)^[ \t]{2,}\S", src))
+    cleaned = re.sub(r"(?<=\S)[ \t]{2,}" if indented else r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
     try:
-        from backend.typography import fix_broken_hyphens, sanitize_editorial_pass
+        from backend.typography import fix_broken_hyphens, sanitize_editorial_pass, is_mostly_greek
         cleaned = fix_broken_hyphens(cleaned)
-        cleaned = sanitize_editorial_pass(cleaned)
-    except Exception:
-        pass
+        if is_mostly_greek(cleaned):  # the Greek editorial rules would rewrite words of other languages
+            cleaned = sanitize_editorial_pass(cleaned)
+    except Exception as ex:
+        logger.warning(f"Editorial sanitising skipped: {ex}")
 
     return cleaned.strip()
 
@@ -509,19 +544,95 @@ def _find_mixed_script_tokens(text: str, source_text: str = "") -> list[str]:
         has_lat = bool(_LATIN_LETTER_RE.search(tok))
         has_ex = bool(_EXOTIC_SCRIPT_RE.search(tok))
         if (has_gr and (has_lat or has_ex)) or (has_ex and not src_has_exotic):
+            if source_text and tok in source_text:
+                continue
             if tok not in seen:
                 seen.add(tok)
                 bad_tokens.append(tok)
     return bad_tokens
 
 
+class _BadAnswerError(RuntimeError):
+    """The model's answer lost text or changed the language: it must not replace the book's text."""
+
+
+def _script_counts(text: str) -> tuple[int, int]:
+    body = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "", text or "")
+    return len(_GREEK_CHAR_RE.findall(body)), len(_LATIN_LETTER_RE.findall(body))
+
+
+def _answer_problem(
+    answer: str,
+    given: str,
+    greek_target: bool,
+    expected_pages: Optional[list[int]] = None,
+    translating: bool = False,
+) -> str:
+    """Why this answer may not replace `given`, or "". Lesser issues only earn a retry."""
+    for issue in detect_greek_output_issues(answer, source_text=given, expected_pages=expected_pages,
+                                            greek_target=greek_target):
+        if issue.startswith(("empty", "missing_pages", "truncated")):
+            return issue
+    greek, latin = _script_counts(answer)
+    given_greek, given_latin = _script_counts(given)
+    # halved batches get too short for the gate's 400-character rule, and a cut there loses text just the same
+    if given_greek + given_latin >= 60 and greek + latin < 0.45 * (given_greek + given_latin):
+        return f"truncated(letters={greek + latin}/{given_greek + given_latin})"
+    if not greek_target and greek >= 20 and greek > latin and (translating or given_latin > given_greek):
+        return "wrong_language(greek)"
+    if greek_target and not translating and latin >= 20 and latin > greek and given_greek > given_latin:
+        return "wrong_language(latin)"
+    return ""
+
+
+def _continuity_rule(greek_target: bool, translating: bool = False) -> str:
+    if not greek_target:
+        verb = "translate" if translating else "edit"
+        return ("\n\n--- CONTINUITY RULE ---\n"
+                "<PREVIOUS_CONTEXT_DO_NOT_REPEAT> is given only for names, gender and flow. Do not "
+                f"{verb}, repeat or output it: begin with the text that follows it, without XML tags.")
+    if translating:
+        return ("\n\n--- ΚΑΝΟΝΑΣ ΣΥΝΕΧΕΙΑΣ (ΜΗΝ ΜΕΤΑΦΡΑΖΕΙΣ ΤΟ ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ) ---\n"
+                "Το τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT> παρέχεται ΜΟΝΟ ως αναφορά για γένος, ονόματα και ροή. "
+                "ΜΗΝ το μεταφράσεις, ΜΗΝ το επαναλάβεις και ΜΗΝ το συμπεριλάβεις στην έξοδό σου. "
+                "Ξεκίνα τη μετάφρασή σου ΑΜΕΣΩΣ από το κείμενο εντός <TEXT_TO_TRANSLATE> (χωρίς ετικέτες XML).")
+    return ("\n\n--- ΚΑΝΟΝΑΣ ΣΥΝΕΧΕΙΑΣ (ΜΗΝ ΕΠΑΝΑΛΑΜΒΑΝΕΙΣ) ---\n"
+            "Το τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT> παρέχεται ΜΟΝΟ ως αναφορά για γένος, ονόματα και ροή. "
+            "ΜΗΝ το συμπεριλάβεις, ΜΗΝ το ξαναγράψεις και ΜΗΝ το επαναλάβεις στην έξοδό σου. "
+            "Ξεκίνα την έξοδό σου ΑΜΕΣΩΣ από το κείμενο εντός <DRAFT_TO_POLISH>/<TEXT_TO_POLISH>.")
+
+
+def glossary_towards_english(items: dict, greek_source: str, limit: int = 50) -> list[tuple[str, str]]:
+    """The glossary is English -> Greek. For an English target: the pairs whose Greek the source uses, reversed."""
+    low = (greek_source or "").lower()
+    pairs = []
+    for term, value in items.items():
+        bare = re.sub(r"\s*\([^()]*\)\s*$", "", str(value)).strip()
+        key = bare.lower()
+        if (len(key) >= 4 and _GREEK_CHAR_RE.search(key) and key in low
+                and re.search(rf"(?<!\w){re.escape(key)}(?!\w)", low)):
+            pairs.append((bare, term))
+            if len(pairs) >= limit:
+                break
+    return pairs
+
+
+def english_glossary_rules(items: dict, greek_source: str) -> str:
+    pairs = glossary_towards_english(items, greek_source)
+    if not pairs:
+        return ""
+    lines = "\n".join(f"- {greek} -> {english}" for greek, english in pairs)
+    return f"\n\n--- GLOSSARY (use where the meaning matches) ---\n{lines}\n"
+
+
 def detect_greek_output_issues(
     text: str,
     source_text: str = "",
     expected_pages: Optional[list[int]] = None,
+    greek_target: bool = True,
 ) -> list[str]:
     """
-    Quality gate for Greek AI-translated/polished batches.
+    Quality gate for AI-translated/polished batches (``greek_target=False`` skips the Greek-script checks).
     Returns a list of issue codes (empty list means clean):
     - 'mixed_script': Greek words corrupted with Latin/Cyrillic/Hebrew/Arabic/Armenian/Bengali/CJK chars
     - 'cot_leak': leftover English reasoning / review chatter
@@ -544,6 +655,8 @@ def detect_greek_output_issues(
         has_gr = bool(_GREEK_CHAR_RE.search(tok))
         has_lat = bool(_LATIN_LETTER_RE.search(tok))
         has_ex = bool(_EXOTIC_SCRIPT_RE.search(tok))
+        if source_text and (has_gr or has_ex) and tok in source_text:
+            continue  # the book's own symbol (TNFα, kΩ) or quotation
         if has_gr and (has_lat or has_ex):
             mixed_count += 1
         elif has_ex and not src_has_exotic:
@@ -569,8 +682,10 @@ def detect_greek_output_issues(
     # 4. Truncation check (severe length drop or mid-word cutoff)
     clean_src = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "", source_text or "").strip()
     clean_out = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "", text).strip()
-    if len(clean_src) >= 400:
-        ratio = len(clean_out) / max(1, len(clean_src))
+    # dot leaders, rules and padding are not text: losing them is no truncation
+    src_len, out_len = (len(re.sub(r"([^\w])\1{2,}", r"\1", t)) for t in (clean_src, clean_out))
+    if src_len >= 400:
+        ratio = out_len / max(1, src_len)
         if ratio < 0.48:
             issues.append(f"truncated(ratio={ratio:.2f})")
         elif (
@@ -584,7 +699,7 @@ def detect_greek_output_issues(
 
     # 5. Untranslated English passages check
     clean_out_words = [w for w in clean_out.split() if w.strip()]
-    if len(clean_out_words) >= 15:
+    if greek_target and len(clean_out_words) >= 15:
         greek_chars = len(_GREEK_CHAR_RE.findall(clean_out))
         latin_chars = len(_LATIN_LETTER_RE.findall(clean_out))
         if latin_chars > greek_chars and greek_chars < 50:
@@ -672,10 +787,18 @@ def _is_near_duplicate_segment(seg_a: str, seg_b: str) -> bool:
     return False
 
 
+def _prose_paragraphs(text: str) -> list[str]:
+    """Paragraphs without page markers."""
+    body = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", "\n\n", text or "")
+    return [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+
+
 def _deduplicate_batch_boundary(
     prev_text: str,
     curr_text: str,
     expected_first_page: Optional[int] = None,
+    source_prev: str = "",
+    source_curr: str = "",
 ) -> str:
     """
     Eliminates chunk/batch boundary duplications deterministically:
@@ -683,6 +806,10 @@ def _deduplicate_batch_boundary(
        emitted BEFORE the first expected '=== PAGE K ===' marker.
     2. Strips up to 3 leading paragraphs (or a duplicated leading sentence) of curr_text
        when they duplicate or closely paraphrase the trailing paragraphs/sentences of prev_text.
+
+    With ``source_prev``/``source_curr`` (what the model was given) only echoes are removed, never text the book
+    really repeats (contract clauses, refrains, similar list items): an echo is either an exact repeat that the source
+    does not have, or makes the output longer than its source.
     """
     if not curr_text or not curr_text.strip():
         return curr_text or ""
@@ -723,6 +850,21 @@ def _deduplicate_batch_boundary(
     prev_tail_joined = " ".join(prev_tail_paras)
 
     curr_paras = [p.strip() for p in body.split("\n\n") if p.strip()]
+
+    src_paras = _prose_paragraphs(source_curr)
+    extra_paras = len(_prose_paragraphs(body)) - len(src_paras)
+    source_repeats = False
+    if src_paras and source_prev:
+        src_tail = _prose_paragraphs(source_prev)[-3:]
+        first_src = _norm_dedup_text(src_paras[0])
+        sentence_end = r"(?<=[.!?;…])\s+"
+        source_repeats = (
+            any(_is_near_duplicate_segment(src_paras[0], pp) for pp in src_tail)
+            or (len(first_src) >= 40 and first_src in _norm_dedup_text(" ".join(src_tail)))
+            or (bool(src_tail) and _is_near_duplicate_segment(
+                re.split(sentence_end, src_paras[0])[0], re.split(sentence_end, src_tail[-1])[-1]))
+        )
+
     dropped = 0
     while curr_paras and dropped < 3:
         first_p = curr_paras[0]
@@ -736,6 +878,10 @@ def _deduplicate_batch_boundary(
             norm_prev_tail = _norm_dedup_text(prev_tail_joined)
             if norm_first in norm_prev_tail:
                 is_dup = True
+        if is_dup and src_paras:
+            norm_p = _norm_dedup_text(first_p)
+            exact = len(norm_p) >= 35 and f" {norm_p} " in f" {_norm_dedup_text(prev_tail_joined)} "
+            is_dup = (exact and dropped < extra_paras) if source_repeats else (exact or dropped < extra_paras)
         if is_dup:
             logger.info(f"Deduplicated repeated boundary paragraph ({len(first_p)} chars)")
             curr_paras.pop(0)
@@ -757,7 +903,10 @@ def _deduplicate_batch_boundary(
                 for s in re.split(r"(?:(?<=[.!?;…\u037e])|(?<=[.!?;…\u037e][»\"”\'\)\]]))\s+", first_p)
                 if s.strip()
             ]
-            if prev_sents and len(curr_sents) >= 2 and _is_near_duplicate_segment(curr_sents[0], prev_sents[-1]):
+            is_echo = bool(prev_sents) and len(curr_sents) >= 2 and _is_near_duplicate_segment(curr_sents[0], prev_sents[-1])
+            if is_echo and src_paras:
+                is_echo = not source_repeats and _norm_dedup_text(curr_sents[0]) == _norm_dedup_text(prev_sents[-1])
+            if is_echo:
                 logger.info(f"Deduplicated repeated boundary leading sentence ({len(curr_sents[0])} chars)")
                 curr_paras[0] = " ".join(curr_sents[1:]).strip()
 
@@ -1009,7 +1158,7 @@ async def polish_text_with_gemini(
             return s
         from backend.typography import format_greek_typography
         from backend.glossary import apply_glossary
-        return format_greek_typography(apply_glossary(s, "greek", style=style))
+        return format_greek_typography(apply_glossary(s, "greek", style=style, translated=True))
 
     from backend.gemini_key_pool import resolve_gemini_api_key
     key = resolve_gemini_api_key(api_key)
@@ -1025,8 +1174,13 @@ async def polish_text_with_gemini(
 
     # Disk Checkpoint setup (with safe job_id validation and style/input fingerprint)
     checkpoint_file: Optional[Path] = None
-    input_sig = hashlib.sha256(f"{style}::{target_lang}::{text[:2000]}::{len(text)}".encode("utf-8")).hexdigest()[:16]
-    checkpoint_data: dict[str, Any] = {"sig": input_sig, "batches": {}, "chunks": {}}
+    prompt_sig = hashlib.sha256(base_system_instruction.encode("utf-8")).hexdigest()[:8]  # not work of older prompts
+    input_sig = hashlib.sha256(
+        f"{PROMPT_VERSION}::{prompt_sig}::{style}::{target_lang}::{text[:2000]}::{len(text)}".encode("utf-8")
+    ).hexdigest()[:16]
+    narration = style in ("audiobook", "poetry")  # those prompts remove page markers on purpose
+    input_full = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]  # an edit past the first 2,000 chars
+    checkpoint_data: dict[str, Any] = {"sig": input_sig, "full": input_full, "batches": {}, "chunks": {}}
     if job_id and "/" not in job_id and "\\" not in job_id and ".." not in job_id:
         out_dir = Path(__file__).resolve().parent.parent / "temp" / "outputs" / job_id
         if out_dir.exists():
@@ -1035,7 +1189,7 @@ async def polish_text_with_gemini(
                 try:
                     loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
                     # Reuse checkpoint if no sig (legacy/tests) or matching sig
-                    if not loaded.get("sig") or loaded.get("sig") == input_sig:
+                    if (not loaded.get("sig") or loaded.get("sig") == input_sig) and loaded.get("full", input_full) == input_full:
                         if isinstance(loaded.get("batches"), dict):
                             checkpoint_data["batches"] = loaded["batches"]
                         if isinstance(loaded.get("chunks"), dict):
@@ -1106,7 +1260,10 @@ async def polish_text_with_gemini(
         # Inject contextually-relevant user glossary rules (style-aware: excludes IT/DevOps terms for literature)
         from backend.glossary import load_glossary
         glossary_items = load_glossary(style=style)
-        if glossary_items:
+        if glossary_items and not is_greek_target:
+            if not narration:
+                system_instruction += english_glossary_rules(glossary_items, original_text or "")
+        elif glossary_items:
             full_context_lower = (text + "\n" + (original_text or "")).lower()
             # Prioritize terms that actually appear in the source or draft text
             matched_terms = [
@@ -1232,13 +1389,15 @@ async def polish_text_with_gemini(
                 prompt_content = "\n\n".join(content_components)
                 batch_instruction = system_instruction
                 if prev_snippet:
+                    batch_instruction += _continuity_rule(is_greek_target)
+                if source_batch_parts and not is_greek_target:
                     batch_instruction += (
-                        "\n\n--- ΚΑΝΟΝΑΣ ΣΥΝΕΧΕΙΑΣ (ΜΗΝ ΕΠΑΝΑΛΑΜΒΑΝΕΙΣ) ---\n"
-                        "Το τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT> παρέχεται ΜΟΝΟ ως αναφορά για γένος, ονόματα και ροή. "
-                        "ΜΗΝ το συμπεριλάβεις, ΜΗΝ το ξαναγράψεις και ΜΗΝ το επαναλάβεις στην έξοδό σου. "
-                        "Ξεκίνα την έξοδό σου ΑΜΕΣΩΣ από το κείμενο εντός <DRAFT_TO_POLISH>/<TEXT_TO_POLISH>."
+                        "\n\n--- BILINGUAL CHECK ---\n"
+                        "You receive the original (<SOURCE_REFERENCE>) and the English translation (<DRAFT_TO_POLISH>). "
+                        "Use the original to correct misreadings, calques or omissions of the draft. Return only the "
+                        "corrected English text (no XML tags), with every page marker === PAGE X === unchanged."
                     )
-                if source_batch_parts:
+                elif source_batch_parts:
                     batch_instruction += (
                         "\n\n--- ΟΔΗΓΙΑ ΔΙΓΛΩΣΣΗΣ ΕΠΑΛΗΘΕΥΣΗΣ ---\n"
                         "Σου παρέχεται το Πρωτότυπο Κείμενο Αναφοράς (<SOURCE_REFERENCE>) καθώς και το Προσχέδιο Ελληνικής Μετάφρασης (<DRAFT_TO_POLISH>). "
@@ -1275,7 +1434,11 @@ async def polish_text_with_gemini(
                         pm_r = re.match(r"^={3,}\s*PAGE\s+(\d+)\s*={3,}$", batch_items[mid][0])
                         if pm_r:
                             right_first_pg = int(pm_r.group(1))
-                        right_clean = _deduplicate_batch_boundary(left_txt, right_txt, expected_first_page=right_first_pg)
+                        right_clean = _deduplicate_batch_boundary(
+                            left_txt, right_txt, expected_first_page=right_first_pg,
+                            source_prev="\n\n".join(c for _, c in batch_items[:mid]),
+                            source_curr="\n\n".join(c for _, c in batch_items[mid:]),
+                        )
                         return f"{left_txt.strip()}\n\n{right_clean.strip()}".strip(), True
 
                     # Single-page paragraph bisection (isolates a single safety-blocked or oversized paragraph)
@@ -1306,7 +1469,8 @@ async def polish_text_with_gemini(
                                 right_txt = r_para
                             if not left_ok and not right_ok:
                                 raise (left_err or right_err or RuntimeError(reason_label))
-                            right_clean = _deduplicate_batch_boundary(left_txt, right_txt, expected_first_page=None)
+                            right_clean = _deduplicate_batch_boundary(
+                                left_txt, right_txt, expected_first_page=None, source_prev=l_para, source_curr=r_para)
                             return f"{left_txt.strip()}\n\n{right_clean.strip()}".strip(), True
                     return None
 
@@ -1319,6 +1483,9 @@ async def polish_text_with_gemini(
                         session=session,
                         temperature=target_temp,
                         meta_out=meta,
+                        cache_gate=lambda out: not detect_greek_output_issues(
+                            out, source_text=draft_batch_text, greek_target=is_greek_target)
+                        and not _answer_problem(out, draft_batch_text, is_greek_target),
                     )
                 except PermissionError:
                     raise
@@ -1345,6 +1512,7 @@ async def polish_text_with_gemini(
                     polished,
                     source_text=draft_batch_text,
                     expected_pages=expected_page_nums if len(expected_page_nums) >= 2 else None,
+                    greek_target=is_greek_target,
                 )
                 if issues:
                     logger.warning(f"Polish quality gate flagged issues {issues} (model={meta.get('model')})")
@@ -1358,7 +1526,7 @@ async def polish_text_with_gemini(
                         try:
                             retry_instruction = batch_instruction
                             bad_tokens = _find_mixed_script_tokens(polished, source_text=draft_batch_text)
-                            if bad_tokens:
+                            if bad_tokens and is_greek_target:
                                 retry_instruction += (
                                     "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ ΜΕΙΚΤΟΥ ΑΛΦΑΒΗΤΟΥ ---\n"
                                     f"Στην προηγούμενη προσπάθεια εμφανίστηκαν λέξεις με ξένους/λατινικούς χαρακτήρες μέσα σε ελληνικές λέξεις ({', '.join(bad_tokens[:8])}). "
@@ -1387,12 +1555,23 @@ async def polish_text_with_gemini(
                                 retried,
                                 source_text=draft_batch_text,
                                 expected_pages=expected_page_nums if len(expected_page_nums) >= 2 else None,
+                                greek_target=is_greek_target,
                             )
                             if len(retry_issues) < len(issues):
                                 logger.info(f"Quality retry succeeded on {retry_meta.get('model')} (issues: {issues} -> {retry_issues})")
-                                return retried, True
+                                polished = retried
                         except Exception as rex:
                             logger.debug(f"Quality retry failed: {rex}")
+                if not key.startswith(("AQ.Test", "AIzaTest")):
+                    problem = _answer_problem(
+                        polished, draft_batch_text, is_greek_target,
+                        expected_pages=None if narration or len(expected_page_nums) < 2 else expected_page_nums)
+                    if problem:
+                        if problem.startswith(("missing_pages", "truncated")):
+                            recovered = await _bisect_and_recover(problem)
+                            if recovered is not None:
+                                return recovered
+                        raise _BadAnswerError(f"Unusable polish answer: {problem}")
                 return polished, True
 
             async def _polish_batch(b_idx: int, batch_items: list[tuple[str, str]]) -> None:
@@ -1450,10 +1629,12 @@ async def polish_text_with_gemini(
             # Process remaining batches
             pending_batches = [(i, b) for i, b in enumerate(batches) if not polished_batches[i]]
             if pending_batches:
-                await asyncio.gather(*(_polish_batch(i, b) for i, b in pending_batches))
+                await gather_or_cancel(_polish_batch(i, b) for i, b in pending_batches)
 
             if (all(batch_failed) or all(not p for p in polished_batches)) and first_error is not None:
-                if isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                if isinstance(first_error, _BadAnswerError):
+                    logger.warning(f"Every polish answer was unusable ({first_error}): the text stays as it was.")
+                elif isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
                     logger.warning(
                         "All batches failed due to DailyQuotaExhaustedError but quota_behavior='fallback'. "
                         "Proceeding with unpolished original text."
@@ -1475,7 +1656,11 @@ async def polish_text_with_gemini(
                     if pm0:
                         first_pg = int(pm0.group(1))
                 prev_txt = final_batches[-1] if final_batches else ""
-                curr_txt = _deduplicate_batch_boundary(prev_txt, curr_txt, expected_first_page=first_pg)
+                curr_txt = _deduplicate_batch_boundary(
+                    prev_txt, curr_txt, expected_first_page=first_pg,
+                    source_prev="\n\n".join(c for _, c in batches[b_idx - 1]) if b_idx else "",
+                    source_curr="\n\n".join(c for _, c in batches[b_idx]),
+                )
                 if curr_txt:
                     final_batches.append(curr_txt)
 
@@ -1515,18 +1700,22 @@ async def polish_text_with_gemini(
                         f"<PREVIOUS_CONTEXT_DO_NOT_REPEAT>\n{prev_snippet}\n</PREVIOUS_CONTEXT_DO_NOT_REPEAT>\n\n"
                         f"<TEXT_TO_POLISH>\n{c_text}\n</TEXT_TO_POLISH>"
                     )
-                    chunk_instr = (
-                        system_instruction
-                        + "\n\n--- ΚΑΝΟΝΑΣ ΣΥΝΕΧΕΙΑΣ (ΜΗΝ ΕΠΑΝΑΛΑΜΒΑΝΕΙΣ) ---\n"
-                        "ΜΗΝ συμπεριλάβεις και ΜΗΝ επαναλάβεις το <PREVIOUS_CONTEXT_DO_NOT_REPEAT>. "
-                        "Επίστρεψε ΜΟΝΟ το διορθωμένο κείμενο εντός <TEXT_TO_POLISH>."
-                    )
+                    chunk_instr = system_instruction + _continuity_rule(is_greek_target)
                 else:
                     chunk_content = f"<TEXT_TO_POLISH>\n{c_text}\n</TEXT_TO_POLISH>"
                     chunk_instr = system_instruction
 
                 try:
-                    res_c = await _call_gemini_api(chunk_content, key, chunk_instr, session=session, temperature=target_temp)
+                    res_c = await _call_gemini_api(
+                        chunk_content, key, chunk_instr, session=session, temperature=target_temp,
+                        cache_gate=lambda out: not detect_greek_output_issues(
+                            out, source_text=c_text, greek_target=is_greek_target)
+                        and not _answer_problem(out, c_text, is_greek_target),
+                    )
+                    if not key.startswith(("AQ.Test", "AIzaTest")):
+                        problem = _answer_problem(res_c, c_text, is_greek_target)
+                        if problem:
+                            raise _BadAnswerError(f"Unusable polish answer: {problem}")
                     return res_c, True
                 except PermissionError:
                     raise
@@ -1534,7 +1723,7 @@ async def polish_text_with_gemini(
                     err_low = str(ex).lower()
                     can_split = isinstance(ex, (_TruncatedOutputError, _ContentBlockedError)) or any(
                         k in err_low for k in ("timed out", "block", "safety", "prohibited", "empty", "max_tokens")
-                    )
+                    ) or (isinstance(ex, _BadAnswerError) and "truncated" in err_low)
                     if can_split and depth < 3:
                         halves = _split_text_in_half_by_paragraphs(c_text)
                         if halves:
@@ -1557,7 +1746,7 @@ async def polish_text_with_gemini(
                                 r_err = ex_r
                             if not l_ok and not r_ok:
                                 raise (l_err or r_err or ex)
-                            r_clean = _deduplicate_batch_boundary(l_out, r_out)
+                            r_clean = _deduplicate_batch_boundary(l_out, r_out, source_prev=l_txt, source_curr=r_txt)
                             return f"{l_out.strip()}\n\n{r_clean.strip()}".strip(), True
                     raise
 
@@ -1605,10 +1794,12 @@ async def polish_text_with_gemini(
 
             pending_chunks = [(i, c) for i, c in enumerate(chunks) if str(i) not in cached_chunks]
             if pending_chunks:
-                await asyncio.gather(*(_polish_chunk(i, c) for i, c in pending_chunks))
+                await gather_or_cancel(_polish_chunk(i, c) for i, c in pending_chunks)
 
             if succeeded == 0 and first_error is not None:
-                if isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
+                if isinstance(first_error, _BadAnswerError):
+                    logger.warning(f"Every polish answer was unusable ({first_error}): the text stays as it was.")
+                elif isinstance(first_error, DailyQuotaExhaustedError) and quota_behavior == "fallback":
                     logger.warning(
                         "All chunks failed due to DailyQuotaExhaustedError but quota_behavior='fallback'. "
                         "Proceeding with unpolished original text."
@@ -1623,11 +1814,12 @@ async def polish_text_with_gemini(
                     pass
 
             dedup_chunks: list[str] = []
-            for p in polished_chunks:
+            for c_idx, p in enumerate(polished_chunks):
                 if not p or not p.strip():
                     continue
                 prev_c = dedup_chunks[-1] if dedup_chunks else ""
-                cleaned_c = _deduplicate_batch_boundary(prev_c, p.strip())
+                cleaned_c = _deduplicate_batch_boundary(
+                    prev_c, p.strip(), source_prev=chunks[c_idx - 1] if c_idx else "", source_curr=chunks[c_idx])
                 if cleaned_c:
                     dedup_chunks.append(cleaned_c)
 
@@ -1640,7 +1832,16 @@ async def polish_text_with_gemini(
                 f"<DRAFT_TO_POLISH>\n{text}\n</DRAFT_TO_POLISH>"
             )
         try:
-            polished_single = await _call_gemini_api(single_input, key, system_instruction, session=session, temperature=target_temp)
+            polished_single = await _call_gemini_api(
+                single_input, key, system_instruction, session=session, temperature=target_temp,
+                cache_gate=lambda out: not detect_greek_output_issues(out, source_text=text, greek_target=is_greek_target)
+                and not _answer_problem(out, text, is_greek_target),
+            )
+            if not key.startswith(("AQ.Test", "AIzaTest")):
+                problem = _answer_problem(polished_single, text, is_greek_target)
+                if problem:
+                    logger.warning(f"Unusable polish answer ({problem}): the text stays as it was.")
+                    polished_single = text
         except DailyQuotaExhaustedError:
             if quota_behavior == "fallback":
                 logger.warning(
@@ -1721,19 +1922,19 @@ async def _call_gemini_api(
     if not bypass_cache:
         try:
             from backend.database import compute_cache_key, db_get_cached_translation
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4",
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v5",
                                           extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
             cached_result = db_get_cached_translation(cache_key)
             if cached_result is not None:
                 logger.info("Retrieved AI polished chunk directly from SQLite cache.")
                 record_gemini_usage(cached=True)
-                return sanitize_ai_output(cached_result)
+                return sanitize_ai_output(cached_result, source_text=content_text)
         except Exception as ex:
             logger.debug(f"Polish cache check skipped: {ex}")
     else:
         try:
             from backend.database import compute_cache_key
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v4",
+            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v5",
                                           extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
         except Exception:
             pass
@@ -1746,12 +1947,15 @@ async def _call_gemini_api(
     est_tokens = max(500, min(60_000, payload_chars // 2))          # ~input + comparable output
     req_timeout_s = float(max(45.0, min(180.0, 45.0 + len(content_text or "") / 120.0)))
 
+    # the instructions open the prompt; the book's own names and terms are appended below them
+    prompt_greek, prompt_latin = _script_counts((system_prompt or "")[:600])
+    label = "ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ" if prompt_greek > prompt_latin else "INPUT TEXT"
     base_payload = {
         "contents": [
             {
                 "role": "user",
                 "parts": [
-                    {"text": f"{system_prompt}\n\n--- ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ ---\n{content_text}"}
+                    {"text": f"{system_prompt}\n\n--- {label} ---\n{content_text}"}
                 ]
             }
         ],
@@ -1867,18 +2071,18 @@ async def _call_gemini_api(
                             if resp.status == 200:
                                 result = await resp.json()
                                 raw_text, finish_reason = _extract_gemini_text_and_reason(result)
-                                if not raw_text:
+                                if not raw_text or finish_reason in _INTERRUPTED_REASONS:
                                     saw_block = True
                                     last_error = f"Model {model} returned empty/blocked content (reason: {finish_reason or 'UNKNOWN'})"
-                                    logger.warning(f"Model {model} candidate returned no content parts (finishReason: {finish_reason or 'UNKNOWN'})")
-                                    if finish_reason in ("SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST"):
-                                        raise _ContentBlockedError(f"Gemini content blocked by safety policy ({finish_reason})")
-                                    break
+                                    logger.warning(
+                                        f"Model {model} gave no complete answer (finishReason: {finish_reason or 'UNKNOWN'}, "
+                                        f"{len(raw_text)} chars). Trying the next candidate...")
+                                    break  # the same model would answer the same: one request each
                                 if finish_reason == "MAX_TOKENS":
                                     logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
                                     saw_truncation = True
                                     raise _TruncatedOutputError(f"Model {model} hit MAX_TOKENS")
-                                polished = sanitize_ai_output(raw_text)
+                                polished = sanitize_ai_output(raw_text, source_text=content_text)
                                 if not polished:
                                     saw_block = True
                                     last_error = f"Model {model} returned empty text after sanitization."
@@ -1899,7 +2103,7 @@ async def _call_gemini_api(
                                 if cache_key and cacheable:
                                     try:
                                         from backend.database import db_set_cached_translation
-                                        db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v4")
+                                        db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v5")
                                     except Exception:
                                         pass
                                 return polished
@@ -2134,11 +2338,12 @@ async def translate_and_polish_direct_with_gemini(
     direct_sig = hashlib.sha256(
         f"{PROMPT_VERSION}::{style}::{source_lang}::{target_lang}::{len(full_original)}::{full_original[:2000]}".encode("utf-8")
     ).hexdigest()[:16]
-    checkpoint_data: dict[str, Any] = {"sig": direct_sig, "batches": {}, "entity_dossier": ""}
+    direct_full = hashlib.sha256(full_original.encode("utf-8")).hexdigest()[:16]
+    checkpoint_data: dict[str, Any] = {"sig": direct_sig, "full": direct_full, "batches": {}, "entity_dossier": ""}
     if checkpoint_file.is_file():
         try:
             loaded = json.loads(checkpoint_file.read_text(encoding="utf-8"))
-            if loaded.get("sig") not in (None, direct_sig):
+            if loaded.get("sig") not in (None, direct_sig) or loaded.get("full", direct_full) != direct_full:
                 logger.info(f"[{job_id}] Discarding stale direct-translation checkpoint (different source/settings).")
                 loaded = {}
             if isinstance(loaded.get("batches"), dict):
@@ -2223,7 +2428,9 @@ async def translate_and_polish_direct_with_gemini(
 
         # Inject matching glossary terms (style-aware: excludes IT/DevOps terms for literature)
         glossary_items = load_glossary(style=style)
-        if glossary_items:
+        if glossary_items and target_lang.lower() not in ("greek", "el"):
+            system_instruction += english_glossary_rules(glossary_items, full_original)
+        elif glossary_items:
             lower_src = full_original.lower()
             matched = [(k, v) for k, v in glossary_items.items() if k.lower() in lower_src][:50]
             if matched:
@@ -2254,12 +2461,7 @@ async def translate_and_polish_direct_with_gemini(
 
             batch_sys = system_instruction
             if prev_tail:
-                batch_sys += (
-                    "\n\n--- ΚΑΝΟΝΑΣ ΣΥΝΕΧΕΙΑΣ (ΜΗΝ ΜΕΤΑΦΡΑΖΕΙΣ ΤΟ ΠΡΟΗΓΟΥΜΕΝΟ ΑΠΟΣΠΑΣΜΑ) ---\n"
-                    "Το τμήμα <PREVIOUS_CONTEXT_DO_NOT_REPEAT> παρέχεται ΜΟΝΟ ως αναφορά για γένος, ονόματα και ροή. "
-                    "ΜΗΝ το μεταφράσεις, ΜΗΝ το επαναλάβεις και ΜΗΝ το συμπεριλάβεις στην έξοδό σου. "
-                    "Ξεκίνα τη μετάφρασή σου ΑΜΕΣΩΣ από το κείμενο εντός <TEXT_TO_TRANSLATE> (χωρίς ετικέτες XML)."
-                )
+                batch_sys += _continuity_rule(is_target_greek, translating=True)
 
             async def _bisect_direct(reason_label: str) -> Optional[str]:
                 if len(b_items) > 1 and depth < 3:
@@ -2296,7 +2498,11 @@ async def translate_and_polish_direct_with_gemini(
                     if not left_res.strip() and not right_res.strip():
                         raise (left_err or right_err or RuntimeError(reason_label))
                     r_first_pg = b_items[mid][0]
-                    right_clean = _deduplicate_batch_boundary(left_res, right_res, expected_first_page=r_first_pg)
+                    right_clean = _deduplicate_batch_boundary(
+                        left_res, right_res, expected_first_page=r_first_pg,
+                        source_prev="\n\n".join(t for _, t in b_items[:mid]),
+                        source_curr="\n\n".join(t for _, t in b_items[mid:]),
+                    )
                     return f"{left_res.strip()}\n\n{right_clean.strip()}".strip()
 
                 # Single-page paragraph bisection so 1 explicit paragraph never drops an entire page to Google Translate
@@ -2328,7 +2534,8 @@ async def translate_and_polish_direct_with_gemini(
                             right_res = await _translate_with_retry(r_txt, source_lang, target_lang)
                         if not left_res.strip() and not right_res.strip():
                             raise (left_err or right_err or RuntimeError(reason_label))
-                        right_clean = _deduplicate_batch_boundary(left_res, right_res, expected_first_page=None)
+                        right_clean = _deduplicate_batch_boundary(
+                            left_res, right_res, expected_first_page=None, source_prev=l_txt, source_curr=r_txt)
                         return f"{left_res.strip()}\n\n{right_clean.strip()}".strip()
                 return None
 
@@ -2341,6 +2548,9 @@ async def translate_and_polish_direct_with_gemini(
                     session=session,
                     temperature=target_temp,
                     meta_out=meta,
+                    cache_gate=lambda out: not detect_greek_output_issues(
+                        out, source_text=batch_src, greek_target=is_target_greek)
+                    and not _answer_problem(out, batch_src, is_target_greek, translating=True),
                 )
             except PermissionError:
                 raise
@@ -2409,11 +2619,25 @@ async def translate_and_polish_direct_with_gemini(
                             )
                             if len(retry_issues) < len(issues):
                                 logger.info(f"[{job_id}] Quality retry succeeded on {retry_meta.get('model')} ({issues} -> {retry_issues})")
-                                return retried
+                                translated_b = retried
                         except Exception as rex:
                             logger.debug(f"[{job_id}] Quality retry failed: {rex}")
 
+            if not api_key.startswith(("AQ.Test", "AIzaTest")):
+                problem = _answer_problem(
+                    translated_b, batch_src, is_target_greek,
+                    expected_pages=expected_pnums if len(expected_pnums) >= 2 else None, translating=True)
+                if problem:
+                    if problem.startswith(("missing_pages", "truncated")):
+                        recovered = await _bisect_direct(problem)
+                        if recovered is not None:
+                            return recovered
+                    raise _BadAnswerError(f"Unusable translation answer: {problem}")  # the caller's fallback translates
             return translated_b
+
+        from backend import translator as _free_engine
+        # looked up at run time: () matches nothing if the files were updated under a still-running older server
+        TranslationUnavailableError = getattr(_free_engine, "TranslationUnavailableError", ())
 
         async def _worker(b_idx: int, b_items: list[tuple[int, str]]):
             nonlocal completed, pages_done
@@ -2446,6 +2670,8 @@ async def translate_and_polish_direct_with_gemini(
                         translated_b = await _translate_items_reliably(b_items, prev_tail=prev_tail)
                         last_ex = None
                         break
+                    except TranslationUnavailableError:
+                        raise  # the free engine was the fallback already: asking it again only delays the error
                     except (PermissionError, DailyQuotaExhaustedError) as p_or_q:
                         if isinstance(p_or_q, DailyQuotaExhaustedError) and quota_behavior == "fallback":
                             logger.warning(
@@ -2497,7 +2723,7 @@ async def translate_and_polish_direct_with_gemini(
                 current_step=step_msg,
             )
 
-        await asyncio.gather(*(_worker(i, b) for i, b in enumerate(batches)))
+        await gather_or_cancel(_worker(i, b) for i, b in enumerate(batches))
 
     if checkpoint_file.exists():
         try:
@@ -2511,13 +2737,17 @@ async def translate_and_polish_direct_with_gemini(
             continue
         first_pn = batches[res_idx][0][0] if batches[res_idx] else None
         prev_r = dedup_results[-1] if dedup_results else ""
-        cleaned_r = _deduplicate_batch_boundary(prev_r, r.strip(), expected_first_page=first_pn)
+        cleaned_r = _deduplicate_batch_boundary(
+            prev_r, r.strip(), expected_first_page=first_pn,
+            source_prev="\n\n".join(t for _, t in batches[res_idx - 1]) if res_idx else "",
+            source_curr="\n\n".join(t for _, t in batches[res_idx]),
+        )
         if cleaned_r:
             dedup_results.append(cleaned_r)
 
     final_text = "\n\n".join(dedup_results)
-    final_text = sanitize_ai_output(final_text)
-    final_text = apply_glossary(final_text, target_lang, style=style)
+    final_text = sanitize_ai_output(final_text, source_text=full_original)
+    final_text = apply_glossary(final_text, target_lang, style=style, translated=True)
     if target_lang.lower() in ("greek", "el"):
         from backend.typography import format_greek_typography
         final_text = format_greek_typography(final_text)

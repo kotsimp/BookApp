@@ -38,9 +38,8 @@ class TestTTSAudiobookDeep(unittest.TestCase):
         self.assertIn("greek", VOICES)
         self.assertIn("english", VOICES)
         self.assertIn("Nestoras (Male)", VOICES["greek"])
-        self.assertIn("Athina (Female)", VOICES["greek"])
+        self.assertNotIn("Athina (Female)", VOICES["greek"])  # removed: Microsoft refuses most of that voice's requests
         self.assertEqual(VOICES["greek"]["Nestoras (Male)"], "el-GR-NestorasNeural")
-        self.assertEqual(VOICES["greek"]["Athina (Female)"], "el-GR-AthinaNeural")
 
         self.assertIn("Guy (Male)", VOICES["english"])
         self.assertIn("Jenny (Female)", VOICES["english"])

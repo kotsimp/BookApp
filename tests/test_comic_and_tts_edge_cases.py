@@ -146,7 +146,7 @@ class TestComicAndTTSEdgeCases(unittest.TestCase):
         print("-> 3. Testing TTS voice resolution, text cleaning, preview safety, timeouts & temp cleanup...")
         # 3a. Case-insensitive language & raw Edge-TTS voice code resolution
         self.assertEqual(tts._resolve_voice_code("Greek", "Nestoras (Male)"), "el-GR-NestorasNeural")
-        self.assertEqual(tts._resolve_voice_code("EL", "el-GR-AthinaNeural"), "el-GR-AthinaNeural")
+        self.assertEqual(tts._resolve_voice_code("EL", "el-GR-AthinaNeural"), "el-GR-NestorasNeural")  # removed voice
         self.assertEqual(tts._resolve_voice_code("English", "aria (female)"), "en-US-AriaNeural")
 
         # 3b. None-safe split_into_voice_segments

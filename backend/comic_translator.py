@@ -15,6 +15,7 @@ Features:
 import os
 import re
 import json
+import shutil
 import uuid
 import logging
 import asyncio
@@ -25,8 +26,10 @@ import pymupdf as fitz
 from PIL import Image
 
 from backend.job_manager import update_job, is_job_cancelled
+from backend import translator as _translator
 from backend.translator import _translate_with_retry
 from backend.glossary import apply_glossary
+from backend.exporter import _BookFont, _draw_pdf_text, _plain_emphasis
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +74,7 @@ def _get_condensed_comic_font_path() -> Optional[str]:
 _GREEK_UPPER_TONOS_MAP = str.maketrans("ΆΈΉΊΌΎΏάέήίόύώΐΰ", "ΑΕΗΙΟΥΩΑΕΗΙΟΥΩΪΫ")
 
 
-def sanitize_comic_dialogue(text: str, target_lang: str = "greek") -> str:
+def sanitize_comic_dialogue(text: str, target_lang: str = "greek", source_text: str = "") -> str:
     """
     Cleans and standardizes translated comic speech balloon dialogue:
     - Removes stray HTML tags, LLM tokens, markdown asterisks (*...*), and stray trailing backslashes
@@ -80,16 +83,17 @@ def sanitize_comic_dialogue(text: str, target_lang: str = "greek") -> str:
     - Converts English '?' / '?!' / '??!!' to Greek ';' / ';!' / ';;!!'
     - Applies Greek final-nu rules and guillemets («...»)
     - Fixes stray lowercase letters inside ALL-CAPS comic balloons (e.g. 'ΕΝΑς' -> 'ΕΝΑΣ')
+    ``source_text`` is the balloon's original: a note or tag that it contains is content and stays.
     """
     if not text or not text.strip():
         return ""
     s = text.strip()
 
     from backend.ai_polisher import sanitize_ai_output
-    s = sanitize_ai_output(s)
+    s = sanitize_ai_output(s, source_text=source_text)
 
     # Strip stray markdown emphasis asterisks (*word* or leading * in comic balloons)
-    s = re.sub(r"\*+([^*\n]+?)\*+", r"\1", s)
+    s = _plain_emphasis(s)  # emphasis only: '2*3*4' keeps its signs
     s = re.sub(r"(?:^|\s)\*(?=\S)", lambda m: m.group(0).replace("*", ""), s)
     # Strip stray unescaped trailing backslash from malformed JSON escapes
     s = re.sub(r"\\+\s*$", "", s)
@@ -203,12 +207,68 @@ def _wrap_text_to_width(
     return lines
 
 
+def _balloon_font(path: Optional[str]) -> _BookFont:
+    """The lettering font, with stand-ins for what it lacks (a kept Japanese sound effect, polytonic Greek)."""
+    if path and os.path.exists(path):
+        try:
+            return _BookFont(fitz.Font(fontfile=path), serif=False)
+        except Exception as ex:
+            logger.debug(f"Cannot use comic font {path}: {ex}")
+    return _BookFont(fitz.Font("helv"), serif=False, builtin=True)
+
+
+_BALLOON_REACH = 20.0  # two balloons may grow towards each other by this much together
+
+
+def _separate_text_areas(page: fitz.Page, rects: List[fitz.Rect]) -> List[Tuple[fitz.Rect, fitz.Rect]]:
+    """
+    For each balloon the area of its text and the limit up to which that may grow. Touching captions (common under
+    old comic panels) split the strip they share, so neither is printed into the other. The covers over the original
+    letters keep their full size.
+    """
+    areas = [fitz.Rect(r) for r in rects]
+    for i, a in enumerate(areas):
+        for b in areas[i + 1:]:
+            shared = a & b
+            if shared.is_empty or shared.get_area() > 0.5 * min(a.get_area(), b.get_area()):
+                continue  # apart, or one inside the other
+            if shared.width <= shared.height:
+                left, right = (a, b) if a.x0 + a.x1 <= b.x0 + b.x1 else (b, a)
+                middle = (shared.x0 + shared.x1) / 2.0
+                left.x1, right.x0 = middle, middle
+            else:
+                upper, lower = (a, b) if a.y0 + a.y1 <= b.y0 + b.y1 else (b, a)
+                middle = (shared.y0 + shared.y1) / 2.0
+                upper.y1, lower.y0 = middle, middle
+
+    limits = [fitz.Rect(0, 0, page.rect.width, page.rect.height) for _ in areas]
+    for i, a in enumerate(areas):
+        for j, b in enumerate(areas):
+            if i == j:
+                continue
+            gap_x, gap_y = max(b.x0 - a.x1, a.x0 - b.x1), max(b.y0 - a.y1, a.y0 - b.y1)
+            if max(gap_x, gap_y) < 0 or max(gap_x, gap_y) >= _BALLOON_REACH:
+                continue  # nested, or too far away to be reached
+            limit = limits[i]
+            if gap_x >= gap_y:
+                if b.x0 >= a.x1:
+                    limit.x1 = min(limit.x1, a.x1 + gap_x / 2.0)
+                else:
+                    limit.x0 = max(limit.x0, a.x0 - gap_x / 2.0)
+            elif b.y0 >= a.y1:
+                limit.y1 = min(limit.y1, a.y1 + gap_y / 2.0)
+            else:
+                limit.y0 = max(limit.y0, a.y0 - gap_y / 2.0)
+    return list(zip(areas, limits))
+
+
 def _plan_balloon_layout(
     page: fitz.Page,
     rect: fitz.Rect,
     text: str,
     font_path: str,
     max_fontsize: float = 13.0,
+    limit: Optional[fitz.Rect] = None,
 ) -> Optional[Tuple[str, str, fitz.Font, fitz.Rect, float, List[str], float]]:
     """
     Computes the optimal (font_path, font_name, font_obj, final_box, fontsize, lines, line_h)
@@ -220,19 +280,12 @@ def _plan_balloon_layout(
 
     page_w, page_h = page.rect.width, page.rect.height
     condensed_path = _get_condensed_comic_font_path()
-    try:
-        primary_font = fitz.Font(fontfile=font_path) if (font_path and os.path.exists(font_path)) else fitz.Font("helv")
-    except Exception:
-        primary_font = fitz.Font("helv")
-
-    try:
-        condensed_font = (
-            fitz.Font(fontfile=condensed_path)
-            if (condensed_path and os.path.exists(condensed_path) and condensed_path != font_path)
-            else primary_font
-        )
-    except Exception:
-        condensed_font = primary_font
+    primary_font = _balloon_font(font_path)
+    condensed_font = (
+        _balloon_font(condensed_path)
+        if (condensed_path and os.path.exists(condensed_path) and condensed_path != font_path)
+        else primary_font
+    )
 
     # Candidate layout strategies: (font_path, font_name, font_obj, ex_x, ex_y, sizes, line_mult, allow_break)
     strategies = [
@@ -251,6 +304,8 @@ def _plan_balloon_layout(
             min(page_w - 1.0, rect.x1 + ex_x),
             min(page_h - 1.0, rect.y1 + ex_y),
         )
+        if limit is not None:
+            box &= limit
         inner_w = max(8.0, box.width - 3.0)
         inner_h = max(8.0, box.height - 2.0)
         for fs in sizes:
@@ -274,6 +329,8 @@ def _plan_balloon_layout(
         min(page_w - 1.0, rect.x1 + 10.0),
         min(page_h - 1.0, rect.y1 + 6.0),
     )
+    if limit is not None:
+        box &= limit
     inner_w = max(10.0, box.width - 3.0)
     lines = _wrap_text_to_width(text, fobj, fs, inner_w, allow_word_break=True) or [text]
     needed_h = len(lines) * line_h + 3.0
@@ -307,14 +364,7 @@ def _draw_planned_balloon_text(
         lw = fobj.text_length(ln, fontsize=fs)
         tx = final_box.x0 + max(1.0, (final_box.width - lw) / 2.0)
         ty = start_y + idx * line_h
-        page.insert_text(
-            fitz.Point(tx, ty),
-            ln,
-            fontname=use_fontname,
-            fontsize=fs,
-            color=text_color,
-            overlay=True,
-        )
+        _draw_pdf_text(page, fitz.Point(tx, ty), ln, fobj, fs, use_fontname, text_color)
 
 
 def _fit_and_draw_balloon_text(
@@ -326,9 +376,10 @@ def _fit_and_draw_balloon_text(
     text_color: Tuple[float, float, float],
     max_fontsize: float = 13.0,
     draw_bg: bool = True,
+    limit: Optional[fitz.Rect] = None,
 ) -> bool:
     """Fits, centers, and draws Greek comic dialogue inside a single speech balloon."""
-    plan = _plan_balloon_layout(page, rect, text, font_path, max_fontsize=max_fontsize)
+    plan = _plan_balloon_layout(page, rect, text, font_path, max_fontsize=max_fontsize, limit=limit)
     if plan is None:
         return False
     if draw_bg:
@@ -420,16 +471,60 @@ def _cluster_text_into_balloons(text_blocks: List[Any], reading_direction: str =
 
 def _natural_sort_key(path_obj: Path):
     """Natural sort key so page_2.jpg comes before page_10.jpg."""
-    parts = re.split(r"(\d+)", path_obj.name.lower())
-    return [int(p) if p.isdigit() else p for p in parts]
+    # every folder too: in ch1/01, ch1/02, ch2/01 the file names alone repeat
+    return [
+        [int(p) if p.isdecimal() else p for p in re.split(r"(\d+)", part.lower())]
+        for part in Path(path_obj).parts
+    ]
+
+
+def _open_page_image(path: Path) -> fitz.Document:
+    """A comic page as a document. MuPDF has no WebP decoder: Pillow reads what MuPDF cannot."""
+    if Path(path).suffix.lower() != ".webp":
+        try:
+            return fitz.open(str(path))
+        except Exception as ex:
+            logger.debug(f"MuPDF cannot read {Path(path).name} ({ex}); trying Pillow.")
+    import io
+    with Image.open(path) as im:
+        rgba = im.convert("RGBA")
+    flat = Image.new("RGB", rgba.size, (255, 255, 255))
+    flat.paste(rgba, mask=rgba.getchannel("A"))
+    buf = io.BytesIO()
+    flat.save(buf, "JPEG", quality=94)
+    return fitz.open("jpeg", buf.getvalue())
+
+
+def _is_image_page(page: fitz.Page, text_blocks: List[Any], has_key: bool) -> bool:
+    """
+    A page whose balloons are part of a picture: no text, hidden OCR text over a scan, or (with a key, so that Vision
+    can read it) a scan whose only text is a watermark or page number.
+    """
+    if not text_blocks:
+        return True
+    area = page.rect.get_area()
+    if not any((fitz.Rect(info["bbox"]) & page.rect).get_area() >= 0.7 * area for info in page.get_image_info()):
+        return False
+    visible = sum(
+        1
+        for trace in page.get_texttrace()
+        if trace.get("type") != 3 and trace.get("opacity", 1) > 0.01
+        for char in trace.get("chars", ())
+        if chr(char[0]).isalpha()
+    )
+    return visible == 0 or (has_key and visible < 25)
 
 
 def _safe_extract_zip(zf, extract_dir: Path) -> None:
     """Safely extracts ZIP/CBZ archive preventing Zip Slip path traversal."""
     root_resolved = extract_dir.resolve()
+    unpacked = 0
     for member in zf.infolist():
         if member.is_dir():
             continue
+        unpacked += member.file_size
+        if unpacked > 2 * 1024 ** 3:
+            raise ValueError("The comic archive is too large when unpacked (over 2 GB).")
         target = (extract_dir / member.filename).resolve()
         try:
             target.relative_to(root_resolved)
@@ -437,7 +532,7 @@ def _safe_extract_zip(zf, extract_dir: Path) -> None:
             raise ValueError(f"Unsafe Zip Slip entry detected in CBZ archive: {member.filename}")
         target.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(member, "r") as src, open(target, "wb") as dst:
-            dst.write(src.read())
+            shutil.copyfileobj(src, dst, 1024 * 1024)
 
 
 async def _ai_polish_comic_balloons(
@@ -453,7 +548,7 @@ async def _ai_polish_comic_balloons(
     if not balloons or not api_key:
         return [b["draft"] for b in balloons]
 
-    from backend.ai_polisher import is_gemini_quota_exhausted, trip_gemini_quota_exhaustion, DailyQuotaExhaustedError
+    from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError
     if is_gemini_quota_exhausted() and not (api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest")):
         if quota_behavior == "wait":
             raise DailyQuotaExhaustedError(
@@ -484,8 +579,6 @@ async def _ai_polish_comic_balloons(
     if not dialogue_inputs:
         return [b["draft"] for b in balloons]
 
-    import urllib.request
-    import urllib.error
     if is_greek:
         prompt = (
             "Είσαι έμπειρος επιμελητής και μεταφραστής εκδόσεων Graphic Novels, Comics και Manga. "
@@ -493,134 +586,52 @@ async def _ai_polish_comic_balloons(
             "1. ΣΥΝΤΟΜΙΑ: Κράτησε τις ατάκες περιεκτικές και κοφτές ώστε να χωρούν άνετα στα μπαλόνια διαλόγου χωρίς να ξεχειλίζουν. "
             "2. ΖΩΝΤΑΝΙΑ & ΥΦΟΣ: Χρησιμοποίησε φυσικό, σύγχρονο προφορικό λόγο, διατηρώντας το χιούμορ, την ένταση, τα επιφωνήματα και τον ιδιαίτερο χαρακτήρα των ηρώων. "
             "3. ΕΞΑΛΕΙΨΗ ΑΓΓΛΙΣΜΩΝ: Απόδωσε ιδιωματισμούς με ισοδύναμες ελληνικές εκφράσεις και απέφυγε κατά λέξη μεταφράσεις. "
-            "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ έναν έγκυρο πίνακα JSON με αντικείμενα: [{\"id\": 1, \"polished\": \"τελική ατάκα στα ελληνικά\"}]."
+            "Σου δίνονται οι πρωτότυπες ατάκες (<SOURCE_REFERENCE>) και τα προσχέδιά τους (<DRAFT_TO_POLISH>), αριθμημένα ως ⟦n⟧. "
+            "Επίστρεψε ΑΠΟΚΛΕΙΣΤΙΚΑ όλες τις τελικές ατάκες με τους ίδιους δείκτες ⟦n⟧, μία ανά μπλοκ."
         )
     else:
         prompt = (
             f"You are an expert Graphic Novel, Comic, and Manga dialogue editor. "
             f"Polish the following speech balloon drafts in {target_lang.capitalize()} so they read naturally, idiomatically, and concisely inside speech bubbles. "
-            f"Keep lines punchy, preserve character voice and exclamations, and return ONLY a valid JSON array of objects: "
-            f'[{{"id": 1, "polished": "final dialogue line in {target_lang.capitalize()}"}}].'
+            f"Keep lines punchy, preserve character voice and exclamations. You receive the original lines "
+            f"(<SOURCE_REFERENCE>) and their drafts (<DRAFT_TO_POLISH>), numbered ⟦n⟧. Return ONLY all the final lines, "
+            f"in {target_lang.capitalize()}, with the same ⟦n⟧ markers, one per block."
         )
 
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": f"{prompt}\n\nDIALOGUES:\n{json.dumps(dialogue_inputs, ensure_ascii=False, indent=2)}"}
-            ]
-        }],
-        "generationConfig": {
-            "temperature": 0.3,
-            "responseMimeType": "application/json",
-            "maxOutputTokens": 2048,
-        }
-    }
+    from backend.ai_polisher import _answer_problem, _call_gemini_api
+    from backend.ai_segment_translator import parse_segments
 
-    def _fetch_sync(req_obj):
-        with urllib.request.urlopen(req_obj, timeout=15) as r:
-            return r.read().decode("utf-8")
-
-    from backend.gemini_key_pool import GeminiKeyPool
-    pool_keys = GeminiKeyPool.get_keys()
-    initial_key = (api_key or "").strip()
-    allow_pool_rotation = (not initial_key) or (initial_key in pool_keys)
-
-    for model in [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-    ]:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"  # key in header only
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
+    ids = [d["id"] for d in dialogue_inputs]
+    sources = "\n\n".join(f"⟦{d['id']}⟧ {' '.join(str(d['source']).split())}" for d in dialogue_inputs)
+    drafts = "\n\n".join(f"⟦{d['id']}⟧ {' '.join(str(d['draft']).split())}" for d in dialogue_inputs)
+    content = f"<SOURCE_REFERENCE>\n{sources}\n</SOURCE_REFERENCE>\n\n<DRAFT_TO_POLISH>\n{drafts}\n</DRAFT_TO_POLISH>"
+    kept = [sanitize_comic_dialogue(b["draft"], target_lang, source_text=b.get("source", "")) for b in balloons]
+    try:
+        # the shared client: pool rotation, rate limits, cache, and only complete answers
+        out = await _call_gemini_api(content, api_key, prompt, temperature=0.3,
+                                     cache_gate=lambda o: len(parse_segments(o, ids)) == len(ids))
+    except DailyQuotaExhaustedError:
+        if quota_behavior == "wait":
+            raise DailyQuotaExhaustedError(
+                "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
             )
-            loop = asyncio.get_running_loop()
-            resp_raw = await loop.run_in_executor(None, _fetch_sync, req)
-            data = json.loads(resp_raw)
-            from backend.ai_polisher import _extract_gemini_text_and_reason, record_gemini_usage
-            record_gemini_usage(data)
-            raw_text, _ = _extract_gemini_text_and_reason(data)
-            if not raw_text:
-                continue
-            res_list = json.loads(raw_text)
-            polished_map = {
-                item["id"]: sanitize_comic_dialogue(str(item.get("polished", "")).strip(), target_lang)
-                for item in res_list if isinstance(item, dict) and "id" in item
-            }
+        return kept
+    except PermissionError:
+        raise
+    except Exception as ex:
+        logger.warning(f"Comic AI polish skipped for this page: {ex}")
+        return kept
 
-            results = []
-            for i, b in enumerate(balloons):
-                item_id = i + 1
-                pol = polished_map.get(item_id)
-                results.append(pol if pol else sanitize_comic_dialogue(b["draft"], target_lang))
-            return results
-        except urllib.error.HTTPError as h_err:
-            if h_err.code in (401, 403):
-                if allow_pool_rotation:
-                    GeminiKeyPool.mark_key_exhausted(api_key, 86400.0, reason=f"Auth error ({h_err.code})")
-                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
-                    if next_pool_key:
-                        logger.warning(f"[Gemini Key Pool] Comic Polish rotated from key {api_key[:6]}... to {next_pool_key[:6]}... on auth error")
-                        api_key = next_pool_key
-                        continue
-                raise PermissionError(f"Gemini API auth error ({h_err.code})")
-            if h_err.code == 429:
-                err_body = ""
-                try:
-                    err_body = h_err.read().decode("utf-8")
-                except Exception:
-                    pass
-                err_low = err_body.lower()
-                if (
-                    "requests per day limit exceeded" in err_low
-                    or "quota exceeded" in err_low
-                    or "resource_exhausted" in err_low
-                    or "per day" in err_low
-                    or "retrydelay" in err_low
-                ):
-                    from backend.gemini_key_pool import GeminiKeyPool
-                    GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
-                    next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
-                    if next_pool_key:
-                        logger.warning(f"[Gemini Key Pool] Comic Polish rotated to next key {next_pool_key[:6]}...")
-                        api_key = next_pool_key
-                        continue
-                    logger.warning("Gemini daily quota exhausted during comic polish across all keys. Tripping circuit breaker.")
-                    trip_gemini_quota_exhaustion(3600.0)
-                    if quota_behavior == "wait":
-                        raise DailyQuotaExhaustedError(
-                            "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
-                        )
-                    break
-            logger.debug(f"AI Polish attempt with {model} failed: {h_err}")
-        except DailyQuotaExhaustedError:
-            raise
-        except Exception as ex:
-            err_low = str(ex).lower()
-            if "requests per day limit exceeded" in err_low or "quota exceeded" in err_low or "resource_exhausted" in err_low:
-                from backend.gemini_key_pool import GeminiKeyPool
-                GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
-                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
-                if next_pool_key:
-                    logger.warning(f"[Gemini Key Pool] Comic Polish rotated to next key {next_pool_key[:6]}...")
-                    api_key = next_pool_key
-                    continue
-                trip_gemini_quota_exhaustion(3600.0)
-                if quota_behavior == "wait":
-                    raise DailyQuotaExhaustedError(
-                        "Εξαντλήθηκε το ημερήσιο όριο του Gemini API κατά το Comic AI Polish. Η εργασία σταμάτησε σε αναμονή ανανέωσης ορίου (quota_behavior='wait')."
-                    )
-                break
-            logger.debug(f"AI Polish attempt with {model} failed: {ex}")
-
-    return [sanitize_comic_dialogue(b["draft"], target_lang) for b in balloons]
+    polished = parse_segments(out, ids)
+    results = []
+    for i, b in enumerate(balloons):
+        line = polished.get(i + 1, "")
+        if line and not _answer_problem(line, b["draft"], is_greek):
+            line = sanitize_comic_dialogue(line, target_lang, source_text=b.get("source", ""))
+        else:
+            line = ""
+        results.append(line or kept[i])
+    return results
 
 
 async def _translate_page_vector(
@@ -640,20 +651,28 @@ async def _translate_page_vector(
 
     # 1. Translate all balloon texts asynchronously
     translated_balloons = []
+    ready: Dict[str, str] = {}
+    batched = False
     for c in clusters:
         orig = c["text"]
         if not orig:
             translated_balloons.append("")
             continue
         try:
-            tr = await _translate_with_retry(orig, source_lang, target_lang)
-            tr = apply_glossary(tr, target_lang, style="comic")
-            tr = sanitize_comic_dialogue(tr, target_lang)
+            if not batched and getattr(_translator, "google_is_refusing", lambda: False)():
+                batched = True  # one request for the page's balloons instead of one each
+                ready = await _translator.failover_in_batches([b["text"] for b in clusters if b["text"]],
+                                                              source_lang, target_lang)
+            tr = ready.get(orig) or await _translate_with_retry(orig, source_lang, target_lang)
+            tr = apply_glossary(tr, target_lang, style="comic", translated=True)
+            tr = sanitize_comic_dialogue(tr, target_lang, source_text=orig) or orig  # never an erased balloon
             translated_balloons.append(tr)
             page_dialogues.append(tr)
             # Gentle pacing to avoid rapid burst rate limits on public translation endpoints
             await asyncio.sleep(0.04)
         except Exception as ex:
+            if isinstance(ex, getattr(_translator, "TranslationUnavailableError", ())):
+                raise  # never leave balloons untranslated in a job reported as done
             logger.warning(f"Error translating balloon '{orig[:30]}': {ex}")
             translated_balloons.append(orig)
             page_dialogues.append(orig)
@@ -686,13 +705,13 @@ async def _translate_page_vector(
     page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
     # 3. Typeset Greek translated text inside each balloon with guaranteed non-blank fit
+    rooms = _separate_text_areas(page, [c["rect"] + (-3, -2, 3, 2) for c in clusters])
     for i, c in enumerate(clusters):
         greek_text = translated_balloons[i]
         if not greek_text.strip():
             continue
 
-        bbox = c["rect"]
-        target_box = fitz.Rect(bbox.x0 - 3, bbox.y0 - 2, bbox.x1 + 3, bbox.y1 + 2)
+        target_box, limit = rooms[i]
         bg_col = bg_colors[i]
         luminance = 0.299 * bg_col[0] + 0.587 * bg_col[1] + 0.114 * bg_col[2]
         text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
@@ -706,6 +725,7 @@ async def _translate_page_vector(
             text_color=text_color,
             max_fontsize=15.0,
             draw_bg=False,
+            limit=limit,
         )
 
     return page_dialogues
@@ -908,7 +928,10 @@ async def _detect_comic_balloons_vision_async(
         "If the page has ONLY artwork and NO text at all, return []."
     )
 
-    from backend.ai_polisher import _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason, is_gemini_quota_exhausted, trip_gemini_quota_exhaustion
+    from backend.ai_polisher import (
+        _INTERRUPTED_REASONS, _LITERARY_SAFETY_SETTINGS, _extract_gemini_text_and_reason, is_gemini_quota_exhausted,
+        trip_gemini_quota_exhaustion,
+    )
 
     if api_key.startswith("AQ.Test") or api_key.startswith("AIzaTest"):
         if status_out is not None:
@@ -956,6 +979,12 @@ async def _detect_comic_balloons_vision_async(
     if _CACHED_VISION_MODEL and _CACHED_VISION_MODEL in vision_models and "lite" not in _CACHED_VISION_MODEL.lower():
         vision_models = [_CACHED_VISION_MODEL] + [m for m in vision_models if m != _CACHED_VISION_MODEL]
 
+    def _incomplete(text_resp: str, finish_reason: str, parsed: Optional[List[Dict[str, Any]]]) -> bool:
+        if finish_reason == "MAX_TOKENS" or finish_reason in _INTERRUPTED_REASONS:
+            return True
+        boxes = len(re.findall(r'"(?:box_2d|box|bbox|bounding_box)"\s*:', text_resp))
+        return parsed is not None and len(parsed) < boxes  # objects the lenient parser could not save
+
     detected_items: List[Dict[str, Any]] = []
     fallback_corrupted_items: Optional[List[Dict[str, Any]]] = None
     succeeded = False
@@ -969,12 +998,13 @@ async def _detect_comic_balloons_vision_async(
             item_copy = dict(it)
             for tk in ("translated_text", "translation", "greek_text"):
                 if isinstance(item_copy.get(tk), str) and item_copy[tk].strip():
-                    item_copy[tk] = sanitize_comic_dialogue(item_copy[tk], target_lang)
+                    item_copy[tk] = sanitize_comic_dialogue(
+                        item_copy[tk], target_lang, source_text=str(item_copy.get("original_text") or ""))
             cleaned_list.append(item_copy)
         return cleaned_list
 
     try:
-        from backend.gemini_key_pool import GeminiKeyPool, mask_api_key
+        from backend.gemini_key_pool import GeminiKeyPool, mask_api_key, parse_gemini_error
         pool_keys = GeminiKeyPool.get_keys()
         initial_key = (api_key or "").strip()
         if not initial_key or (not initial_key.startswith(("AQ.Test", "AIzaTest")) and GeminiKeyPool.is_key_exhausted(initial_key)):
@@ -984,11 +1014,24 @@ async def _detect_comic_balloons_vision_async(
 
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         # Up to 2 rounds so transient 429/503 spikes can recover cleanly
-        for attempt_round in range(2):
-            if succeeded:
-                break
+        tried_keys = {api_key}
+        out_of_quota = False
+        round_wait = 4.0
+        attempt_round = 0
+        while attempt_round < 2 and not succeeded and not out_of_quota:
+            candidates = GeminiKeyPool.get_active_models_for_key(api_key, vision_models)
+            if not candidates:  # every Vision model's own allowance is used up on this key
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=tried_keys) if allow_pool_rotation else None
+                if not next_pool_key:
+                    last_error = "quota of every Vision model is used up"
+                    break
+                api_key = next_pool_key
+                tried_keys.add(api_key)
+                headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+                continue
+            attempt_round += 1
             rate_limited_round = False
-            for model in list(vision_models):
+            for model in candidates:
                 if model in _DEAD_VISION_MODELS:
                     continue
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"  # key in header only
@@ -1016,6 +1059,9 @@ async def _detect_comic_balloons_vision_async(
                                 last_error = f"{model}: empty parts ({finish_reason})"
                                 continue
                             parsed = _parse_vision_json(text_resp)
+                            if _incomplete(text_resp, finish_reason, parsed):
+                                last_error = f"{model}: incomplete answer ({finish_reason or 'damaged JSON'})"
+                                continue  # the balloons after the cut would stay untranslated
                             if parsed is not None:
                                 # Quality gate: if mixed-script corruption detected (e.g. Armenian/Cyrillic/Latin in Greek),
                                 # save as last-resort fallback and try next Vision model first
@@ -1080,9 +1126,9 @@ async def _detect_comic_balloons_vision_async(
                                 async with session.post(url, json=retry_payload, headers=headers, timeout=aiohttp.ClientTimeout(total=45)) as retry_resp:
                                     if retry_resp.status == 200:
                                         data = await retry_resp.json()
-                                        text_resp, _ = _extract_gemini_text_and_reason(data)
+                                        text_resp, finish_reason = _extract_gemini_text_and_reason(data)
                                         parsed = _parse_vision_json(text_resp)
-                                        if parsed is not None:
+                                        if parsed is not None and not _incomplete(text_resp, finish_reason, parsed):
                                             parsed = _clean_items(parsed)
                                             if "lite" not in m_low:
                                                 _CACHED_VISION_MODEL = model
@@ -1106,29 +1152,35 @@ async def _detect_comic_balloons_vision_async(
                         elif resp.status in (429, 503):
                             rate_limited_round = True
                             err_detail = await resp.text()
-                            last_error = f"{model}: HTTP {resp.status} (quota/demand limit)"
-                            err_low = err_detail.lower()
-                            if (
-                                "requests per day limit exceeded" in err_low
-                                or "quota exceeded" in err_low
-                                or "resource_exhausted" in err_low
-                                or "per day" in err_low
-                                or "retrydelay" in err_low
-                            ):
-                                from backend.gemini_key_pool import GeminiKeyPool
-                                GeminiKeyPool.mark_key_exhausted(api_key, 3600.0, reason=err_low[:120])
-                                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys={api_key})
+                            info = parse_gemini_error(resp.status, err_detail)
+                            category, delay = info.get("category"), info.get("retry_delay_sec")
+                            why = ("daily quota used up" if category in ("QUOTA_EXCEEDED_DAILY_KEY", "QUOTA_EXCEEDED_DAILY_MODEL")
+                                   else "not in this plan" if category == "MODEL_TIER_RESTRICTED"
+                                   else "rate limit" if resp.status == 429 else "overloaded")
+                            last_error = f"{model}: HTTP {resp.status} ({why})"  # "quota" means the daily reset
+                            if category == "QUOTA_EXCEEDED_DAILY_KEY":
+                                GeminiKeyPool.mark_key_exhausted(api_key, delay or 3600.0, reason=err_detail[:120])
+                                next_pool_key = (GeminiKeyPool.get_active_key(exclude_keys=tried_keys)
+                                                 if allow_pool_rotation else None)
                                 if next_pool_key:
-                                    logger.warning(f"[Gemini Key Pool] Comic Vision rotated to next key {next_pool_key[:6]}...")
+                                    logger.warning(f"[Gemini Key Pool] Comic Vision rotated to next key {mask_api_key(next_pool_key)}...")
                                     api_key = next_pool_key
+                                    tried_keys.add(api_key)
                                     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
                                     continue
                                 logger.warning("Gemini daily quota exhausted in comic Vision across all pool keys. Tripping circuit breaker.")
-                                trip_gemini_quota_exhaustion(3600.0)
+                                trip_gemini_quota_exhaustion(delay or 3600.0)
+                                out_of_quota = True
                                 break
+                            if category in ("QUOTA_EXCEEDED_DAILY_MODEL", "MODEL_TIER_RESTRICTED"):
+                                cooldown = delay if category == "QUOTA_EXCEEDED_DAILY_MODEL" and delay else 86400.0
+                                GeminiKeyPool.mark_model_exhausted(api_key, model, cooldown, reason=err_detail[:120])
+                            elif resp.status == 429:
+                                # a per-minute limit: the next model now, a second round after the wait Google names
+                                round_wait = max(round_wait, min(30.0, delay or 4.0))
                             if _CACHED_VISION_MODEL == model:
                                 _CACHED_VISION_MODEL = None
-                            await asyncio.sleep(1.0)
+                            await asyncio.sleep(0.3)
                             continue
                         else:
                             last_error = f"{model}: HTTP {resp.status}"
@@ -1139,8 +1191,14 @@ async def _detect_comic_balloons_vision_async(
                     logger.debug(f"Vision model {model} attempt failed: {ex}")
                     await asyncio.sleep(0.3)
 
-            if not succeeded and rate_limited_round and attempt_round == 0:
-                await asyncio.sleep(4.0)
+            if not succeeded and not out_of_quota and rate_limited_round and attempt_round == 1:
+                next_pool_key = GeminiKeyPool.get_active_key(exclude_keys=tried_keys) if allow_pool_rotation else None
+                if next_pool_key:  # the limits are per project: another key need not wait
+                    api_key = next_pool_key
+                    tried_keys.add(api_key)
+                    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+                else:
+                    await asyncio.sleep(round_wait)
     finally:
         if owns_session:
             await session.close()
@@ -1175,9 +1233,9 @@ def _render_vision_balloons_on_page(
 
     page_dialogues: List[str] = []
     w, h = page.rect.width, page.rect.height
+    balloons = []
     planned_balloons = []
 
-    # Pass 1: Plan every balloon's layout and draw all opaque background rectangles first
     for item in detected_items:
         if not isinstance(item, dict):
             continue
@@ -1191,7 +1249,8 @@ def _render_vision_balloons_on_page(
             or ""
         )
         raw_greek_text = str(raw_val).strip() if not isinstance(raw_val, (list, dict)) else ""
-        greek_text = sanitize_comic_dialogue(raw_greek_text, target_lang)
+        greek_text = sanitize_comic_dialogue(
+            raw_greek_text, target_lang, source_text=str(item.get("original_text") or ""))
         if not greek_text:
             continue
         ymin, xmin, ymax, xmax = box
@@ -1211,7 +1270,12 @@ def _render_vision_balloons_on_page(
         luminance = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
         text_color = (1.0, 1.0, 1.0) if luminance < 0.4 else (0.05, 0.05, 0.05)
 
-        plan = _plan_balloon_layout(page, rect, greek_text, font_path, max_fontsize=13.0)
+        balloons.append((rect, greek_text, bg_rgb, text_color))
+
+    # Pass 1: Plan every balloon's layout and draw all opaque background rectangles first
+    rooms = _separate_text_areas(page, [b[0] for b in balloons])
+    for (rect, greek_text, bg_rgb, text_color), (area, limit) in zip(balloons, rooms):
+        plan = _plan_balloon_layout(page, area, greek_text, font_path, max_fontsize=13.0, limit=limit)
         if plan is None:
             continue
 
@@ -1239,6 +1303,7 @@ async def translate_comic_document(
     reading_direction: str = "ltr",
     progress_callback: Optional[Callable] = None,
     quota_behavior: str = "wait",
+    notes: Optional[List[str]] = None,
 ) -> str:
     """
     Main entry point for Graphic Novel / Comic translation.
@@ -1290,7 +1355,7 @@ async def translate_comic_document(
             cbz_pdf = fitz.open()
             try:
                 for img_p in image_files:
-                    with fitz.open(str(img_p)) as img_doc:
+                    with _open_page_image(img_p) as img_doc:
                         pdf_bytes = img_doc.convert_to_pdf()
                     with fitz.open("pdf", pdf_bytes) as page_pdf:
                         page_rect = page_pdf[0].rect
@@ -1311,7 +1376,8 @@ async def translate_comic_document(
 
         # Check if this comic is primarily scanned/image-only
         has_vector_text = any(
-            len([b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]]) > 0
+            not _is_image_page(
+                doc[i], [b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]], False)
             for i in range(min(5, total_pages))
         )
         if not has_vector_text and not resolved_api_key:
@@ -1325,6 +1391,7 @@ async def translate_comic_document(
         all_document_dialogues: List[Tuple[int, List[str]]] = [(i + 1, []) for i in range(total_pages)]
         vision_pages_to_process: List[Tuple[int, bytes]] = []
         completed_count = 0
+        untranslated_pages: List[int] = []
 
         # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
         for page_idx in range(total_pages):
@@ -1335,7 +1402,9 @@ async def translate_comic_document(
             raw_blocks = page.get_text("blocks")
             text_blocks = [b for b in raw_blocks if len(b) >= 5 and b[4].strip() and b[1] != b[3]]
 
-            if text_blocks:
+            if not _is_image_page(page, text_blocks, bool(resolved_api_key)):
+                if not resolved_api_key and _is_image_page(page, text_blocks, True):
+                    untranslated_pages.append(page_idx + 1)  # only its few words of text can be read without Vision
                 clusters = _cluster_text_into_balloons(text_blocks, reading_direction=reading_direction)
                 logger.info(f"[{job_id}] Page {page_idx + 1}: found {len(clusters)} speech balloons (dir={reading_direction}).")
                 page_dialogues = await _translate_page_vector(
@@ -1357,6 +1426,7 @@ async def translate_comic_document(
                     vision_pages_to_process.append((page_idx, _encode_comic_page_jpeg(page)))
                 else:
                     logger.warning(f"[{job_id}] Page {page_idx + 1} is image-only and no Gemini API key was provided.")
+                    untranslated_pages.append(page_idx + 1)
                     completed_count += 1
 
         # Pass 2: Execute Gemini Vision balloon detection 3 pages in parallel over a shared HTTP session
@@ -1366,14 +1436,16 @@ async def translate_comic_document(
             out_dir_cp = Path(output_path).parent
             out_dir_cp.mkdir(parents=True, exist_ok=True)
             cp_file = out_dir_cp / ".comic_vision_checkpoint.json"
-            cp_pages: Dict[str, List[Dict[str, Any]]] = {}
+            cp_pages: Dict[str, Any] = {}
+            cp_languages = f"{source_lang}>{target_lang}".lower()
             if cp_file.is_file():
                 try:
                     loaded_cp = json.loads(cp_file.read_text(encoding="utf-8"))
-                    if isinstance(loaded_cp, dict):
-                        cp_pages = loaded_cp
+                    if isinstance(loaded_cp, dict) and loaded_cp.get("_languages", cp_languages) == cp_languages:
+                        cp_pages = loaded_cp  # balloons of another language pair are never reused
                 except Exception:
                     pass
+            cp_pages["_languages"] = cp_languages
 
             cp_lock = asyncio.Lock()
 
@@ -1432,6 +1504,7 @@ async def translate_comic_document(
                             await _save_comic_cp()
                         else:
                             failed_vision_pages += 1
+                            untranslated_pages.append(p_idx + 1)
                             if st_info.get("error"):
                                 last_vision_error = st_info["error"]
                     completed_count += 1
@@ -1443,13 +1516,14 @@ async def translate_comic_document(
                         total_chunks=total_pages,
                     )
 
-                await asyncio.gather(*(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process))
+                from backend.async_utils import gather_or_cancel
+                await gather_or_cancel(_vision_worker(idx, img_b) for idx, img_b in vision_pages_to_process)
 
             total_vision_pages = len(vision_pages_to_process)
             total_detected_balloons = sum(len(v) for v in vision_results.values())
             if failed_vision_pages > 0 and (failed_vision_pages >= max(1, total_vision_pages // 2) or total_detected_balloons == 0):
                 from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError
-                if is_gemini_quota_exhausted() or "quota" in (last_vision_error or "").lower() or "429" in (last_vision_error or ""):
+                if is_gemini_quota_exhausted() or "quota" in (last_vision_error or "").lower():
                     if quota_behavior == "wait":
                         raise DailyQuotaExhaustedError(
                             f"Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. "
@@ -1466,6 +1540,15 @@ async def translate_comic_document(
                     f"({last_vision_error or 'όριο αιτημάτων API 429'}). "
                     f"Η πρόοδος των επιτυχημένων σελίδων αποθηκεύτηκε — περιμένετε λίγα δευτερόλεπτα και πατήστε ξανά Start Translation για συνέχιση!"
                 )
+
+            if failed_vision_pages and quota_behavior == "wait":
+                from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError
+                # "Wait" means no page may stay untranslated for lack of quota
+                if is_gemini_quota_exhausted() or "quota" in (last_vision_error or "").lower():
+                    raise DailyQuotaExhaustedError(
+                        f"Η μετάφραση Vision AI σταμάτησε λόγω εξάντλησης του ημερήσιου ορίου του Gemini Free Tier. "
+                        f"Απομένουν {failed_vision_pages} σελίδες· η πρόοδος αποθηκεύτηκε σε checkpoint!"
+                    )
 
             # Apply detected redactions and Greek text rendering cleanly on the PDF document
             for p_idx, items in sorted(vision_results.items()):
@@ -1484,7 +1567,9 @@ async def translate_comic_document(
         out_dir = Path(output_path).parent
         out_dir.mkdir(parents=True, exist_ok=True)
         final_comic_pdf = out_dir / f"{stem}_translated_{target_lang}.pdf"
-        doc.save(str(final_comic_pdf))
+        from backend.pdf_text_names import fix_text_names
+        fix_text_names(doc, "\n".join(t for _p, texts in all_document_dialogues for t in texts))
+        doc.save(str(final_comic_pdf), garbage=3)  # stand-in fonts once, not on every page
     finally:
         if doc is not None:
             try:
@@ -1497,7 +1582,6 @@ async def translate_comic_document(
             except Exception:
                 pass
         if temp_extract_dir_to_clean and temp_extract_dir_to_clean.exists():
-            import shutil
             shutil.rmtree(temp_extract_dir_to_clean, ignore_errors=True)
 
     # Pre-generate CBZ archive as well for seamless instant download
@@ -1515,11 +1599,18 @@ async def translate_comic_document(
         if d_list:
             for d in d_list:
                 dialogue_script_lines.append(f"— {d}\n")
+        elif p_num in untranslated_pages:
+            dialogue_script_lines.append("[Η σελίδα δεν μεταφράστηκε]\n")
         else:
             dialogue_script_lines.append("[Εικονογράφηση / Χωρίς κείμενο διαλόγου]\n")
 
     full_dialogue_text = "\n".join(dialogue_script_lines)
     Path(output_path).write_text(full_dialogue_text, encoding="utf-8")
+
+    if untranslated_pages and notes is not None:
+        pages_text = ", ".join(map(str, sorted(untranslated_pages)[:10])) + (" …" if len(untranslated_pages) > 10 else "")
+        reason = "Vision AI failed; translate again to retry them" if resolved_api_key else "image-only pages need a Gemini API key"
+        notes.append(f"{len(untranslated_pages)} page(s) left untranslated ({pages_text}): {reason}.")
 
     update_job(
         job_id,

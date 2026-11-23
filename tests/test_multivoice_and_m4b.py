@@ -1,7 +1,7 @@
 """
 test_multivoice_and_m4b.py - Unit & Integration Tests for Multi-Voice Narration & M4B Audiobook Features.
 Tests:
-1. Multi-voice speaker tag parsing ([Nestoras]: ..., [Athina]: ...).
+1. Multi-voice speaker tag parsing ([Nestoras]: ..., [Aria]: ...).
 2. Automatic dialogue alternation (narrator vs characters).
 3. ID3v2 & cover art metadata tagging via mutagen.
 4. Real M4B (MP4/AAC) container export.
@@ -30,11 +30,11 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
         print("-> 1. Testing Explicit Speaker Tag Segmentation...")
         script = (
             "[Narrator]: Το διαστημόπλοιο πλησίαζε τον άγνωστο πλανήτη.\n"
-            "[Athina]: Βλέπω κάτι παράξενο στις οθόνες, είπε ανήσυχη.\n"
+            "[Aria]: Βλέπω κάτι παράξενο στις οθόνες, είπε ανήσυχη.\n"
             "[Nestoras]: Κράτα σταθερή πορεία, απάντησε ο κυβερνήτης."
         )
         default_voice = "el-GR-NestorasNeural"
-        dialogue_voice = "el-GR-AthinaNeural"
+        dialogue_voice = "en-US-AriaNeural"
 
         segments = split_into_voice_segments(script, default_voice, dialogue_voice)
         self.assertEqual(len(segments), 3)
@@ -43,7 +43,7 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
         self.assertIn("Το διαστημόπλοιο", segments[0][0])
         self.assertEqual(segments[0][1], default_voice)
 
-        # 2. Athina segment
+        # 2. Aria segment
         self.assertIn("Βλέπω κάτι παράξενο", segments[1][0])
         self.assertEqual(segments[1][1], dialogue_voice)
 
@@ -62,7 +62,7 @@ class TestMultiVoiceAndM4B(unittest.TestCase):
             "«Δεν φοβάμαι το σκοτάδι», ψιθύρισε η Μαρία."
         )
         narrator_voice = "el-GR-NestorasNeural"
-        dialogue_voice = "el-GR-AthinaNeural"
+        dialogue_voice = "en-US-AriaNeural"
 
         segments = split_into_voice_segments(dialogue_text, narrator_voice, dialogue_voice)
         self.assertEqual(len(segments), 4)

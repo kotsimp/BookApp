@@ -250,7 +250,9 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
         )
 
         job = create_job("test_auto_res.txt", "test_auto_res.txt", "txt")
-        q_item = add_to_queue(job.job_id, quota_behavior="wait")
+        # Waiting for a reset needs a key: without one the queue always uses the free engine
+        with patch("backend.gemini_key_pool.resolve_gemini_api_key", return_value="AIzaTest-not-real"):
+            q_item = add_to_queue(job.job_id, quota_behavior="wait")
         q_item.status = "waiting_quota"
         update_job(job.job_id, status="waiting_quota")
 
@@ -301,6 +303,42 @@ class TestQuotaBehaviorChoice(unittest.TestCase):
             tmp_txt.unlink(missing_ok=True)
             Path("test_ab_quota.mp3").unlink(missing_ok=True)
             cleanup_test_jobs()
+
+
+class TestStopLabel(unittest.TestCase):
+    """The step of a paused job names the limit that stopped it."""
+
+    def stopped_by(self, error):
+        import asyncio
+        from unittest import mock
+
+        from backend import ai_polisher, job_manager, main
+        from backend.database import db_delete_job
+
+        async def fail(**_kw):
+            raise error
+
+        job = job_manager.create_job("", "book.txt", "txt")
+        try:
+            with mock.patch.object(main, "generate_audiobook", fail), \
+                    mock.patch.object(ai_polisher, "is_gemini_quota_exhausted", return_value=False):
+                asyncio.run(main._run_audiobook(job.job_id, "book.txt", "txt", "english", "Aria (Female)", "book.mp3",
+                                                None, ai_polish=True))
+            return job_manager.get_job(job.job_id).current_step
+        finally:
+            job_manager._jobs.pop(job.job_id, None)
+            db_delete_job(job.job_id)
+
+    def test_a_per_minute_limit_is_not_called_daily(self):
+        step = self.stopped_by(RuntimeError("gemini-3.5-flash: HTTP 429 (rate limit)"))
+        self.assertIn("429", step)
+        self.assertNotIn("ημερήσιο", step)
+
+    def test_a_daily_limit_is_called_daily(self):
+        from backend.ai_polisher import DailyQuotaExhaustedError
+
+        self.assertIn("ημερήσιο", self.stopped_by(DailyQuotaExhaustedError("quota")))
+
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ class InsightsError(Exception):
     """Error with a stable code and a message written for ordinary users."""
 
     MESSAGES = {
-        "unsupported_format": "Αυτός ο τύπος αρχείου δεν υποστηρίζεται για Book Insights. Χρησιμοποιήστε PDF, DOCX, EPUB ή TXT με κείμενο (όχι κόμικ/εικόνες).",
+        "unsupported_format": "Αυτός ο τύπος αρχείου δεν υποστηρίζεται για Book Insights. Χρησιμοποιήστε PDF, DOCX ή EPUB με κείμενο (όχι κόμικ/εικόνες).",
         "extraction_failed": "Δεν ήταν δυνατή η ανάγνωση κειμένου από το έγγραφο. Το αρχείο μπορεί να είναι κατεστραμμένο ή προστατευμένο.",
         "insufficient_text": "Το έγγραφο δεν περιέχει αρκετό αναγνώσιμο κείμενο για αξιόπιστη περίληψη. Αν είναι σαρωμένο (εικόνες), δεν υπάρχει εξαγώγιμο κείμενο.",
         "too_short": "Το έγγραφο είναι πολύ μικρό για σύνοψη: χρειάζεται τουλάχιστον ~1,5 σελίδα ουσιαστικού κειμένου.",
@@ -363,6 +363,9 @@ def split_sections(text: str, max_chars: int = SECTION_CHARS) -> List[str]:
         para = para.strip()
         if not para:
             continue
+        if len(para) > max_chars and buf:  # what came before it stays before it
+            sections.append("\n\n".join(buf))
+            buf, size = [], 0
         while len(para) > max_chars:  # pathological giant paragraph
             sections.append(para[:max_chars])
             para = para[max_chars:]
@@ -394,7 +397,8 @@ async def build_source_material(text: str, api_key: str, session,
         if progress:
             progress(10 + int(60 * done / len(sections)), f"Ανάλυση ενότητας {done}/{len(sections)}…")
 
-    await asyncio.gather(*(_one(i, s) for i, s in enumerate(sections)))
+    from backend.async_utils import gather_or_cancel
+    await gather_or_cancel(_one(i, s) for i, s in enumerate(sections))
     material = "\n\n".join(f"### Section {i + 1} of {len(sections)}\n{n.strip()}" for i, n in enumerate(notes))
     if len(material) > MAX_NOTES_CHARS:  # second-level condensation for very long books
         groups = split_sections(material, MAX_NOTES_CHARS // 3)
@@ -411,8 +415,14 @@ async def build_source_material(text: str, api_key: str, session,
 # Output normalisation & quality checks
 # ---------------------------------------------------------------------------
 
+# A line about the answer, never a sentence of it ("Here is where the story turns" and "Ακολουθεί η εξέγερση" stay)
 _META_LINE_RE = re.compile(
-    r"^\s*(?:\*\*)?(?:word\s*count|λέξεις|αριθμός λέξεων|note|σημείωση|here is|ακολουθεί|this (?:summary|synopsis))\b.*$",
+    r"^\s*(?:\*\*)?(?:"
+    r"(?:word\s*count|αριθμός λέξεων|λέξεις|note|σημείωση)(?:\*\*)?\s*:.*"
+    r"|\(?\s*(?:~\s*)?\d+\s*(?:words|λέξεις)\s*\)?\.?(?:\*\*)?\s*"
+    r"|(?:here is|here's|ακολουθεί)\b.{0,90}:(?:\*\*)?\s*"
+    r"|this (?:summary|synopsis)\b.*"
+    r")$",
     re.IGNORECASE,
 )
 
@@ -426,7 +436,7 @@ def normalize_output(text: str, language: str) -> str:
     out = re.sub(r"^\s*[*•]\s+", "- ", out, flags=re.MULTILINE)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     if language == "english":  # AI stutters such as 'Mechanical Mechanical' (Greek reduplication is left alone)
-        out = re.sub(r"\b([A-Za-z]{4,})\s+\1\b", r"\1", out, flags=re.IGNORECASE)
+        out = re.sub(r"\b(?!that\b)([A-Za-z]{4,})\s+\1\b", r"\1", out, flags=re.IGNORECASE)  # "said that that was"
     if language == "greek":
         try:
             from backend.output_refiner import refine_text_content
@@ -527,7 +537,7 @@ def validate_output(text: str, insight_type: str, language: str, lo: int, hi: in
             critical.append(f"{latin:.0%} of the words are in Latin script; names and titles must be written in Greek")
         elif latin > 0.01:
             warnings.append("a few Latin-script words remain")
-    if re.search(r"</?(?:SOURCE|DOCUMENT|TEXT)[^>]*>|ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ|STRICT RULES|TASK:", text):
+    if re.search(r"</?(?:SOURCE|DOCUMENT|TEXT)[^>]*>|ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ|--- INPUT TEXT|STRICT RULES|TASK:", text):
         critical.append("prompt text leaked into output")
 
     words = _plain_words(text)
@@ -777,6 +787,7 @@ def export_insight(record: Dict[str, Any], job_output_dir: Path, fmt: str) -> Pa
     try:
         if fmt == "docx":
             from docx import Document
+            from backend.exporter import _add_runs
             doc = Document()
             doc.add_heading(heading, level=1)
             for block in re.split(r"\n\s*\n", record["text"]):
@@ -785,9 +796,9 @@ def export_insight(record: Dict[str, Any], job_output_dir: Path, fmt: str) -> Pa
                     if m:
                         doc.add_heading(m.group(2).strip(), level=2 if len(m.group(1)) == 2 else 3)
                     elif re.match(r"^\s*-\s+", ln):
-                        doc.add_paragraph(re.sub(r"\*\*(.+?)\*\*", r"\1", re.sub(r"^\s*-\s+", "", ln)), style="List Bullet")
+                        _add_runs(doc.add_paragraph(style="List Bullet"), re.sub(r"^\s*-\s+", "", ln))
                     elif ln.strip():
-                        doc.add_paragraph(re.sub(r"\*\*(.+?)\*\*", r"\1", ln.strip()))
+                        _add_runs(doc.add_paragraph(), ln.strip())
             out = d / f"{base}.docx"
             tmp = d / f".{base}.{uuid.uuid4().hex[:6]}.docx.part"
             doc.save(str(tmp))
@@ -863,15 +874,18 @@ async def synthesize_insight_audio(record: Dict[str, Any], job_output_dir: Path,
         return str(path)
 
     try:
-        files = await asyncio.gather(*(_one(i, c) for i, c in enumerate(chunks)))
-        failed = [f for f in files if not Path(f).is_file() or Path(f).stat().st_size == 0]
+        from backend.async_utils import gather_or_cancel
+        files = await gather_or_cancel(_one(i, c) for i, c in enumerate(chunks))
+        spoken_parts = [i for i, c in enumerate(chunks)
+                        if tts.is_speakable(tts._clean_tts_text(c, narration_style=TTS_STYLE), voice)]
+        failed = [files[i] for i in spoken_parts if not Path(files[i]).is_file() or Path(files[i]).stat().st_size == 0]
         if failed:  # a silent gap would make the audio differ from the text -> fail loudly
             raise InsightsError("audio_failed", f"{len(failed)} of {len(files)} parts failed", http_status=503)
         staged = tmp_dir / "final.mp3"
         await tts._concatenate_mp3s(files, str(staged))
         tts.tag_audiobook_file(str(staged), title=f"{record.get('label', '')} - {record.get('title', '')}",
                                author="BookApp")
-        ok, issues, _ = inspect_audiobook_quality(str(staged), files, expected_indices=list(range(len(files))))
+        ok, issues, _ = inspect_audiobook_quality(str(staged), [files[i] for i in spoken_parts], expected_indices=spoken_parts)
         if not ok:
             raise InsightsError("audio_failed", "; ".join(i.description for i in issues), http_status=503)
         staged.replace(out)
@@ -916,6 +930,7 @@ class InsightTask:
 
 _TASKS: Dict[str, InsightTask] = {}
 _ACTIVE: Dict[Tuple[str, str, str, str], str] = {}
+_RUNNING: set = set()
 
 # Small on-disk task index so a client polling a task after a server restart gets a meaningful answer
 # (the saved result, or "interrupted") instead of "not found". Set by backend.main.
@@ -1030,5 +1045,7 @@ def start_task(job_id: str, action: str, insight_type: str, language: Optional[s
                 _ACTIVE.pop(key, None)
             _index_update(task)
 
-    asyncio.get_running_loop().create_task(_wrapper())
+    runner_task = asyncio.get_running_loop().create_task(_wrapper())
+    _RUNNING.add(runner_task)  # the event loop keeps only weak references
+    runner_task.add_done_callback(_RUNNING.discard)
     return task, False

@@ -47,7 +47,7 @@ def _safe_dir_size(path: Path) -> int:
 
 
 # Files that make an output folder somebody's work (such folders are restored into Session History)
-_USER_FILE_SUFFIXES = {".pdf", ".docx", ".doc", ".epub", ".cbz", ".cbr", ".txt", ".mp3", ".m4b"}
+_USER_FILE_SUFFIXES = {".pdf", ".docx", ".doc", ".epub", ".cbz", ".cbr", ".zip", ".txt", ".mp3", ".m4b"}
 
 
 def _holds_user_files(path: Path) -> bool:
@@ -108,6 +108,8 @@ def clean_temp_storage(max_age_hours: int = 48, dry_run: bool = False) -> Dict[s
                 # only true orphans: no job record and no outputs
                 if known_ids is None or item.name in known_ids or (TEMP_DIR / "outputs" / item.name).is_dir():
                     continue
+                if _holds_user_files(item):
+                    continue  # a book, even without a record (database lost or replaced)
             try:
                 mtime = item.stat().st_mtime
                 if mtime < cutoff_temp:

@@ -281,7 +281,7 @@ function handleFileSelect(e, prefix) {
 async function processFile(file, prefix) {
   const allowed = prefix === 'ab'
     ? ['.pdf', '.docx', '.epub']
-    : ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+    : ['.pdf', '.docx', '.epub', '.cbz', '.cbr', '.zip'];
   const dotIdx = file.name.lastIndexOf('.');
   const ext = dotIdx > 0 ? file.name.slice(dotIdx).toLowerCase() : '(no extension)';
 
@@ -350,6 +350,7 @@ function removeFile(prefix) {
     if (covGroup) covGroup.style.display = 'none';
     const prevLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
     setGraphicNovelLock(false);
+    if (!hasQueue) _formatChosenByUser = false;
     // When promoting a single file into the Batch Queue, preserve non-comic layout (e.g. Literature)
     if (!hasQueue || prevLayout === 'comic') {
       const stdBtn = document.getElementById('layout-standard');
@@ -452,6 +453,7 @@ function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
 async function uploadFile(prefix, file) {
   const formData = new FormData();
   formData.append('file', file);
+  const selected = state[prefix].file; // what was selected when this upload began
 
   try {
     const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
@@ -459,7 +461,7 @@ async function uploadFile(prefix, file) {
       throw new Error(await parseApiError(res, 'Upload failed'));
     }
     const data = await res.json();
-    if (state[prefix].file && file && state[prefix].file.name !== file.name) {
+    if (state[prefix].file !== selected) { // removed, or replaced (possibly by one of the same name)
       console.log(`[Upload] File was swapped while upload was in flight; ignoring job ${data.job_id}`);
       return;
     }
@@ -538,6 +540,7 @@ async function uploadFile(prefix, file) {
         const fmtBtn = document.getElementById(`fmt-${targetFormat}`);
         if (fmtBtn && !fmtBtn.disabled) {
           selectFormat(targetFormat, fmtBtn);
+          _formatChosenByUser = false;
         }
         checkCoverImage(data.job_id);
 
@@ -565,7 +568,7 @@ async function detectDocumentGenre(jobId, fileType) {
     const res = await fetch(`${API}/detect-genre`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sample_text: sample.substring(0, 3500), file_type: fileType }),
+      body: JSON.stringify({ sample_text: sample.substring(0, 3500), file_type: fileType, subjects: prevData.subjects || [] }),
     });
     if (res.ok) {
       // Guard against race condition: check if file was removed/swapped during genre detection
@@ -739,7 +742,7 @@ function updateFormatAvailability(layout, fileExt) {
   }
 }
 
-function selectFormat(fmt, btn) {
+function selectFormat(fmt, btn, byUser = false) {
   if (!btn) return;
   if (btn.disabled || btn.classList.contains('format-btn-disabled')) {
     toast(`⚠️ Το format ${fmt.toUpperCase()} είναι απενεργοποιημένο για Graphic Novels. Επιλέξτε PDF, CBZ, CBR ή EPUB.`, 'info');
@@ -748,6 +751,7 @@ function selectFormat(fmt, btn) {
   // Deselect only format buttons (not layout buttons)
   document.querySelectorAll('#tr-format-selector .format-btn').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
+  if (byUser) _formatChosenByUser = true;
   document.getElementById('tr-output-format').value = fmt;
   // Update download button label immediately
   const label = fmt.toUpperCase();
@@ -951,12 +955,11 @@ function updateVoices() {
   const voices = state.voices[lang] || {};
   const grid = document.getElementById('ab-voice-grid');
   const voiceIcons = {
-    'Athina (Female)': '👩',
     'Nestoras (Male)': '👨',
     'Aria (Female)': '👩',
     'Guy (Male)': '👨',
     'Jenny (Female)': '👩',
-    'Davis (Male)': '👨',
+    'Brian (Male)': '👨',
     'Emma (Female)': '👩',
     'Ryan (Male)': '👨',
   };
@@ -981,6 +984,15 @@ function updateVoices() {
     card.onclick = () => selectVoice(name, card);
     grid.appendChild(card);
   });
+
+  // A separate dialogue voice needs a second voice in this language (Greek has one)
+  const multiVoice = document.getElementById('ab-multi-voice');
+  const multiGroup = document.getElementById('ab-multi-voice-group');
+  if (multiGroup) multiGroup.style.display = entries.length > 1 ? '' : 'none';
+  if (multiVoice && entries.length < 2) {
+    multiVoice.checked = false;
+    toggleMultiVoiceSelect();
+  }
 
   // Populate dialogue voice select for multi-voice mode
   const diagSelect = document.getElementById('ab-dialogue-voice-select');
@@ -1064,7 +1076,7 @@ function selectVoice(name, card) {
 }
 
 // ── Start Translation ──────────────────────────────────────
-async function startTranslation() {
+async function startTranslation(opts = {}) {
   const jobId = state.tr.jobId;
   if (!jobId) {
     if (_batchQueueState.total_count > 0) {
@@ -1079,7 +1091,7 @@ async function startTranslation() {
   let outputFormat = document.getElementById('tr-output-format').value || 'pdf';
   const rawTrName = document.getElementById('tr-file-name')?.textContent || '';
   const fileExt = (state.tr.file?.name || rawTrName || '').split('.').pop().toLowerCase();
-  if (currentAppMode === 'basic' && ['pdf', 'docx', 'epub', 'cbz', 'cbr', 'txt'].includes(fileExt)) {
+  if (!opts.keepSavedFormat && currentAppMode === 'basic' && ['pdf', 'docx', 'epub', 'cbz', 'cbr', 'txt'].includes(fileExt)) {
     outputFormat = fileExt;
     document.getElementById('tr-output-format').value = fileExt;
   }
@@ -1168,7 +1180,7 @@ function onQuotaBehaviorChange(prefix) {
       if (!hasKey) {
         descEl.innerHTML = (prefix === 'ab')
           ? '🔄 <em>Δωρεάν Μοντέλα (Προεπιλογή):</em> Χωρίς Gemini API Key, η εκφώνηση εκτελείται αυτόματα με το δωρεάν μοντέλο Edge-TTS χωρίς διακοπή και χωρίς όρια.'
-          : '🔄 <em>Δωρεάν Μοντέλα (Προεπιλογή):</em> Χωρίς Gemini API Key, χρησιμοποιείται αυτόματα η δωρεάν μηχανή (Google Translate & τυπογραφία) χωρίς διακοπή και χωρίς όρια χρήσης.';
+          : '🔄 <em>Δωρεάν Μοντέλα (Προεπιλογή):</em> Χωρίς Gemini API Key, χρησιμοποιείται η δωρεάν μηχανή. Οι δωρεάν υπηρεσίες έχουν όρια και συχνά αρνούνται αιτήματα: τότε η εργασία σταματά με μήνυμα.';
       } else {
         descEl.innerHTML = (prefix === 'ab')
           ? '🔄 <em>Auto-Fallback:</em> Εάν εξαντληθεί το όριο Gemini στο Script Polish, η εκφώνηση συνεχίζει άμεσα χωρίς διακοπή χρησιμοποιώντας το αρχικό κείμενο (δωρεάν Edge-TTS).'
@@ -1322,6 +1334,7 @@ async function startAudiobook() {
 // ── SSE Progress Stream ────────────────────────────────────
 function connectSSE(prefix, jobId) {
   stopJobTracking(prefix);
+  for (const shown of [_shownRefinementReports, _shownRevisionReports, _shownUsageReports]) shown.delete(jobId); // a new run
 
   const sse = new EventSource(`${API}/progress/${jobId}`);
   state[prefix].sse = sse;
@@ -1547,7 +1560,7 @@ function updateProgress(prefix, data) {
   if (engineBadge) {
     if (prefix === 'tr') {
       const stepLower = (data.current_step || '').toLowerCase();
-      const isAiStep = Boolean(data.ai_polish) || stepLower.includes('ai translation') || stepLower.includes('polish') || stepLower.includes('gemini');
+      const isAiStep = (Boolean(data.ai_polish) && hasGeminiKey()) || stepLower.includes('ai translation') || stepLower.includes('polish') || stepLower.includes('gemini');
       if (data.quota_behavior === 'fallback' && (stepLower.includes('όριο') || stepLower.includes('δωρεάν') || data.gemini_quota_exhausted)) {
         engineBadge.style.display = 'inline-flex';
         engineBadge.className = 'engine-pill engine-free';
@@ -1559,7 +1572,7 @@ function updateProgress(prefix, data) {
       } else {
         engineBadge.style.display = 'inline-flex';
         engineBadge.className = 'engine-pill engine-free';
-        engineBadge.textContent = '⚡ Google Translate';
+        engineBadge.textContent = '⚡ Free Translation';
       }
     } else {
       engineBadge.style.display = 'inline-flex';
@@ -1622,7 +1635,10 @@ function updateProgress(prefix, data) {
         stepLower.includes('single-pass') ||
         stepLower.includes('ai translation') ||
         (totalPages > 0 && totalPages > data.total_chunks);
-      if (isBatchMode) {
+      const unit = (/\b(segment|paragraph|block)\b/.exec(stepLower) || [])[1];
+      if (unit) {
+        detailEl.textContent = `Translated ${data.done_chunks} of ${data.total_chunks} ${unit}s`;
+      } else if (isBatchMode) {
         if (totalPages > 0 && donePages > 0) {
           detailEl.textContent = `Completed ${data.done_chunks} of ${data.total_chunks} AI batches (${donePages} / ${totalPages} pages)`;
         } else if (totalPages > 0) {
@@ -1652,7 +1668,8 @@ function updateProgress(prefix, data) {
     state[prefix].status = 'done';
     setStatusBadge(prefix, 'done');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
-    document.getElementById(`${prefix}-progress-step`).textContent = '✅ Complete';
+    const doneStep = data.current_step || ''; // a finished job may carry a warning (substituted voice)
+    document.getElementById(`${prefix}-progress-step`).textContent = doneStep.startsWith('⚠') ? doneStep : '✅ Complete';
     setActionButtonsEnabled(prefix, true);
     const cancelBtn = document.getElementById(`${prefix}-cancel-btn`);
     if (cancelBtn) cancelBtn.style.display = 'none';
@@ -1787,7 +1804,8 @@ function showResult(prefix, data) {
     }
   }
   if (prefix === 'tr') {
-    const serverFmt = (data?.output_format || '').toLowerCase();
+    let serverFmt = (data?.output_format || '').toLowerCase();
+    if (['mp3', 'm4b'].includes(serverFmt)) serverFmt = ''; // the job's audiobook is not its translation
     const curFmt = (document.getElementById('tr-output-format')?.value || '').toLowerCase();
     const fmt = serverFmt || curFmt || 'pdf';
     const label = fmt.toUpperCase();
@@ -1795,7 +1813,8 @@ function showResult(prefix, data) {
     if (trFmtInput) trFmtInput.value = fmt;
     const layout = (data?.layout_mode || document.getElementById('tr-layout-mode')?.value || 'standard').toLowerCase();
     if (layout === 'comic') {
-      meta.textContent = 'Το Graphic Novel / Comic μεταφράστηκε με επιτυχία! Η εικονογράφηση διατηρήθηκε 100% και τα μπαλόνια διαλόγου αποδόθηκαν στα Ελληνικά.';
+      const comicLang = document.getElementById('tr-target-lang')?.value === 'english' ? 'Αγγλικά' : 'Ελληνικά';
+      meta.textContent = `Το Graphic Novel / Comic μεταφράστηκε με επιτυχία! Η εικονογράφηση διατηρήθηκε 100% και τα μπαλόνια διαλόγου αποδόθηκαν στα ${comicLang}.`;
     } else {
       meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
     }
@@ -1827,7 +1846,8 @@ function showResult(prefix, data) {
     const trackVoice = document.getElementById('ab-player-voice');
     if (playerWrap && audio && state.ab.jobId) {
       playerWrap.style.display = 'block';
-      audio.src = `${API}/download/${state.ab.jobId}`;
+      audio.src = `${API}/download/${state.ab.jobId}?format=mp3`;
+      loadAudioChapters(state.ab.jobId);
       if (trackTitle) trackTitle.textContent = (data && data.file_name) || state.ab.file?.name || 'Audiobook';
       if (trackVoice) {
         const vName = (data && data.voice_name) || state.selectedVoice || 'Neural Voice';
@@ -1836,7 +1856,7 @@ function showResult(prefix, data) {
     }
     const abDlBtn = document.getElementById('ab-download-btn');
     if (abDlBtn && state.ab.jobId) {
-      abDlBtn.href = `${API}/download/${state.ab.jobId}`;
+      abDlBtn.href = `${API}/download/${state.ab.jobId}?format=mp3`;
     }
     const abM4bBtn = document.getElementById('ab-download-m4b-btn');
     if (abM4bBtn && state.ab.jobId) {
@@ -1908,16 +1928,12 @@ async function copyTranslatedText() {
   }
 
   try {
+    // never from the Reader's cache: that may hold another book, or this one before it was edited
     let textToCopy = '';
-    if (typeof _readerData !== 'undefined' && _readerData && _readerData.translated_text) {
-      textToCopy = _readerData.translated_text;
-    } else {
-      const res = await fetch(`${API}/jobs/${jobId}/text`);
-      if (res.ok) {
-        const data = await res.json();
-        _readerData = data;
-        textToCopy = (data.translated_text || data.original_text || '').trim();
-      }
+    const res = await fetch(`${API}/jobs/${jobId}/text`);
+    if (res.ok) {
+      const data = await res.json();
+      textToCopy = (data.translated_text || data.original_text || '').trim();
     }
 
     if (!textToCopy) {
@@ -1964,17 +1980,31 @@ async function copyTranslatedText() {
   }
 }
 
+function isQuotaMessage(msg) {
+  const text = String(msg || '').replace(/\S+\.(pdf|docx|doc|epub|txt|cbz|cbr|zip)\b/gi, ' ');
+  return /quota|resource_exhausted|(^|[^\w.-])429(?![\w-])|εξαντλήθηκε|εξάντλησης|are in cooldown/i.test(text);
+}
+
 function showError(prefix, msg) {
   const errEl = document.getElementById(`${prefix}-error-msg`);
   if (errEl) errEl.textContent = msg;
   const card = document.getElementById(`${prefix}-error-card`);
   if (card) card.classList.add('visible');
 
-  const isQuota = msg && (msg.includes('όριο') || msg.includes('Quota') || msg.includes('quota') || msg.includes('429'));
+  const isQuota = isQuotaMessage(msg);
+  if (state[prefix]) state[prefix].quotaStopped = isQuota; // only this may ever resume by itself
+  // every stopped job can continue from its checkpoint by hand (the outage message tells the user to press it)
+  const canResume = isQuota || Boolean(msg && state[prefix]?.jobId);
   const quotaActions = document.getElementById(`${prefix}-error-quota-actions`);
-  if (quotaActions) quotaActions.style.display = isQuota ? 'inline-flex' : 'none';
+  if (quotaActions) {
+    quotaActions.style.display = canResume ? 'inline-flex' : 'none';
+    const changeKey = quotaActions.querySelector?.('button:not([id])');
+    if (changeKey) changeKey.style.display = isQuota ? '' : 'none';
+  }
+  const errResumeBtn = document.getElementById(`${prefix}-error-resume-btn`);
+  if (errResumeBtn && canResume) errResumeBtn.style.display = 'inline-flex';
   const resumeBtn = document.getElementById(`${prefix}-resume-btn`);
-  if (resumeBtn) resumeBtn.style.display = isQuota ? 'inline-flex' : 'none';
+  if (resumeBtn) resumeBtn.style.display = canResume ? 'inline-flex' : 'none';
   const keyBtn = document.getElementById(`${prefix}-quota-key-btn`);
   if (keyBtn) keyBtn.style.display = isQuota ? 'inline-flex' : 'none';
 }
@@ -2021,7 +2051,7 @@ async function downloadOutput(prefix, overrideFmt = null) {
     const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
     window.location.href = targetUrl;
   } else {
-    const targetUrl = overrideFmt ? `${API}/download/${jobId}?format=${overrideFmt}` : `${API}/download/${jobId}`;
+    const targetUrl = `${API}/download/${jobId}?format=${overrideFmt || 'mp3'}`; // not "latest output": that may be a PDF
     window.location.href = targetUrl;
   }
 }
@@ -2048,6 +2078,22 @@ function setAudioSpeed(rate, btn) {
   }
   document.querySelectorAll('.ab-speed-pills .speed-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
+}
+
+async function loadAudioChapters(jobId) {
+  const wrap = document.getElementById('ab-chapter-wrap');
+  const select = document.getElementById('ab-chapter-select');
+  if (!wrap || !select) return;
+  wrap.style.display = 'none';
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/chapters`);
+    if (!res.ok) return;
+    const chapters = (await res.json()).chapters || [];
+    if (state.ab.jobId !== jobId || !chapters.length) return;
+    select.innerHTML = chapters
+      .map((c) => `<option value="${Number(c.start_seconds) || 0}">${escHtml(c.title)}</option>`).join('');
+    wrap.style.display = '';
+  } catch (_) {}
 }
 
 function onAudioChapterSelect(val) {
@@ -2332,6 +2378,14 @@ async function loadHistoryJob(jobId, mode) {
       }
     }
 
+    if (prefix === 'tr') {
+      const mq = document.getElementById('tr-max-quality');
+      if (mq && currentAppMode === 'advanced') {
+        mq.checked = Boolean(data.max_quality);
+        onMaxQualityToggle();
+      }
+    }
+
     if (prefix === 'ab') {
       setActionButtonsEnabled('ab', true);
       if (data.quota_behavior) {
@@ -2365,6 +2419,7 @@ async function loadHistoryJob(jobId, mode) {
           }
         }
       } catch (_) {}
+      restoreAudiobookOptions(data.audiobook_options);
     }
 
     if (data.status === 'running') {
@@ -2388,14 +2443,53 @@ async function loadHistoryJob(jobId, mode) {
       // Idle, queued, cancelled, or error job loaded from history -> reset progress FIRST, then enable buttons!
       resetProgress(prefix, true);
       state[prefix].status = data.status || 'idle';
+      state[prefix].quotaStopped = data.status === 'error' && isQuotaMessage(data.error);
       setActionButtonsEnabled(prefix, true);
       toast(`📄 Φορτώθηκε "${data.file_name || 'έγγραφο'}" — έτοιμο για μετάφραση/συνέχιση!`, 'info');
     }
     if (prefix === 'tr') {
       checkCoverImage(jobId);
     }
+    return true;
   } catch (e) {
     console.warn('Could not reload job:', e);
+    return false;
+  }
+}
+
+// A resumed audiobook must keep the voice, language and pacing it was started with
+function restoreAudiobookOptions(o) {
+  if (!o) return;
+  const el = (id) => document.getElementById(id);
+  const lang = el('ab-lang-select');
+  if (lang && o.language) {
+    lang.value = o.language;
+    updateVoices();
+  }
+  const card = Array.from(document.querySelectorAll('.voice-card') || []).find((c) => c.dataset.voice === o.voice_name);
+  if (card) selectVoice(o.voice_name, card);
+  if (el('ab-use-translated')) el('ab-use-translated').checked = Boolean(o.use_translated);
+  if (el('ab-ai-polish')) el('ab-ai-polish').checked = Boolean(o.ai_polish);
+  if (el('ab-multi-voice')) {
+    const voiceCount = Object.keys(state.voices?.[el('ab-lang-select')?.value] || {}).length;
+    el('ab-multi-voice').checked = Boolean(o.dialogue_voice) && voiceCount > 1;
+    toggleMultiVoiceSelect();
+    if (o.dialogue_voice && el('ab-dialogue-voice-select')) el('ab-dialogue-voice-select').value = o.dialogue_voice;
+  }
+  const style = el('ab-narration-style');
+  if (style?.options && o.narration_style) {
+    const options = Array.from(style.options).filter((x) => x.value.split(':')[0] === o.narration_style);
+    const match = options.find((x) => x.value.split(':')[1] === o.rate) || options[0];
+    if (match) style.value = match.value;
+  }
+  const rate = parseInt(o.rate, 10), pitch = parseInt(o.pitch, 10);
+  if (!isNaN(rate) && el('ab-speed-slider')) {
+    el('ab-speed-slider').value = rate;
+    onSpeedSliderInput(rate);
+  }
+  if (!isNaN(pitch) && el('ab-pitch-slider')) {
+    el('ab-pitch-slider').value = pitch;
+    onPitchSliderInput(pitch);
   }
 }
 
@@ -2510,14 +2604,14 @@ function applyReplace(replaceAll = false) {
 
   if (replaceAll) {
     const count = (text.split(findVal).length - 1);
-    text = text.replaceAll(findVal, replVal);
+    text = text.replaceAll(findVal, () => replVal);
     textarea.value = text;
     if (count > 0) markEditorDirty();
     updateEditorStats();
     toast(`Replaced ${count} occurrences.`, 'success');
   } else {
     if (text.includes(findVal)) {
-      textarea.value = text.replace(findVal, replVal);
+      textarea.value = text.replace(findVal, () => replVal);
       markEditorDirty();
       updateEditorStats();
       toast('Replaced first occurrence.', 'success');
@@ -2682,24 +2776,23 @@ function checkSmartResume(jobs) {
   if (!banner) return;
 
   if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
+    _smartResumeJob = null;
     banner.style.display = 'none';
     return;
   }
 
   // Find most recent job that was interrupted or has uncompleted checkpoint
   const candidate = jobs.find(j => {
-    if (!j.job_id || j.status === 'done' || j.status === 'cancelled') return false;
+    if (!j.job_id || !j.resumable) return false;
     if (state.tr.jobId === j.job_id && state.tr.status === 'running') return false;
     if (state.ab.jobId === j.job_id && state.ab.status === 'running') return false;
     const dismissed = sessionStorage.getItem(`dismiss_resume_${j.job_id}`);
     if (dismissed) return false;
-    const done = Number(j.done_chunks || j.done_pages || 0);
-    const total = Number(j.total_chunks || j.total_pages || 0);
-    return done > 0 || j.status === 'error';
+    return true;
   });
 
+  _smartResumeJob = candidate || null;
   if (candidate) {
-    _smartResumeJob = candidate;
     const textEl = document.getElementById('smart-resume-text');
     const done = Number(candidate.done_chunks || candidate.done_pages || 0);
     const total = Number(candidate.total_chunks || candidate.total_pages || 0);
@@ -2718,10 +2811,15 @@ async function executeSmartResume() {
   if (!_smartResumeJob) return;
   const job = _smartResumeJob;
   dismissSmartResume();
-  await loadHistoryJob(job.job_id, job.mode || 'translate');
+  sessionStorage.removeItem?.(`dismiss_resume_${job.job_id}`); // resumed, not dismissed: offer it again if interrupted again
+  const loaded = await loadHistoryJob(job.job_id, job.mode || 'translate');
+  if (!loaded) {
+    toast('Η εργασία δεν μπόρεσε να φορτωθεί για συνέχιση.', 'error');
+    return;
+  }
   toast('▶️ Συνέχιση εργασίας από το αποθηκευμένο checkpoint...', 'info');
   if ((job.mode || 'translate') === 'translate') {
-    await startTranslation();
+    await startTranslation({ keepSavedFormat: true });
   } else {
     await startAudiobook();
   }
@@ -2805,7 +2903,7 @@ function renderGeminiPoolStatus(poolData) {
       sumBadge.textContent = `⚠️ Όλα τα ${total} κλειδιά εξαντλήθηκαν`;
       sumBadge.style.color = 'var(--amber)';
     } else {
-      sumBadge.textContent = `🟢 ${avail}/${total} Κλειδιά Διαθέσιμα (~${avail * 1500} αιτήματα)`;
+      sumBadge.textContent = `🟢 ${avail}/${total} Κλειδιά Διαθέσιμα`;
       sumBadge.style.color = 'var(--emerald)';
     }
   }
@@ -2841,20 +2939,20 @@ function updateNavGeminiBadge(poolData) {
       navBadge.style.color = 'var(--emerald)';
       navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
       navBadge.textContent = total > 1 ? `🟢 ${avail}/${total} Keys` : '✓ Active';
-      navBadge.title = `${avail}/${total} Gemini API Key(s) ενεργά (~${avail * 1500} RPD)`;
+      navBadge.title = `${avail}/${total} Gemini API Key(s) ενεργά`;
     }
   } else if (savedKey) {
     navBadge.style.background = 'rgba(16,185,129,0.15)';
     navBadge.style.color = 'var(--emerald)';
     navBadge.style.border = '1px solid rgba(16,185,129,0.4)';
     navBadge.textContent = '✓ Active';
-    navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό (15 RPM / 1.500 RPD)';
+    navBadge.title = 'Gemini API Key είναι αποθηκευμένο και ενεργό';
   } else {
     navBadge.style.background = 'rgba(59,130,246,0.15)';
     navBadge.style.color = 'var(--blue, #3b82f6)';
     navBadge.style.border = '1px solid rgba(59,130,246,0.3)';
     navBadge.textContent = '🆓 Free Mode';
-    navBadge.title = 'Δωρεάν μοντέλα ενεργά ως προεπιλογή (Google Translate & Edge-TTS — χωρίς API key)';
+    navBadge.title = 'Δωρεάν μοντέλα ενεργά ως προεπιλογή (δωρεάν μετάφραση με όρια & Edge-TTS — χωρίς API key)';
   }
 }
 
@@ -2939,7 +3037,7 @@ async function openAiPolishModal(mode = 'polish') {
   const btn = document.getElementById('btn-run-polish');
   if (btn) btn.disabled = _polishRunning;
   const cancelBtn = document.getElementById('btn-cancel-polish');
-  if (cancelBtn) cancelBtn.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
+  if (cancelBtn && _currentAiModalMode === 'polish') cancelBtn.textContent = _polishRunning ? 'Minimize (Run in Background)' : 'Cancel';
 
   // Check Gemini daily quota status and display warning if exhausted
   const mBanner = document.getElementById('ai-polish-quota-warning-banner');
@@ -3069,7 +3167,7 @@ function _tickGeminiQuotaCountdown() {
     homeBanner.style.background = 'rgba(245,158,11,0.14)';
     homeBanner.style.borderColor = 'rgba(245,158,11,0.65)';
     if (homeText) {
-      homeText.innerHTML = `Εξαντλήθηκε το όριο (Free Tier 15 RPM / 1.500 RPD). <strong style="color:var(--amber)">Έτοιμο ξανά στις ${clockStr}</strong> (Αντίστροφη μέτρηση: <span style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--amber)">${mmss}</span>). Μπορείτε να αλλάξετε API Key στις Ρυθμίσεις για άμεση συνέχιση.`;
+      homeText.innerHTML = `Εξαντλήθηκε το όριο (Free Tier). <strong style="color:var(--amber)">Έτοιμο ξανά στις ${clockStr}</strong> (Αντίστροφη μέτρηση: <span style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--amber)">${mmss}</span>). Μπορείτε να αλλάξετε API Key στις Ρυθμίσεις για άμεση συνέχιση.`;
     }
   }
 
@@ -3083,13 +3181,26 @@ function _tickGeminiQuotaCountdown() {
     }
   }
 
+  // 3b. Audiobook banner: Gemini matters there only for the AI script polish
+  const abQuotaBanner = document.getElementById('ab-quota-warning-banner');
+  const abUsesGemini = Boolean(document.getElementById('ab-ai-polish')?.checked || state.ab.quotaStopped);
+  if (abQuotaBanner) {
+    abQuotaBanner.style.display = abUsesGemini ? 'block' : 'none';
+    abQuotaBanner.style.background = 'rgba(245,158,11,0.14)';
+    abQuotaBanner.style.borderColor = 'rgba(245,158,11,0.6)';
+    const abQuotaText = document.getElementById('ab-quota-warning-text');
+    if (abQuotaText && abUsesGemini) {
+      abQuotaText.innerHTML = `Εξαντλήθηκε το όριο Gemini. <strong style="color:var(--amber)">Έτοιμο ξανά στις ${clockStr}</strong> (Αντίστροφη μέτρηση: <span style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--amber)">${mmss}</span>). Η πρόοδος διατηρήθηκε.`;
+    }
+  }
+
   // 4. Batch queue banner
   const qBanner = document.getElementById('queue-quota-warning-banner');
   const qText = document.getElementById('queue-quota-warning-text');
   if (qBanner) {
     qBanner.style.display = 'block';
     if (qText) {
-      qText.innerHTML = `Εξαντλήθηκε το όριο Gemini (Free Tier). <strong>Έτοιμο ξανά στις ${clockStr}</strong> (Απομένουν: <span style="font-family:monospace; font-weight:700">${mmss}</span>). Η ουρά συνεχίζει αυτόματα χωρίς AI Polish.`;
+      qText.innerHTML = `Εξαντλήθηκε το όριο Gemini (Free Tier). <strong>Έτοιμο ξανά στις ${clockStr}</strong> (Απομένουν: <span style="font-family:monospace; font-weight:700">${mmss}</span>). ${queueQuotaBehaviorText()}`;
     }
   }
 
@@ -3149,6 +3260,14 @@ function onGeminiQuotaRestored() {
     trQuotaText.innerHTML = '<strong>✅ Το όριο ανανεώθηκε!</strong> Μπορείτε να συνεχίσετε τη μετάφραση από το αποθηκευμένο checkpoint.';
   }
 
+  const abQuotaBanner = document.getElementById('ab-quota-warning-banner');
+  const abQuotaText = document.getElementById('ab-quota-warning-text');
+  if (abQuotaBanner && abQuotaText) {
+    abQuotaBanner.style.background = 'rgba(16,185,129,0.12)';
+    abQuotaBanner.style.borderColor = 'rgba(16,185,129,0.5)';
+    abQuotaText.innerHTML = '<strong>✅ Το όριο ανανεώθηκε!</strong> Μπορείτε να συνεχίσετε το Audiobook.';
+  }
+
   // 4. Highlight resume buttons
   const trResumeBtn = document.getElementById('tr-resume-btn');
   if (trResumeBtn && state.tr.jobId) {
@@ -3168,22 +3287,23 @@ function onGeminiQuotaRestored() {
   toast('✅ Το όριο του Gemini API ανανεώθηκε! Αυτόματη συνέχιση από το checkpoint...', 'success');
 
   // 6. Automatic Resume when countdown finishes
-  if (state.tr.jobId && (state.tr.status === 'error' || state.tr.status === 'idle')) {
+  if (state.tr.jobId && state.tr.status === 'error' && state.tr.quotaStopped) {
     console.log(`Auto-resuming translation job ${state.tr.jobId} after quota restoration...`);
     setTimeout(() => {
       resumeTranslation('tr');
     }, 2000);
-  } else if (_smartResumeJob) {
+  } else if (_smartResumeJob?.quota_stopped) {
     console.log(`Auto-resuming checkpoint job ${_smartResumeJob.job_id} after quota restoration...`);
     setTimeout(() => {
       executeSmartResume();
     }, 2000);
-  } else if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
+  } else if (_batchQueueState.total_count > 0 && _batchQueueState.paused_for_quota) {
+    // never a queue the user paused, or one restored paused after a restart
     console.log('Auto-resuming batch queue after quota restoration...');
     setTimeout(() => {
-      startBatchQueue();
+      startBatchQueue({ keepItemSettings: true });
     }, 2000);
-  } else if (state.ab.jobId && (state.ab.status === 'error' || state.ab.status === 'idle')) {
+  } else if (state.ab.jobId && state.ab.status === 'error' && state.ab.quotaStopped) {
     console.log(`Auto-resuming audiobook job ${state.ab.jobId} after quota restoration...`);
     setTimeout(() => {
       resumeTranslation('ab');
@@ -3266,6 +3386,8 @@ async function saveGeminiKeyOnly() {
   if (homeBanner) homeBanner.style.display = 'none';
   const trQuotaBanner = document.getElementById('tr-quota-warning-banner');
   if (trQuotaBanner) trQuotaBanner.style.display = 'none';
+  const abQuotaBanner = document.getElementById('ab-quota-warning-banner');
+  if (abQuotaBanner) abQuotaBanner.style.display = 'none';
   const qBanner = document.getElementById('queue-quota-warning-banner');
   if (qBanner) qBanner.style.display = 'none';
   const polishTag = document.getElementById('tr-ai-polish-quota-tag');
@@ -3274,11 +3396,7 @@ async function saveGeminiKeyOnly() {
   await checkGlobalGeminiQuotaStatus();
 
   // If there is an active job or queue waiting on quota, automatically resume it now!
-  const hasVisibleTrResume = (
-    document.getElementById('tr-resume-btn')?.style.display !== 'none' ||
-    document.getElementById('tr-error-resume-btn')?.style.display !== 'none'
-  );
-  if (state.tr.jobId && state.tr.status !== 'done' && (state.tr.status === 'error' || state.tr.status === 'idle' || hasVisibleTrResume)) {
+  if (state.tr.jobId && state.tr.status === 'error' && state.tr.quotaStopped) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση μετάφρασης...`, 'success');
     setTimeout(() => {
@@ -3287,7 +3405,7 @@ async function saveGeminiKeyOnly() {
     return;
   }
 
-  if (_smartResumeJob) {
+  if (_smartResumeJob?.quota_stopped) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση από checkpoint...`, 'success');
     setTimeout(() => {
@@ -3296,16 +3414,16 @@ async function saveGeminiKeyOnly() {
     return;
   }
 
-  if (_batchQueueState.total_count > 0 && (_batchQueueState.paused || _batchQueueState.status === 'paused' || _batchQueueState.status === 'idle')) {
+  if (_batchQueueState.total_count > 0 && _batchQueueState.paused_for_quota) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση της ουράς...`, 'success');
     setTimeout(() => {
-      startBatchQueue();
+      startBatchQueue({ keepItemSettings: true });
     }, 400);
     return;
   }
 
-  if (state.ab.jobId && (state.ab.status === 'error' || state.ab.status === 'idle')) {
+  if (state.ab.jobId && state.ab.status === 'error' && state.ab.quotaStopped) {
     closeAiPolishModal();
     toast(`✅ Αποθηκεύτηκαν επιτυχώς ${keys.length} κλειδιά! Αυτόματη συνέχιση του Audiobook...`, 'success');
     setTimeout(() => {
@@ -3379,6 +3497,8 @@ async function checkGlobalGeminiQuotaStatus() {
       if (homeBanner) homeBanner.style.display = 'none';
       const trQuotaBanner = document.getElementById('tr-quota-warning-banner');
       if (trQuotaBanner) trQuotaBanner.style.display = 'none';
+      const abQuotaBanner = document.getElementById('ab-quota-warning-banner');
+      if (abQuotaBanner) abQuotaBanner.style.display = 'none';
       const qBanner = document.getElementById('queue-quota-warning-banner');
       if (qBanner) qBanner.style.display = 'none';
       const polishTag = document.getElementById('tr-ai-polish-quota-tag');
@@ -3830,6 +3950,9 @@ function setupSyncScroll() {
 const MAX_BATCH_FILES = 20;
 let _queuePollTimer = null;
 let _seenQuotaWarning = false;
+let _formatChosenByUser = false;
+let _queueSeen = false;
+let _keepQueuedSettings = false; // a queue found on page load keeps its settings until the user edits the form
 let _batchQueueState = {
   items: [],
   is_running: false,
@@ -3882,7 +4005,10 @@ function syncPrimaryStartButtonWithQueue(q) {
     trStartBtn.textContent = `⏳ Translating Batch (${q.done_count}/${q.total_count})...`;
   } else {
     trStartBtn.disabled = true;
-    trStartBtn.textContent = `✅ Batch Complete (${q.done_count}/${q.total_count})`;
+    const waiting = q.items.filter((it) => it.status === 'waiting_quota').length;
+    trStartBtn.textContent = waiting
+      ? `⏳ Waiting for Gemini quota (${waiting})`
+      : (q.done_count === q.total_count ? '✅ Batch Complete' : '⚠️ Batch finished') + ` (${q.done_count}/${q.total_count})`;
   }
 }
 
@@ -3893,9 +4019,10 @@ async function enqueueMultipleFiles(files) {
   }
   _isEnqueuing = true;
   try {
-    const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.zip'];
+    const allowed = ['.pdf', '.docx', '.epub', '.cbz', '.cbr', '.zip'];
   const cfg = _readCurrentTranslationSettings();
   const maxItems = _batchQueueState.max_items || MAX_BATCH_FILES;
+  if (!_batchQueueState.total_count) _formatChosenByUser = false; // a new batch follows each file's own format
 
   // If a single file is already selected in the Upload Card, seamlessly promote it into the queue first
   let promotedExisting = false;
@@ -4007,13 +4134,14 @@ async function enqueueMultipleFiles(files) {
         if (['cbz', 'cbr'].includes(itemFmt)) itemFmt = 'pdf';
       }
 
+      const detected = currentAppMode === 'basic' && langConfig[upData.detected_language] ? upData.detected_language : null;
       const addRes = await fetch(`${API}/queue/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           job_id: upData.job_id,
-          source_lang: cfg.srcLang,
-          target_lang: cfg.tgtLang,
+          source_lang: detected || cfg.srcLang,
+          target_lang: detected ? (detected === 'greek' ? 'english' : 'greek') : cfg.tgtLang,
           output_format: itemFmt,
           layout_mode: itemLayout,
           reading_direction: cfg.readingDirection,
@@ -4067,9 +4195,11 @@ async function refreshBatchQueue() {
     }
     _queuePollFailures = 0;
     const q = await res.json();
+    adoptQueueSettings(q);
     renderBatchQueue(q);
 
-    if (q.is_running) {
+    // a waiting queue continues on the server: keep watching it
+    if (q.is_running || q.paused_for_quota) {
       if (!_queuePollTimer) {
         _queuePollTimer = setInterval(refreshBatchQueue, 1500);
       }
@@ -4088,6 +4218,50 @@ async function refreshBatchQueue() {
   } finally {
     _queuePollInFlight = false;
   }
+}
+
+function restoreQueueForm(item) {
+  if (langConfig[item.source_lang] && langConfig[item.target_lang]) setLangs(item.source_lang, item.target_lang);
+  const layoutBtn = document.getElementById(`layout-${item.layout_mode}`);
+  if (!item.is_comic && layoutBtn) selectLayout(item.layout_mode, layoutBtn);
+  const fmtBtn = document.getElementById(`fmt-${item.output_format}`);
+  if (fmtBtn && !fmtBtn.disabled) selectFormat(item.output_format, fmtBtn);
+  const aiChk = document.getElementById('tr-ai-polish');
+  if (aiChk) aiChk.checked = Boolean(item.ai_polish);
+  for (const [name, value] of [['tr-reading-dir', item.reading_direction], ['tr-quota-behavior', item.quota_behavior]]) {
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (radio) radio.checked = true;
+  }
+}
+
+function adoptQueueSettings(q) {
+  const pending = (q.items || []).filter((it) => it.status !== 'done' && it.status !== 'cancelled');
+  if (!pending.length) _keepQueuedSettings = false;
+  if (_queueSeen) return;
+  _queueSeen = true;
+  if (pending.length && !state.tr.jobId) {
+    restoreQueueForm(pending[0]);
+    _keepQueuedSettings = true;
+  }
+}
+
+function watchTranslationSettings() {
+  const controls = '#tr-format-selector button, .lang-swap-btn, [data-layout], #tr-ai-polish, input[name="tr-reading-dir"], input[name="tr-quota-behavior"]';
+  for (const type of ['click', 'change']) {
+    document.addEventListener(type, (e) => {
+      if (e.target.closest?.(controls)) _keepQueuedSettings = false;
+    }, true);
+  }
+}
+
+function queueQuotaBehaviorText() {
+  const items = _batchQueueState.items || [];
+  const open = items.filter((it) => it.status !== 'done' && it.status !== 'cancelled');
+  const pending = open.length ? open : items;
+  const waiting = pending.filter((it) => (it.quota_behavior || 'wait') === 'wait').length;
+  if (waiting === pending.length) return 'Η ουρά περιμένει και θα συνεχίσει αυτόματα με AI μόλις ανανεωθεί το όριο.';
+  if (waiting === 0) return 'Η ουρά συνεχίζει αυτόματα χωρίς AI Polish.';
+  return 'Τα έγγραφα σε «Αναμονή» περιμένουν την ανανέωση του ορίου· όσα έχουν Auto-Fallback συνεχίζουν χωρίς AI Polish.';
 }
 
 function renderBatchQueue(q) {
@@ -4152,12 +4326,12 @@ function renderBatchQueue(q) {
     if (q.gemini_quota_exhausted) {
       quotaBanner.style.display = 'block';
       if (quotaText) {
-        quotaText.textContent = q.gemini_quota_message || 'Εξαντλήθηκε το ημερήσιο όριο του Gemini Free Tier. Η ουρά συνεχίζει αυτόματα χωρίς AI Polish.';
+        quotaText.textContent = q.gemini_quota_message || `Εξαντλήθηκε το ημερήσιο όριο του Gemini Free Tier. ${queueQuotaBehaviorText()}`;
       }
       if (!_seenQuotaWarning) {
         _seenQuotaWarning = true;
         checkGlobalGeminiQuotaStatus();
-        toast('⚠️ Εξαντλήθηκε το ημερήσιο όριο Gemini Free Tier — η μετάφραση συνεχίζεται αυτόματα χωρίς AI polish.', 'warning');
+        toast(`⚠️ Εξαντλήθηκε το ημερήσιο όριο Gemini Free Tier. ${queueQuotaBehaviorText()}`, 'warning');
       }
     } else {
       quotaBanner.style.display = 'none';
@@ -4287,16 +4461,19 @@ async function retryQueueItem(jobId) {
   }
 }
 
-async function startBatchQueue() {
+async function startBatchQueue({ keepItemSettings = false } = {}) {
   const cfg = _readCurrentTranslationSettings();
+  // without a body every file keeps the settings it was queued with
+  const keep = keepItemSettings || _keepQueuedSettings;
   try {
     const res = await fetch(`${API}/queue/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source_lang: cfg.srcLang,
-        target_lang: cfg.tgtLang,
-        output_format: cfg.chosenFmt,
+      body: keep ? undefined : JSON.stringify({
+        // Basic Mode detects per file; the format follows each file unless the user picked one
+        source_lang: currentAppMode === 'basic' ? null : cfg.srcLang,
+        target_lang: currentAppMode === 'basic' ? null : cfg.tgtLang,
+        output_format: (currentAppMode !== 'basic' && _formatChosenByUser) ? cfg.chosenFmt : null,
         layout_mode: cfg.chosenLayout,
         reading_direction: cfg.readingDirection,
         ai_polish: cfg.aiPolish,
@@ -4308,7 +4485,9 @@ async function startBatchQueue() {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.detail || 'Failed to start batch queue');
     }
-    toast('▶️ Η Smart Batch Queue ξεκίνησε με τις επιλεγμένες ρυθμίσεις (σειριακή εκτέλεση).', 'info');
+    toast(keep
+      ? '▶️ Η Smart Batch Queue συνεχίζει με τις αποθηκευμένες ρυθμίσεις κάθε αρχείου.'
+      : '▶️ Η Smart Batch Queue ξεκίνησε με τις επιλεγμένες ρυθμίσεις (σειριακή εκτέλεση).', 'info');
     await refreshBatchQueue();
   } catch (err) {
     toast(`❌ ${err.message}`, 'error');
@@ -4361,6 +4540,7 @@ async function removeQueueItem(jobId) {
 async function clearBatchQueue() {
   try {
     await fetch(`${API}/queue`, { method: 'DELETE' });
+    _formatChosenByUser = false;
     await refreshBatchQueue();
     toast('🗑️ Η ουρά καθαρίστηκε.', 'info');
   } catch (_) {}
@@ -4370,6 +4550,7 @@ async function clearBatchQueue() {
 async function init() {
   // Initialize Theme, Editor Sync Scroll, Mode, and Quota Behavior choice
   initTheme();
+  watchTranslationSettings();
   setupSyncScroll();
   initQuotaBehaviorSelectors();
   applyAppMode(currentAppMode);

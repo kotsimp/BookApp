@@ -2,7 +2,7 @@
 backend/gemini_key_pool.py - Multi-Key Gemini API Pool, Quota & Rate Limit Manager.
 Supports configuring up to 4 Google Gemini API keys with:
 - Automatic failover and rotation across keys upon daily quota exhaustion or auth errors.
-- Per-model quota isolation (e.g. 20 RPD limits on preview models never kill the key for 1500 RPD models).
+- Per-model quota isolation (e.g. one model's 20 RPD limit never kills the key for its other models).
 - Independent sliding-window Rate Limiter (RPM & TPM) per key and model to prevent burst 429 stampedes.
 - Accurate error parsing for Google RPC QuotaFailure, RetryInfo (retryDelay), and Retry-After headers.
 - Comprehensive diagnostic routines for live and mocked environments.
@@ -26,8 +26,7 @@ _MODEL_COOLDOWNS: Dict[Tuple[str, str], float] = {}  # (key, model) -> timestamp
 MAX_KEYS = 4
 
 # Known default quotas for Google Gemini Free Tier
-# Standard models have 15 RPM / 1,500 RPD / 1M TPM
-# Preview/experimental models have 2 to 5 RPM / 20 RPD / 32k TPM
+# Google sets and changes them per project and model: the quota in its 429 answer decides, these are only defaults.
 DEFAULT_MODEL_RPM: Dict[str, int] = {
     "gemini-3.5-flash-lite": 15,
     "gemini-3.1-flash-lite": 15,
@@ -43,7 +42,7 @@ DEFAULT_MODEL_RPD: Dict[str, int] = {
     "gemini-3.5-flash-lite": 1500,
     "gemini-3.1-flash-lite": 1500,
     "gemini-flash-lite-latest": 1500,
-    "gemini-3.5-flash": 1500,
+    "gemini-3.5-flash": 20,  # GenerateRequestsPerDayPerProjectPerModel-FreeTier, seen live in November 2026
     "gemini-flash-latest": 1500,
     "gemini-3-flash-preview": 50,
     "gemini-3.8-flash": 20,
@@ -276,6 +275,8 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
     if status == 429 or "quota" in err_low or "rate limit" in err_low or "resource_exhausted" in err_low:
         # Check details array for structured Google RPC objects
         details = err_obj.get("details", []) if isinstance(err_obj, dict) else []
+        quota_ids: List[str] = []
+        quota_values: List[str] = []
         for d in details:
             if not isinstance(d, dict):
                 continue
@@ -294,9 +295,13 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
                 for v in d.get("violations", []):
                     if not isinstance(v, dict):
                         continue
-                    result["quota_metric"] = v.get("quotaMetric")
-                    result["quota_id"] = v.get("quotaId")
-                    result["quota_value"] = v.get("quotaValue")
+                    quota_ids.append(str(v.get("quotaId") or "").lower())
+                    quota_values.append(str(v.get("quotaValue", "")))
+                    # several limits can be reported at once: a daily one decides, wherever it is listed
+                    if "perday" not in str(result["quota_id"] or "").lower():
+                        result["quota_metric"] = v.get("quotaMetric")
+                        result["quota_id"] = v.get("quotaId")
+                        result["quota_value"] = v.get("quotaValue")
                     dims = v.get("quotaDimensions", {})
                     if isinstance(dims, dict) and dims.get("model"):
                         result["model"] = dims.get("model")
@@ -323,7 +328,7 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
         qid = (result["quota_id"] or "").lower()
 
         # Explicit daily indicators
-        has_daily_qid = "requestsperday" in qid or "daily" in qid or "perday" in qid
+        has_daily_qid = any(word in qid for word in ("requestsperday", "daily", "perday"))
         has_daily_text = (
             "per day limit exceeded" in err_low
             or "requests per day" in err_low
@@ -340,8 +345,11 @@ def parse_gemini_error(status: int, response_text: str) -> Dict[str, Any]:
                 result["category"] = "QUOTA_EXCEEDED_DAILY_KEY"
             return result
 
-        # Model-specific plan/tier check
-        if ("billing details" in err_low or "plan" in err_low) and not result["is_daily_quota"]:
+        # Model-specific plan/tier check. Google's standard text of *every* 429 says "check your plan and billing
+        # details": only a limit of zero, or no sign of a short wait, means the model is not in this plan.
+        no_allowance = "0" in quota_values or bool(re.search(r"limit:\s*0(?![\d.])", err_low))
+        short_wait = any("perminute" in q for q in quota_ids) or (not quota_ids and delay is not None)
+        if no_allowance or (("billing details" in err_low or "plan" in err_low) and not short_wait):
             result["category"] = "MODEL_TIER_RESTRICTED"
             result["is_model_specific"] = True
             result["is_transient"] = False
@@ -507,7 +515,7 @@ class GeminiKeyPool:
         """
         Marks ONLY a specific model as exhausted for a given key.
         Prevents a model-specific quota limit (e.g. 20 RPD on gemini-3.8-flash)
-        from disabling other high-quota models (e.g. 1500 RPD flash-lite) on the same key!
+        from disabling the other models on the same key!
         """
         k = (key or "").strip()
         m = (model or "").strip()

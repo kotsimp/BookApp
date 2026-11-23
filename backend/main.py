@@ -3,12 +3,14 @@ Main FastAPI application for the Document Translator & Audiobook Generator.
 """
 
 import asyncio
+import io
 import json
 import logging
 import os
 import re
 import shutil
 import uuid
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -27,7 +29,7 @@ from backend.api.common import (  # noqa: E402
 from backend.job_manager import (
     create_job, get_job, update_job, list_jobs, cleanup_old_jobs,
     cancel_job, clear_job_cancellation, register_task, unregister_task, is_job_cancelled,
-    cleanup_test_jobs, is_test_job_identifier,
+    cleanup_test_jobs, is_test_job_identifier, mark_interrupted, is_resumable, is_quota_stop, is_quota_error,
 )
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
@@ -50,13 +52,14 @@ async def _quota_auto_resume_monitor():
     """Background task monitoring Gemini API quota reset and auto-resuming paused batch queue items."""
     from backend.gemini_key_pool import GeminiKeyPool
     from backend.ai_polisher import is_gemini_quota_exhausted
-    from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
+    from backend.queue_manager import is_queue_paused_for_quota, quota_retry_due, resume_queue_after_quota
     while True:
         try:
             await asyncio.sleep(3.0)
             GeminiKeyPool.check_cooldowns()
-            if not is_gemini_quota_exhausted():
-                if is_queue_paused_for_quota():
+            # without any key "wait" must keep waiting, not silently continue on the free engine
+            if GeminiKeyPool.get_keys() and not is_gemini_quota_exhausted():
+                if is_queue_paused_for_quota() and quota_retry_due():
                     logger.info("[Auto-Resume Monitor] Gemini API quota reset! Automatically resuming paused batch queue items...")
                     resume_queue_after_quota(_execute_queue_item)
         except asyncio.CancelledError:
@@ -64,6 +67,28 @@ async def _quota_auto_resume_monitor():
         except Exception as ex:
             logger.debug(f"[Auto-Resume Monitor] Loop tick error: {ex}")
             await asyncio.sleep(3.0)
+
+
+def _is_quota_failure(error: Exception, uses_ai: bool) -> bool:
+    """Whether a failed job stopped for Gemini quota, rather than failing for its own reason while quota is low."""
+    from backend.ai_polisher import DailyQuotaExhaustedError, is_gemini_quota_exhausted
+    from backend.translator import TranslationUnavailableError
+    from backend.tts_engine import NarrationError
+    if isinstance(error, DailyQuotaExhaustedError):
+        return True
+    if isinstance(error, (TranslationUnavailableError, NarrationError, FileNotFoundError)):
+        return False
+    if is_quota_error(str(error)):
+        return True
+    return uses_ai and not isinstance(error, (ValueError, OSError)) and is_gemini_quota_exhausted()
+
+
+def _quota_stop_step(error: Exception, quota: dict) -> str:
+    """A per-minute 429 also pauses a job, but then the day's allowance is not used up."""
+    from backend.ai_polisher import DailyQuotaExhaustedError
+    if quota.get("exhausted") or isinstance(error, DailyQuotaExhaustedError) or "429" not in str(error):
+        return "⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API"
+    return "⚠️ Σταμάτησε: όριο αιτημάτων Gemini (429)· συνεχίστε σε ένα λεπτό"
 
 
 @asynccontextmanager
@@ -80,6 +105,8 @@ async def lifespan(_app: FastAPI):
         )
     cleanup_old_jobs()
     cleanup_test_jobs()
+    from backend.queue_manager import restore_queue
+    restore_queue()
     monitor_task = asyncio.create_task(_quota_auto_resume_monitor())
     try:
         yield
@@ -106,6 +133,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _is_own_origin(origin: str, headers) -> bool:
+    """Whether `origin` is the address this request was sent to (or that a reverse proxy says it was sent to)."""
+    try:
+        source = urlsplit(origin)
+        source_port = source.port or {"http": 80, "https": 443}.get(source.scheme)
+        for name in ("host", "x-forwarded-host"):
+            value = (headers.get(name) or "").split(",")[0].strip()
+            if not value or not source.hostname:
+                continue
+            target = urlsplit(f"//{value}")
+            # a proxy's "Host $host" drops the port, so it is compared only when it is there
+            if target.hostname == source.hostname and (target.port is None or target.port == source_port):
+                return True
+    except ValueError:
+        pass
+    return False
+
+
+@app.middleware("http")
+async def refuse_cross_site_changes(request: Request, call_next):
+    """CORS only hides responses: a form on any website could still POST here (upload, start, pause, clean-up)."""
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = request.headers.get("origin", "")
+        site = request.headers.get("sec-fetch-site")
+        # Browsers send Sec-Fetch-Site only to HTTPS and localhost addresses; they send Origin with every POST.
+        # A request with neither comes from a program, not from a website.
+        foreign = site == "cross-site" if site else bool(origin) and not _is_own_origin(origin, request.headers)
+        if foreign and origin not in _EXTRA_CORS_ORIGINS and not re.fullmatch(
+                r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?", origin):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Cross-site requests are not allowed."}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -157,7 +218,7 @@ class TranslateRequest(BaseModel):
 class AudiobookRequest(BaseModel):
     job_id: str
     language: str      # 'english' or 'greek' — language of the audio output
-    voice_name: str    # e.g. 'Athina (Female)'
+    voice_name: str    # e.g. 'Nestoras (Male)'
     dialogue_voice: Optional[str] = None  # optional second voice for character speech / dialogues
     use_translated: bool = False  # if True, use the translated text from a prior translation job
     narration_style: str = "literature"  # 'literature' (natural book flow) or 'standard'
@@ -173,6 +234,7 @@ class GenreDetectionRequest(BaseModel):
     sample_text: Optional[str] = None
     text: Optional[str] = None
     file_type: Optional[str] = ""
+    subjects: Optional[list[str]] = None  # what the file says about itself (from /api/preview)
 
 
 class AdminCleanupRequest(BaseModel):
@@ -233,7 +295,7 @@ class GlossaryTermRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub", ".doc", ".cbz", ".zip"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".epub", ".doc", ".cbz", ".cbr", ".zip"}
 _WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
@@ -255,7 +317,7 @@ def _sanitize_filename(filename: Optional[str]) -> str:
 
 def _get_file_type(filename: str) -> Optional[str]:
     ext = Path(filename).suffix.lower()
-    mapping = {".pdf": "pdf", ".docx": "docx", ".epub": "epub", ".cbz": "cbz", ".zip": "cbz"}
+    mapping = {".pdf": "pdf", ".docx": "docx", ".epub": "epub", ".cbz": "cbz", ".cbr": "cbz", ".zip": "cbz"}
     return mapping.get(ext)
 
 
@@ -299,7 +361,7 @@ async def upload_file(file: UploadFile = File(...)):
     ext = Path(safe_filename).suffix.lower()
 
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type '{ext}'. Supported: PDF, DOCX, EPUB, CBZ, ZIP.")
+        raise HTTPException(400, f"Unsupported file type '{ext}'. Supported: PDF, DOCX, EPUB, CBZ, CBR, ZIP.")
 
     if ext == ".doc":
         raise HTTPException(400, (
@@ -353,6 +415,23 @@ async def upload_file(file: UploadFile = File(...)):
                 f"Το αρχείο '{safe_filename}' δεν είναι έγκυρο αρχείο PDF (κατεστραμμένη επικεφαλίδα).",
             )
 
+        stored_name = safe_filename
+        if ext == ".cbr":
+            # RAR inside, or often simply a ZIP: from here on the app only ever sees a CBZ
+            from backend.comic_archive import ComicArchiveError, is_rar, rar_to_cbz
+            stored_name = f"{Path(safe_filename).stem}.cbz"
+            if is_rar(bytes(header_bytes)):
+                converted = job_dir / f"{uuid.uuid4().hex}.cbz"
+                try:
+                    await asyncio.to_thread(rar_to_cbz, tmp_path, converted)
+                    await asyncio.to_thread(os.replace, converted, tmp_path)
+                except ComicArchiveError as e:
+                    raise HTTPException(400, str(e))
+                finally:
+                    converted.unlink(missing_ok=True)
+            elif bytes(header_bytes[:2]) != b"PK":
+                raise HTTPException(400, f"Το αρχείο '{safe_filename}' δεν είναι έγκυρο αρχείο CBR.")
+
         # Create job and move upload atomically to its job directory
         job = create_job(
             file_path=str(tmp_path),
@@ -361,7 +440,7 @@ async def upload_file(file: UploadFile = File(...)):
         )
         job_upload_dir = UPLOAD_DIR / job.job_id
         job_upload_dir.mkdir(exist_ok=True)
-        final_path = job_upload_dir / safe_filename
+        final_path = job_upload_dir / stored_name
         shutil.move(str(tmp_path), str(final_path))
         update_job(job.job_id, file_path=str(final_path))
     except Exception:
@@ -544,6 +623,10 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         out_dir = Path(output_path).parent
         stem = Path(file_path).stem
         base_name = f"{stem}_translated_{target_lang}"
+        exports_before = _export_snapshot(out_dir, base_name)
+        warnings: list[str] = []
+        from backend.translator import start_engine_tracking
+        engines = start_engine_tracking()
 
         if is_job_cancelled(job_id):
             return
@@ -577,6 +660,10 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 translate_segments_with_gemini, source_lang=source_lang, target_lang=target_lang,
                 api_key=resolved_key, style="literature" if layout == "literature" else "natural",
                 quota_behavior=quota_behavior,
+                progress=lambda done, total: update_job(
+                    job_id, done_chunks=done, total_chunks=total, progress=int(done / max(total, 1) * 92),
+                    current_step=f"✨ AI translation: segment {done} of {total} (preserving formatting)...",
+                ),
             )
 
         # 0. Graphic Novel / Comic / Scanned Image PDF translation (balloons/vision only, preserving 100% artwork)
@@ -594,6 +681,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 api_key=resolved_key if resolved_key else None,
                 reading_direction=reading_dir,
                 quota_behavior=quota_behavior,
+                notes=warnings,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
             if fmt == "cbz":
@@ -606,17 +694,15 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 job.output_format = "cbz"
             elif fmt == "cbr":
                 cbr_path = out_dir / f"{base_name}.cbr"
-                if not cbr_path.exists():
-                    from backend.exporter import export_comic_archive
-                    export_comic_archive(final_comic_pdf, cbr_path, format="cbr")
+                from backend.exporter import export_comic_archive
+                export_comic_archive(final_comic_pdf, cbr_path, format="cbr")
                 final_path = cbr_path
                 job.output_path = str(cbr_path)
                 job.output_format = "cbr"
             elif fmt == "epub":
                 epub_path = out_dir / f"{base_name}.epub"
-                if not epub_path.exists():
-                    from backend.exporter import export_comic_epub
-                    export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel", reading_direction=reading_dir)
+                from backend.exporter import export_comic_epub
+                export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel", reading_direction=reading_dir)
                 final_path = epub_path
                 job.output_path = str(epub_path)
                 job.output_format = "epub"
@@ -698,6 +784,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 epub_prog,
                 style="literature",
                 segment_translator=ai_segment_translator,
+                notes=warnings,
             )
             if is_job_cancelled(job_id):
                 return
@@ -721,7 +808,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             if ai_polish and not resolved_key and (target_lang.lower() in ("greek", "el")):
                 from backend.typography import format_greek_typography
                 from backend.glossary import apply_glossary
-                txt_content = format_greek_typography(apply_glossary(txt_content, "greek", style="literature" if layout == "literature" else "formal"))
+                txt_content = format_greek_typography(apply_glossary(txt_content, "greek", style="literature" if layout == "literature" else "formal", translated=True))
                 Path(output_path).write_text(txt_content, encoding="utf-8")
             update_job(job_id, current_step=f"Exporting to {fmt.upper()}...", progress=95)
             final_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=layout)
@@ -729,6 +816,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if is_job_cancelled(job_id):
             return
 
+        keep = {Path(final_path)} | ({Path(final_comic_pdf)} if is_comic_flow else set())
+        await asyncio.to_thread(_set_aside_superseded, out_dir, exports_before, keep)
         # Remember how this file was made: later edits and exports must never regenerate a format-preserved one
         format_sync.mark_output(final_path, preserved=not refine_reexportable)
 
@@ -768,11 +857,16 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             return
 
         # Mark job complete (preserve real batch/page totals)
+        if not ai_polish and "gemini" in engines:
+            warnings.append("Google's free translation refused the requests, so Gemini translated (this uses your Gemini allowance).")
+        if "mymemory" in engines:
+            warnings.append("Some text was translated by MyMemory, a simpler free service, because Google refused: please check it.")
         final_total = max(int(getattr(job, "total_chunks", 0) or 0), 1)
         update_job(job_id,
             status="done",
             progress=100,
-            current_step=f"Exported {fmt.upper()} (Formatting Preserved)",
+            current_step=(f"⚠️ {' '.join(warnings)}" if warnings
+                          else f"Exported {fmt.upper()}" + ("" if refine_reexportable else " (Formatting Preserved)")),
             output_path=str(final_path),
             output_format=fmt,
             done_chunks=final_total,
@@ -780,18 +874,18 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         )
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Translation task was cancelled.")
-        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+        mark_interrupted(job_id)
     except Exception as e:
         logger.error(f"Translation/export error [{job_id}]: {e}", exc_info=True)
-        from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError, get_gemini_quota_info
+        from backend.ai_polisher import get_gemini_quota_info
         err_str = str(e)
-        if isinstance(e, DailyQuotaExhaustedError) or is_gemini_quota_exhausted() or any(k in err_str.lower() for k in ("quota", "resource_exhausted", "429")):
+        if _is_quota_failure(e, bool(ai_polish)):
             q_info = get_gemini_quota_info()
             update_job(
                 job_id,
                 status="error",
                 error=err_str if "Εξαντλήθηκε" in err_str else f"⚠️ {q_info['message'] or err_str}",
-                current_step="⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API",
+                current_step=_quota_stop_step(e, q_info),
             )
         else:
             update_job(job_id, status="error", error=err_str)
@@ -847,7 +941,16 @@ async def start_audiobook(req: AudiobookRequest, background_tasks: BackgroundTas
         raise HTTPException(400, "Gemini API key is required for AI Audiobook Polish. Επιλέξτε 'Αυτόματη μετάβαση σε Δωρεάν Μοντέλο' για εκφώνηση χωρίς κλειδί.")
 
     clear_job_cancellation(req.job_id)
-    update_job(req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior, final_refinement=req.final_refinement, refinement_report=None)
+    update_job(
+        req.job_id, mode="audiobook", status="running", error=None, quota_behavior=quota_behavior,
+        final_refinement=req.final_refinement, refinement_report=None,
+        done_chunks=0, total_chunks=0, progress=0,
+        audiobook_options={
+            "language": lang_norm, "voice_name": req.voice_name, "dialogue_voice": req.dialogue_voice,
+            "use_translated": bool(req.use_translated), "narration_style": req.narration_style,
+            "rate": req.rate, "pitch": req.pitch, "ai_polish": bool(req.ai_polish),
+        },
+    )
 
     background_tasks.add_task(
         _run_audiobook,
@@ -901,18 +1004,18 @@ async def _run_audiobook(
         )
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Audiobook task was cancelled.")
-        update_job(job_id, status="cancelled", current_step="🛑 Cancelled by user.")
+        mark_interrupted(job_id)
     except Exception as e:
         logger.error(f"Audiobook error [{job_id}]: {e}", exc_info=True)
-        from backend.ai_polisher import is_gemini_quota_exhausted, DailyQuotaExhaustedError, get_gemini_quota_info
+        from backend.ai_polisher import get_gemini_quota_info
         err_str = str(e)
-        if isinstance(e, DailyQuotaExhaustedError) or is_gemini_quota_exhausted() or any(k in err_str.lower() for k in ("quota", "resource_exhausted", "429")):
+        if _is_quota_failure(e, bool(ai_polish)):
             q_info = get_gemini_quota_info()
             update_job(
                 job_id,
                 status="error",
                 error=err_str if "Εξαντλήθηκε" in err_str else f"⚠️ {q_info['message'] or err_str}",
-                current_step="⚠️ Σταμάτησε: Εξαντλήθηκε το ημερήσιο όριο Gemini API",
+                current_step=_quota_stop_step(e, q_info),
             )
         else:
             update_job(job_id, status="error", error=err_str)
@@ -1042,6 +1145,7 @@ async def job_status(job_id: str):
         "refinement_report": getattr(job, "refinement_report", None),
         "gemini_usage": getattr(job, "gemini_usage", None),
         "max_quality": bool(getattr(job, "max_quality", False)),
+        "audiobook_options": getattr(job, "audiobook_options", None),
         "revision_report": getattr(job, "revision_report", None),
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
@@ -1051,6 +1155,47 @@ async def job_status(job_id: str):
     }
 
 
+
+
+_COVER_REMOVED = ".cover_removed"  # the user removed the book's cover: do not extract it again
+
+
+def _export_snapshot(out_dir: Path, base_name: str) -> dict:
+    """The exports of a translation as they are before a run: path -> modification time."""
+    found = {}
+    for ext in (".pdf", ".docx", ".doc", ".epub", ".cbz", ".cbr"):
+        path = out_dir / f"{base_name}{ext}"
+        if path.is_file():
+            found[path] = path.stat().st_mtime_ns
+    return found
+
+
+def _set_aside_superseded(out_dir: Path, before: dict, keep: set) -> None:
+    """
+    A finished run supersedes the other formats of the run before it: a download must not serve them and an edit must
+    not patch them. They are moved to previous/, not deleted.
+    """
+    for old, stamp in before.items():
+        try:
+            if old not in keep and old.is_file() and old.stat().st_mtime_ns == stamp:
+                (out_dir / "previous").mkdir(exist_ok=True)
+                os.replace(old, out_dir / "previous" / old.name)
+        except OSError as e:
+            logger.warning(f"Could not set aside the superseded {old.name}: {e}")
+
+
+def _text_language(text: str) -> str:
+    sample = (text or "")[:20000]
+    greek = len(re.findall(r"[\u0370-\u03ff\u1f00-\u1fff]", sample))
+    latin = len(re.findall(r"[A-Za-z]", sample))
+    return "english" if latin and greek < 0.25 * (greek + latin) else "greek"  # Greek technical prose is full of Latin
+
+
+def _translated_texts(job, out_dir: Path) -> list:
+    """A job's translation texts: the one in the job's current target language first, then newest first."""
+    found = sorted(out_dir.glob("*_translated_*.txt"), key=lambda f: f.stat().st_mtime, reverse=True)
+    lang = (getattr(job, "target_lang", "") or "").lower() if job else ""
+    return sorted(found, key=lambda f: not f.stem.endswith(f"_translated_{lang}"))
 
 
 def _export_from_text(text: str, out_dir: Path, fmt: str, base_name: str, **options) -> Path:
@@ -1107,7 +1252,11 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
         # 1. Check if a file in the requested format already exists (unless layout changed for text documents).
         #    A format-preserved file is always served as is: another layout would mean rebuilding it from plain text.
         if out_dir.exists():
-            keep = await asyncio.to_thread(format_sync.protected_files, job, out_dir) if (layout_changed or fmt == "doc") else set()
+            current_text = None
+            if fmt in ("txt", "docx", "doc", "pdf", "epub", "cbz", "cbr"):
+                current_text = next(iter(_translated_texts(job, out_dir)), None)
+            needs_keep = layout_changed or fmt in ("doc", "docx", "epub")
+            keep = await asyncio.to_thread(format_sync.protected_files, job, out_dir) if needs_keep else set()
             if fmt == "doc" and any(f.suffix.lower() == ".docx" for f in keep):
                 fmt = "docx"
             matching = [
@@ -1115,9 +1264,20 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                 if f.is_file() and f.suffix.lower() == f".{fmt}" and not f.name.endswith("_original.txt")
                 and (not layout_changed or fmt in ("mp3", "m4b") or f in keep)
             ]
+            if current_text:
+                # the job's current translation only: not another language's, nor one older than the text it came from
+                text_time = current_text.stat().st_mtime
+                matching = [
+                    f for f in matching
+                    if f.stem == current_text.stem
+                    and (is_comic_job or f in keep or f.stat().st_mtime >= text_time - 1)
+                ]
             if fmt == "m4b":
                 # older versions saved MP3 data under the .m4b name when ffmpeg was missing: convert those again
                 matching = [f for f in matching if is_mp4_file(f)]
+                # an audiobook generated again makes the earlier conversion stale
+                newest_mp3 = max((f.stat().st_mtime for f in out_dir.glob("*.mp3")), default=0.0)
+                matching = [f for f in matching if f.stat().st_mtime >= newest_mp3]
             if matching:
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
@@ -1126,7 +1286,8 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
         if not is_head and not out_path:
             # If cover image is not yet cached in out_dir, check original uploaded file
             cov_file = out_dir / "cover_image.jpg"
-            if out_dir.exists() and not cov_file.exists() and job and job.file_path and Path(job.file_path).exists():
+            if (out_dir.exists() and not cov_file.exists() and not (out_dir / _COVER_REMOVED).exists()
+                    and job and job.file_path and Path(job.file_path).exists()):
                 try:
                     from backend.exporter import extract_cover_image
                     c_bytes = extract_cover_image(job.file_path)
@@ -1139,6 +1300,8 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
             if is_comic_job and out_dir.exists():
                 comic_pdfs = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
                 if comic_pdfs:
+                    wanted = f"_translated_{(getattr(job, 'target_lang', '') or '').lower()}" if job else ""
+                    comic_pdfs.sort(key=lambda f: (f.stem.endswith(wanted), f.stat().st_mtime), reverse=True)
                     src_pdf = comic_pdfs[0]
                     base_name = src_pdf.stem
                     reading_dir = getattr(job, "reading_direction", "ltr") if job else "ltr"
@@ -1201,11 +1364,10 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
 
             # 3. Standard text formats
             if not out_path and out_dir.exists() and fmt in ("txt", "docx", "doc", "pdf", "epub"):
-                txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+                txt_files = _translated_texts(job, out_dir) or [
                     f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
                 ]
                 if txt_files:
-                    txt_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                     txt_file = txt_files[0]
                     txt_content = txt_file.read_text(encoding="utf-8")
                     base_name = txt_file.stem
@@ -1256,7 +1418,7 @@ async def get_cover_image(job_id: str):
     _validate_job_id(job_id)
     out_dir = OUTPUT_DIR / job_id
     cov_p = out_dir / "cover_image.jpg"
-    if not cov_p.exists():
+    if not cov_p.exists() and not (out_dir / _COVER_REMOVED).exists():
         job = get_job(job_id)
         if job and job.file_path and Path(job.file_path).exists():
             try:
@@ -1286,7 +1448,14 @@ async def upload_cover_image(job_id: str, file: UploadFile = File(...)):
     # Convert & strictly validate image bytes to JPEG using pymupdf
     try:
         import pymupdf
-        pix = pymupdf.Pixmap(content)
+        try:
+            pix = pymupdf.Pixmap(content)
+        except Exception:  # MuPDF has no WebP decoder
+            from PIL import Image
+            png = io.BytesIO()
+            with Image.open(io.BytesIO(content)) as im:
+                im.convert("RGB").save(png, "PNG")
+            pix = pymupdf.Pixmap(png.getvalue())
         if pix.width <= 0 or pix.height <= 0:
             raise ValueError("Invalid image dimensions.")
         # If pixmap has alpha or is CMYK, convert to RGB
@@ -1300,11 +1469,12 @@ async def upload_cover_image(job_id: str, file: UploadFile = File(...)):
     out_dir.mkdir(parents=True, exist_ok=True)
     cov_p = out_dir / "cover_image.jpg"
     cov_p.write_bytes(jpg_bytes)
+    (out_dir / _COVER_REMOVED).unlink(missing_ok=True)
 
     # Invalidate older exported PDF/EPUB/DOCX so re-download reflects new cover
     job = get_job(job_id)
     preserved = await asyncio.to_thread(format_sync.protected_files, job, out_dir)
-    txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+    txt_files = _translated_texts(job, out_dir) or [
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
     if txt_files and not format_sync.is_comic_output(job, out_dir):
@@ -1327,16 +1497,20 @@ async def delete_cover_image(job_id: str):
     """Remove the custom or extracted cover image for a book and refresh cached exports."""
     _validate_job_id(job_id)
     out_dir = OUTPUT_DIR / job_id
+    job = get_job(job_id)
     cov_p = out_dir / "cover_image.jpg"
     if cov_p.exists():
         try:
             cov_p.unlink()
         except Exception:
             pass
+    if job:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / _COVER_REMOVED).touch()
     # Refresh cached PDF/EPUB/DOCX without cover if translated text exists
     if out_dir.exists():
         job = get_job(job_id)
-        txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+        txt_files = _translated_texts(job, out_dir) or [
             f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
         ]
         if txt_files and not format_sync.is_comic_output(job, out_dir):
@@ -1372,6 +1546,12 @@ async def all_jobs(include_tests: bool = False):
             "status": j.status,
             "mode": j.mode,
             "progress": j.progress,
+            "done_chunks": j.done_chunks,
+            "total_chunks": j.total_chunks,
+            "done_pages": j.done_pages,
+            "total_pages": j.total_pages,
+            "resumable": is_resumable(j),
+            "quota_stopped": is_quota_stop(j),
             "has_output": j.output_path is not None,
         }
         for j in jobs
@@ -1504,6 +1684,24 @@ async def delete_job(job_id: str):
 # Text Review, Editing & Re-Export
 # ---------------------------------------------------------------------------
 
+@app.get("/api/jobs/{job_id}/chapters")
+async def get_audiobook_chapters(job_id: str):
+    """Chapter marks of the job's newest audiobook (for the player's chapter list)."""
+    _validate_job_id(job_id)
+    out_dir = OUTPUT_DIR / job_id
+    if not get_job(job_id) and not out_dir.is_dir():
+        raise HTTPException(404, f"Job '{job_id}' not found.")
+    audio = max(out_dir.glob("*.mp3"), key=lambda f: f.stat().st_mtime, default=None)
+    chapters = []
+    if audio:
+        try:
+            marks = json.loads(audio.with_suffix(".chapters.json").read_text(encoding="utf-8"))
+            chapters = [{"title": str(c["title"]), "start_seconds": float(c["start_ms"]) / 1000.0} for c in marks]
+        except (OSError, ValueError, KeyError, TypeError):
+            chapters = []
+    return {"job_id": job_id, "chapters": chapters}
+
+
 @app.get("/api/jobs/{job_id}/text")
 async def get_job_text(job_id: str):
     """Retrieve original and translated text for a job."""
@@ -1516,7 +1714,7 @@ async def get_job_text(job_id: str):
         else:
             raise HTTPException(404, "Job output not found.")
 
-    txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+    txt_files = _translated_texts(job, out_dir) or [
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
     translated_text = ""
@@ -1570,8 +1768,14 @@ async def _save_preserving_format(job, txt_file: Path, text: str) -> tuple[set, 
     return preserved, updated
 
 
-def _translation_text_path(job, out_dir: Path, fallback_stem: str) -> Path:
+def _translation_text_path(job, out_dir: Path, fallback_stem: str, text: str = "") -> Path:
+    """Where the job's text is kept; `text` names the language while nothing has been translated."""
     stem = Path(job.file_name).stem if job else fallback_stem
+    current = _translated_texts(job, out_dir)
+    if current:
+        return current[0]
+    if text.strip() and not (job and job.status == "done"):  # never translated: edited or polished as it is
+        return out_dir / f"{stem}_translated_{_text_language(text)}.txt"
     tgt_lang = re.sub(r"[^a-z-]", "", ((getattr(job, "target_lang", "") if job else "") or "").lower()) or "greek"
     return out_dir / f"{stem}_translated_{tgt_lang}.txt"
 
@@ -1584,11 +1788,13 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
     out_dir = OUTPUT_DIR / job_id
     if not out_dir.exists():
         raise HTTPException(404, "Job output not found.")
+    if job and job.status == "running":
+        raise HTTPException(409, "A task is running for this job: its output would overwrite these edits.")
 
-    txt_files = list(out_dir.glob("*_translated_*.txt")) or [
+    txt_files = _translated_texts(job, out_dir) or [
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
-    txt_file = txt_files[0] if txt_files else _translation_text_path(job, out_dir, job_id)
+    txt_file = txt_files[0] if txt_files else _translation_text_path(job, out_dir, job_id, req.translated_text)
 
     # Save edited text (and patch format-preserved documents in place)
     preserved, updated = await _save_preserving_format(job, txt_file, req.translated_text)
@@ -1687,7 +1893,8 @@ async def update_app_settings(req: SettingsRequest):
     if req.final_refinement_enabled is not None:
         save_setting("final_refinement_enabled", bool(req.final_refinement_enabled))
     from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
-    if is_queue_paused_for_quota():
+    keys_changed = req.gemini_api_keys is not None or req.gemini_api_key is not None
+    if keys_changed and is_queue_paused_for_quota() and GeminiKeyPool.get_keys():
         resume_queue_after_quota(_execute_queue_item)
     return {"status": "ok", "pool": GeminiKeyPool.get_pool_status()}
 
@@ -1713,7 +1920,7 @@ async def update_gemini_pool_keys(payload: dict):
     reset_model_cache()
     reset_vision_model_cache()
     from backend.queue_manager import is_queue_paused_for_quota, resume_queue_after_quota
-    if is_queue_paused_for_quota():
+    if is_queue_paused_for_quota() and saved:
         resume_queue_after_quota(_execute_queue_item)
     return {"status": "ok", "keys_count": len(saved), "pool": GeminiKeyPool.get_pool_status()}
 
@@ -1795,7 +2002,7 @@ async def polish_translation(req: PolishRequest):
         reset_vision_model_cache()
 
     if not text_to_polish:
-        txt_files = list(out_dir.glob("*_translated_*.txt")) or list(out_dir.glob("*.txt"))
+        txt_files = _translated_texts(job, out_dir) or list(out_dir.glob("*.txt"))
         if txt_files:
             text_to_polish = txt_files[0].read_text(encoding="utf-8")
         elif job and job.file_path and Path(job.file_path).exists():
@@ -1876,6 +2083,9 @@ async def polish_translation(req: PolishRequest):
         step=init_step,
     )
 
+    # The text's language picks the prompt, glossary and typography (the pipeline used to assume Greek)
+    polish_lang = _text_language(text_to_polish)
+
     from backend.ai_polisher import track_gemini_usage
     polish_usage_cm = track_gemini_usage()
     polish_usage = polish_usage_cm.__enter__()
@@ -1888,6 +2098,7 @@ async def polish_translation(req: PolishRequest):
             job_id=req.job_id,
             use_source_anchoring=effective_bilingual,
             progress_callback=on_progress,
+            target_lang=polish_lang,
             quota_behavior=polish_quota_behavior,
         )
         total_p = get_polish_job_status(req.job_id).get("total", 1)
@@ -1910,10 +2121,11 @@ async def polish_translation(req: PolishRequest):
             step=str(e),
         )
         logger.error(f"AI Polishing failed: {e}", exc_info=True)
+        polish_usage_cm.__exit__(None, None, None)
         raise HTTPException(500, f"AI Polishing failed: {str(e)}")
 
     # Update or create output files on disk
-    tgt_lang = (getattr(job, "target_lang", "greek") if job else "greek") or "greek"
+    tgt_lang = polish_lang
 
     # Automatic Final Output Refinement Stage for Polish
     try:
@@ -1929,7 +2141,7 @@ async def polish_translation(req: PolishRequest):
     except Exception as ref_ex:
         logger.warning(f"Refinement during standalone polish warning: {ref_ex}")
 
-    txt_file = _translation_text_path(job, out_dir, "polished_document")
+    txt_file = _translation_text_path(job, out_dir, "polished_document", polished)
     preserved, _updated = await _save_preserving_format(job, txt_file, polished)
     base_name = txt_file.stem
     fmt = ((job.output_format if job else "docx") or "docx").lower().lstrip(".")
@@ -2007,7 +2219,7 @@ async def add_glossary_term(req: GlossaryTermRequest):
     return {"status": "saved", "glossary": updated}
 
 
-@app.delete("/api/glossary/{term}")
+@app.delete("/api/glossary/{term:path}")
 async def remove_glossary_term(term: str):
     """Delete a glossary term."""
     from backend.glossary import delete_term
@@ -2039,7 +2251,9 @@ async def preview_document_text(job_id: str, max_chars: int = 3500):
             if total_len >= max_chars:
                 break
         preview_text = "\n\n".join(parts)[:max_chars]
-        return {"job_id": job_id, "file_type": job.file_type, "preview_text": preview_text}
+        from backend.genre_detector import book_subjects
+        return {"job_id": job_id, "file_type": job.file_type, "preview_text": preview_text,
+                "subjects": book_subjects(job.file_path, job.file_type)}
     except Exception as e:
         raise HTTPException(500, f"Preview extraction failed: {e}")
 
@@ -2049,7 +2263,8 @@ async def detect_genre(req: GenreDetectionRequest):
     """Auto-detects document genre, tone, recommended polish style and glossary category."""
     from backend.genre_detector import detect_genre_and_style
     input_text = req.sample_text or req.text or ""
-    return detect_genre_and_style(input_text, req.file_type or "")
+    subjects = [str(s)[:200] for s in (req.subjects or [])[:20]]
+    return detect_genre_and_style(input_text, req.file_type or "", subjects=subjects)
 
 
 @app.get("/api/tts/preview")
@@ -2113,6 +2328,7 @@ async def _execute_queue_item(q_item):
         layout_mode=q_item.layout_mode,
         reading_direction=q_item.reading_direction,
         ai_polish=q_item.ai_polish,
+        quota_behavior=getattr(q_item, "quota_behavior", "wait") or "wait",
         final_refinement=None,  # queue items follow the global final_refinement_enabled setting
         refinement_report=None,
         max_quality=False,      # the token-intensive revision pass is never applied implicitly to batches
@@ -2188,7 +2404,7 @@ async def retry_batch_queue_item(job_id: str):
         raise HTTPException(409, str(e))
 
     state_data = get_queue_state()
-    if not state_data["paused"]:
+    if not state_data["paused"] or state_data["paused_for_quota"]:  # "Retry Now" while waiting for quota
         state_data = start_queue(_execute_queue_item)
     return state_data
 
@@ -2248,7 +2464,6 @@ async def download_batch_queue_zip():
     """Bundles all completed translated files in the queue into a single ZIP archive.
     Requires all translations in the queue to be completed first.
     """
-    import io
     import zipfile
     from backend.queue_manager import get_queue_state, get_completed_queue_job_ids
 

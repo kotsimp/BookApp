@@ -136,6 +136,13 @@ _CONJUNCTIVE_DE_PRECEDING_WORDS = frozenset({
 })
 
 
+# A verb is negated, never one of these: 'στην περίπτωση δε αυτή' must not become a negation
+_DE_NEVER_NEGATES = frozenset({
+    "αυτή", "αυτό", "αυτός", "αυτοί", "αυτές", "αυτά", "αυτών", "αυτήν", "αυτόν",
+    "εκείνος", "εκείνη", "εκείνο", "εκείνοι", "εκείνες", "η", "ο", "οι",
+})
+
+
 def apply_final_nu_rules(text: str) -> str:
     """
     Applies the modern Greek grammar rule for final 'ν' on:
@@ -152,7 +159,8 @@ def apply_final_nu_rules(text: str) -> str:
             before = text[max(0, start_pos - 24):start_pos].rstrip()
             prev_m = re.search(r"([\wΆ-ώ\u1f00-\u1fff]+)$", before)
             prev_word = prev_m.group(1).lower() if prev_m else ""
-            if prev_word in _CONJUNCTIVE_DE_PRECEDING_WORDS or next_word.lower() == "και":
+            if (prev_word in _CONJUNCTIVE_DE_PRECEDING_WORDS or next_word.lower() == "και"
+                    or next_word.lower() in _DE_NEVER_NEGATES):
                 return m.group(0)
         keep = _should_keep_final_nu(next_word)
         is_upper = prefix.isupper()
@@ -248,6 +256,33 @@ _STANDALONE_NEXT_WORDS = frozenset({
 })
 
 
+# Latin look-alikes of Greek letters, to recognise short corrupted words ('kαι', 'τo')
+_LOOKALIKES = str.maketrans("aeiknoptuvyABEHIKMNOPTXYZ", "αεικνορτυνυΑΒΕΗΙΚΜΝΟΡΤΧΥΖ")
+_SHORT_GREEK_WORDS = frozenset(
+    "και το τα τη να αν οι τι σε με θα δε μη μα ως απ τον την των τις της του μου σου μας σας πως που στο στα στη "
+    "δεν μην ναι".split()
+)
+
+
+def is_mostly_greek(text: str) -> bool:
+    greek = len(re.findall(r"[Ͱ-Ͽ]", text or ""))
+    return greek > 0 and greek >= len(re.findall(r"[A-Za-z]", text))
+
+
+def is_corrupt_greek_word(word: str) -> bool:
+    """
+    True for a Greek word with Latin letters leaked into it. False for symbols that mix both scripts on purpose
+    (TNFα, NFκB, kΩ, MΩ, ΔΔCt, β2AR).
+    """
+    greek = len(re.findall(r"[Ͱ-Ͽ]", word))
+    latin = len(re.findall(r"[A-Za-z]", word))
+    if not greek or not latin or any(c.isdigit() for c in word):
+        return False
+    if len(word) <= 3:
+        return word.translate(_LOOKALIKES).lower() in _SHORT_GREEK_WORDS
+    return greek >= 2 and greek > latin
+
+
 def fix_broken_hyphens(text: str) -> str:
     """
     Rejoins Greek words split by line-break hyphens (e.g. 'υποσχέ- θηκαν' -> 'υποσχέθηκαν',
@@ -286,15 +321,30 @@ def fix_greek_elision_apostrophes(text: str) -> str:
         return text
     vowel_start = r"[αεηιουωάέήίόύώΑΕΗΙΟΥΩΆΈΉΊΌΎΏ]"
     # Match standalone elided prepositions/pronouns followed by space + vowel-initial Greek word
-    text = re.sub(
-        rf"\b(σ|Σ|γι|Γι|ΓΙ|απ|Απ|ΑΠ|μ|Μ|τ|Τ|θ|Θ)\s+({vowel_start}[\u0370-\u03ff]+)",
-        lambda m: f"{m.group(1)}' {m.group(2)}"
-        if m.group(1).lower() in ("σ", "γι", "απ")
-        or (m.group(1).lower() == "μ" and m.group(2).lower().startswith(("αρέσ", "αρεσ", "άφησ", "αφησ", "έκα", "εκα", "έχει", "εχει")))
-        else m.group(0),
-        text,
-    )
+    def _elide(m: re.Match) -> str:
+        head, word = m.group(1), m.group(2)
+        low, next_low = head.lower(), word.lower()
+        if low == "σ":
+            # the letter/symbol sigma: 'το Σ είναι το άθροισμα', '3 σ απόκλιση'
+            before = text[max(0, m.start() - 20):m.start()]
+            if next_low in _SIGMA_PREDICATES or re.search(
+                r"(?:(?:^|\W)(?:το|του|γράμμα|σύμβολο|παράμετρος|μεταβλητή)|\d|=)[ \t]*$", before, re.IGNORECASE
+            ):
+                return m.group(0)
+            return f"{head}' {word}"
+        if low in ("γι", "απ") or (low == "μ" and next_low.startswith(
+                ("αρέσ", "αρεσ", "άφησ", "αφησ", "έκα", "εκα", "έχει", "εχει"))):
+            return f"{head}' {word}"
+        return m.group(0)
+
+    text = re.sub(rf"\b(σ|Σ|γι|Γι|ΓΙ|απ|Απ|ΑΠ|μ|Μ|τ|Τ|θ|Θ)[ \t]+({vowel_start}[Ͱ-Ͽ]+)", _elide, text)
     return text
+
+
+_SIGMA_PREDICATES = frozenset({
+    "είναι", "ήταν", "ισούται", "ορίζεται", "υπολογίζεται", "αντιστοιχεί", "εκτιμάται", "εκφράζει", "αυξάνεται",
+    "ελαττώνεται", "ονομάζεται",
+})
 
 
 def format_greek_punctuation(text: str) -> str:
@@ -313,10 +363,10 @@ def format_greek_punctuation(text: str) -> str:
         url_stash.append(m.group(0))
         return f"\x00URL_{idx}\x00"
 
-    text = re.sub(r"https?://[^\s<>\"'»]+", _stash_url, text)
+    text = re.sub(r"(?:https?://|\bwww\.)[^\s<>\"'»]+", _stash_url, text)
 
-    # Remove horizontal spaces/tabs before punctuation (never collapse newlines!)
-    text = re.sub(r"[ \t]+([,.:;!?·»])", r"\1", text)
+    # Remove horizontal spaces/tabs before punctuation (never collapse newlines, never glue '.NET' or '.5')
+    text = re.sub(r"[ \t]+([,:;!?·»]|\.(?!\w))", r"\1", text)
     # Remove horizontal space after opening guillemet / before closing guillemet
     text = re.sub(r"«[ \t]+", "«", text)
     text = re.sub(r"[ \t]+»", "»", text)
@@ -332,7 +382,10 @@ def format_greek_punctuation(text: str) -> str:
         qmarks = m.group(2)
         if re.search(r"[\u0370-\u03ff]", token):
             return f"{token}{qmarks.replace('?', ';')}"
-        # Also convert '?' after Latin acronyms/closing parens inside a Greek line (e.g. "Τι είναι το API?")
+        # Also convert '?' after Latin acronyms/closing parens inside a Greek line (e.g. "Τι είναι το API?"),
+        # only where the sentence can end ('int?[]', 'page?id=1' are code)
+        if not re.match(r"[\s»\"'”’\)\]\.,…«—:;]|$", text[m.end():]):
+            return m.group(0)
         line_start = text.rfind("\n", 0, m.start()) + 1
         line_prefix = text[line_start:m.start()]
         if re.search(r"[\u0370-\u03ff]", line_prefix):
@@ -420,13 +473,12 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
 
     # 8. Vietnamese words/letters leaking into Greek
     text = text.replace("λầνες", "φορές")
-    text = text.replace("lần", "φορές")
+    text = re.sub(r"(?<=ερικές )lần\b", "φορές", text)
     text = text.replace("ά trọng", "άτρωτος")
     text = text.replace("α trọng", "άτρωτος")
     text = text.replace("τρọνgος", "άτρωτος")
     text = re.sub(r"\b[ÍΊ]σως\b", "Ίσως", text)
     text = re.sub(r"\b[íί]σως\b", "ίσως", text)
-    text = re.sub(r"\bmódulos\b", "μονάδες", text, flags=re.IGNORECASE)
     text = text.replace("﹢", "+")
     text = re.sub(r"(^|[.,;:!?\s«»—–\-])‘τοι([,.:;!?\s«»—–\-]|$)", r"\1έτσι\2", text)
     text = text.replace("\u2010", "-")
@@ -439,15 +491,14 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
     text = text.replace("αντιΗρισμού", "αντιπερισπασμού")
     text = text.replace("επιβΑνες", "επιβλαβείς")
     text = text.replace("αδοσυμεντεδ", "μη καταγεγραμμένων")
-    text = re.sub(r"\bpodría\b", "μπορούσε", text)
+    text = re.sub(r"\bpodría(?= να\b)", "μπορούσε", text)
     text = re.sub(r"\bΉ iterrows ίσως\b", "Ή ίσως", text)
-    text = re.sub(r"\biterrows\b", "ίσως", text)
     text = re.sub(r"\bστην hull του\b", "στο κύτος του", text)
     text = re.sub(r"\bστο hull του\b", "στο κύτος του", text)
     text = re.sub(r"\bΤο riven φουσκωτό\b", "Το σχισμένο φουσκωτό", text)
-    text = re.sub(r"\bτην Gang\b", "τη Συμμορία", text)
-    text = re.sub(r"\bτης Gang\b", "της Συμμορίας", text)
-    text = re.sub(r"\bΗ Gang\b", "Η Συμμορία", text)
+    text = re.sub(r"\bτην Gang\b(?![ \t]*[A-Za-z&])", "τη Συμμορία", text)
+    text = re.sub(r"\bτης Gang\b(?![ \t]*[A-Za-z&])", "της Συμμορίας", text)
+    text = re.sub(r"\bΗ Gang\b(?![ \t]*[A-Za-z&])", "Η Συμμορία", text)
     text = re.sub(r"\bτην εμπιστοσύνη, Major\b", "την εμπιστοσύνη, Ταγματάρχη", text)
     text = re.sub(r"\bhangover μυαλά\b", "απρόσεκτα και μεθυσμένα μυαλά", text)
     text = re.sub(r"\bout εκεί έξω\b", "εκεί έξω", text)
@@ -455,7 +506,7 @@ def clean_script_glitches_and_foreign_artifacts(text: str) -> str:
     # 11. Subword Latin homoglyphs in Greek words
     def _fix_subword(m: re.Match) -> str:
         w = m.group(0)
-        if "http" in w or "@" in w or _SCI_UNIT_RE.match(w):
+        if "http" in w or "@" in w or _SCI_UNIT_RE.match(w) or not is_corrupt_greek_word(w):
             return w
         # Multi-letter subwords
         w = (
@@ -522,13 +573,10 @@ def fix_literary_calques_and_glitches(text: str) -> str:
         (r"άλωσε το πληκτρολόγιο", "άρπαξε το πληκτρολόγιο"),
         (r"αλόγους της Παναγίας", "αλογάκι της Παναγίας"),
         (r"το σκιασμένο πάνθηρα", "το σκιασμένο πλαίσιο"),
-        (r"τον σκιασμένο πάνθηρα", "το σκιασμένο πλαίσιο"),
         (r"για ζήση\b", "για βιοπορισμό"),
-        (r"να το λείψω\b", "να ζήσω χωρίς αυτό"),
+        (r"(?<=μπορούσα )να το λείψω\b(?!\s+αυτ)", "να ζήσω χωρίς αυτό"),
         (r"ανθρωπάκια της κάψουλας", "άνθρωποι των λοβών"),
         (r"ανθρωπάκι της κάψουλας", "ανθρωπάκι των λοβών"),
-        (r"άνθρωπο της κάψουλας", "άνθρωπο των λοβών"),
-        (r"άνθρωπος της κάψουλας", "άνθρωπος των λοβών"),
         (r"Ανθρωπάκι της κάψουλας", "Ανθρωπάκι των λοβών"),
         (r"Είναι μια παρθένη, Σουζ", "Είναι μια παραίσθηση, Σουζ"),
         (r"σπερματική παρατήρηση", "θεμελιώδης παρατήρηση"),
@@ -536,6 +584,9 @@ def fix_literary_calques_and_glitches(text: str) -> str:
         (r"Πέζαμε προς έναν τοιχώματα", "Πέφταμε προς έναν τοίχο"),
     )
 
+    # 'άνθρωπος της κάψουλας' alone may be an astronaut: a calque only next to the 'pod people' diminutive
+    if re.search(r"ανθρωπάκια? της κάψουλας|ανθρωπάκι της κάψουλας", text, re.IGNORECASE):
+        text = re.sub(r"άνθρωπο(ς?) της κάψουλας", r"άνθρωπο\1 των λοβών", text)
     for pat, rep in replacements:
         text = re.sub(pat, rep, text)
 
@@ -568,10 +619,9 @@ def fix_double_accents_and_orthography(text: str) -> str:
         "υποχωρήτικά": "υποχωρητικά",
         "ενόςραδιενεργού": "ενός ραδιενεργού",
         "Τιναχτήκαπίσω": "Τιναχτήκαμε πίσω",
-        "ίσα ίσα": "ίσα-ίσα",
     }
     for bad, good in known_fixes.items():
-        text = text.replace(bad, good)
+        text = re.sub(rf"(?<!\w){re.escape(bad)}(?!\w)", good, text)
 
     # General algorithmic rule for double accents on non-enclitic words
     accent_chars = "άέήίόύώΆΈΉΊΌΎΏ"
@@ -587,8 +637,11 @@ def fix_double_accents_and_orthography(text: str) -> str:
             return w
         tail = text[m.end():m.end() + 15]
         # Legitimate enclitic rule: antepenult accent + ultima accent before clitic pronoun
-        if re.match(r"^\s+(?:μου|σου|του|της|μας|σας|τους|με|σε|τον|την|το|τα|τις)\b", tail, re.IGNORECASE):
+        if re.match(r"^\s+(?:(?:μου|μού|σου|σού|του|τού|της|τής|μας|μάς|σας|σάς|τους|τούς|με|σε|τον|την|τη|το|τα|τις|τες)\b"
+                    r"|[μστ]['’])", tail, re.IGNORECASE):
             return w
+        if not text[m.end():].strip():
+            return w  # the end of a fragment: the pronoun may follow in the next formatting run or chunk
         chars = list(w)
         # If accents are separated by an intervening unaccented vowel (antepenult + ultima orphan enclitic),
         # the secondary orphan accent is on the ultima.
@@ -616,10 +669,12 @@ def fix_stutters_and_duplicate_tokens(text: str) -> str:
 
     text = re.sub(r"\b([Οο]\s+Σπίντελ)\s+[Οο]\s+Σπίντελ\b", r"\1", text)
     text = re.sub(r"\b([Μμ]ια\s+διασπασμένη)\s+[Μμ]ια\s+διασπασμένη\b", r"\1", text)
-    text = re.sub(r"Παραπομπές\s*\n+\s*Παραπομπές", "Παραπομπές", text)
+    text = re.sub(r"(?m)^([ \t]*Παραπομπές)[ \t]*\n+[ \t]*Παραπομπές[ \t]*$", r"\1", text)
 
-    # Stutters like 'μας μας', 'μου μου', 'τους τους' (avoiding legitimate emphatic 'πολύ πολύ', 'σιγά σιγά')
-    text = re.sub(r"\b(μας|μου|τους|της|των|τον|την|το)\s+\1\b", r"\1", text, flags=re.IGNORECASE)
+    # A doubled clitic is correct Greek ('η μητέρα μου μου είπε', 'της της έδωσε', 'πες το το βράδυ', 'πάρ' την την
+    # Κυριακή'), so only a triple, or the never-doubled 'των', is a stutter.
+    text = re.sub(r"\b(μας|μου|τους|της|τον|την|το)(?:[ \t]+\1\b){2,}", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(των)[ \t]+\1\b", r"\1", text, flags=re.IGNORECASE)
 
     return text
 
@@ -633,10 +688,11 @@ def sanitize_translated_urls(text: str) -> str:
         return text
 
     text = re.sub(
-        r"https?://www\.(?:ριfters|rifters)\.com/blindsight/[^\s<>]+",
+        r"https?://www\.(?:ριfters|rifters)\.com/blindsight/βαμπ(?:[^\s<>»).,;]|\.(?=\w))*",
         "http://www.rifters.com/blindsight/vampires.htm",
         text,
     )
+    text = text.replace("://www.ριfters.com", "://www.rifters.com")
     text = re.sub(
         r"https?://hctv\.humnet\.ucla\.edu/[^\s<>]*(?:ευρετήριο|VowειsανdCονsονανts)[^\s<>]*",
         "http://hctv.humnet.ucla.edu/departments/linguistics/VowelsandConsonants/index.html",

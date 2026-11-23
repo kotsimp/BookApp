@@ -9,3 +9,9 @@ data
 tests
 .pytest_cache
 *.log
+# your settings hold your API keys: never part of an image (docker-compose mounts ./config at run time)
+config/settings.json
+config/*.corrupt
+config/*.tmp
+.env
+.env.*
