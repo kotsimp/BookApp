@@ -1489,10 +1489,11 @@ function notifyRevisionReport(jobId, data) {
   const rep = data && data.revision_report;
   if (!rep || data.status !== 'done' || !jobId || _shownRevisionReports.has(jobId)) return;
   _shownRevisionReports.add(jobId);
+  const kept = rep.kept_pages ? ` · ${rep.kept_pages} σελίδες κράτησαν το 1ο πέρασμα (η αναθεώρησή τους δεν ήταν αξιόπιστη).` : '';
   if (rep.status === 'revised') {
-    toast(`🏆 Αναθεώρηση με το πρωτότυπο: διορθώθηκαν ${rep.changed_lines || 0} γραμμές.`, 'success');
+    toast(`🏆 Αναθεώρηση με το πρωτότυπο: διορθώθηκαν ${rep.changed_lines || 0} γραμμές.${kept}`, kept ? 'warning' : 'success');
   } else if (rep.status === 'verified_clean') {
-    toast('🏆 Αναθεώρηση με το πρωτότυπο: δεν χρειάστηκαν διορθώσεις.', 'info');
+    toast(`🏆 Αναθεώρηση με το πρωτότυπο: δεν χρειάστηκαν διορθώσεις.${kept}`, kept ? 'warning' : 'info');
   } else if (rep.status === 'error' && rep.reason === 'quota_exhausted') {
     toast('🏆 Η αναθεώρηση παραλείφθηκε (όριο Gemini ή μη διαθέσιμο πλήρες μοντέλο) — κρατήθηκε η μετάφραση του 1ου περάσματος.', 'warning');
   } else if (rep.status === 'error') {

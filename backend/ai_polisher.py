@@ -389,8 +389,10 @@ _LEAKED_PROMPT_HEADER_RE = re.compile(
 )
 
 # Exotic scripts that should NEVER appear inside translated Greek prose unless present in source
+# (incl. the Hebrew/Arabic presentation forms a model emits as '\u039a\ufe8d\ufead\u03bb', '\u03a6\u03b1\u03c1\u03bc\u03b1\u03ba\u03b5\ufeed\u03c4\u03b9\u03ba\u03ae')
 _EXOTIC_SCRIPT_RE = re.compile(
-    r"[\u0400-\u04ff\u0530-\u058f\u0590-\u05ff\u0600-\u06ff\u0900-\u0e7f\u2e80-\u9fff\uac00-\ud7af\ufffd]"
+    r"[\u0400-\u052f\u0530-\u058f\u0590-\u05ff\u0600-\u08ff\u0900-\u0e7f\u10a0-\u10ff\u2e80-\u9fff\uac00-\ud7af"
+    r"\ufb1d-\ufdff\ufe70-\ufefc\ufffd]"
 )
 _GREEK_CHAR_RE = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]")
 _LATIN_LETTER_RE = re.compile(r"[A-Za-z\u00c0-\u024f]")
@@ -431,6 +433,123 @@ def fix_mixed_script_words(text: str, source_text: str = "") -> str:
 
     pat = re.compile(r'(?<![A-Za-z0-9_\u0370-\u03ff])(?=[^\s]*[\u0370-\u03ff])(?=[^\s]*[A-Za-z])[^\s,;.:!?«»"\'()\[\]—–\-/\\*<>]+(?![A-Za-z0-9_\u0370-\u03ff])')
     return pat.sub(_repair_tok, text)
+
+
+_POLYTONIC_RE = re.compile(r"[ἀ-῿]")
+# breathings and the iota subscript go; the circumflex and grave become the modern accent
+_MONOTONIC_MARKS = {"̓": "", "̔": "", "̓": "", "ͅ": "", "͂": "́", "̀": "́"}
+
+
+def to_monotonic(text: str) -> str:
+    """Polytonic letters a model slipped into modern Greek ('ῥούφηξε', 'δῶθε', 'ἴσως'), written monotonic."""
+    if not text or not _POLYTONIC_RE.search(text):
+        return text
+
+    def _one(m: "re.Match[str]") -> str:
+        decomposed = unicodedata.normalize("NFD", m.group(0))
+        base, marks = decomposed[0], [_MONOTONIC_MARKS.get(c, c) for c in decomposed[1:]]
+        if not base.isalpha():
+            return "" if unicodedata.category(m.group(0)) == "Sk" else m.group(0)  # a spacing breathing mark
+        kept = ("̈" if "̈" in marks else "") + ("́" if "́" in marks else "")
+        return unicodedata.normalize("NFC", base + kept)
+
+    return _POLYTONIC_RE.sub(_one, text)
+
+
+_PROSE_WORD_RE = re.compile(r"^[\"“‘'(«]?[A-Za-z][A-Za-z'’\-]*[.,;:!?\"”’')»…]*$")
+
+
+def _letters(word: str) -> str:
+    return re.sub(r"[^a-z]", "", word.lower())
+
+
+def _copied_source_prose(answer: str, given: str, min_words: int = 25) -> int:
+    """
+    Length in words of the longest run of the source's prose that `answer` copied unchanged, or 0.
+    Names, short quotations and reference lists stay out: a run needs `min_words` plain words in a row, mostly in
+    lower case as running prose is, and its opening words must occur word for word in `given`.
+    """
+    body = re.sub(r"={3,}\s*PAGE\s+\d+\s*={3,}", " ", answer or "")
+    source = " " + " ".join(w for w in map(_letters, (given or "").split()) if w) + " "
+    best = 0
+    run: list[str] = []
+
+    def close() -> None:
+        nonlocal best
+        if len(run) >= max(min_words, best + 1):
+            lower = sum(1 for w in run if w.lstrip("\"“‘'(«")[:1].islower())
+            probe = " " + " ".join(w for w in map(_letters, run[:12]) if w) + " "
+            if lower >= 0.6 * len(run) and probe in source:
+                best = len(run)
+        run.clear()
+
+    for tok in body.split():
+        if _PROSE_WORD_RE.match(tok):
+            run.append(tok)
+        else:
+            close()
+    close()
+    return best
+
+
+def _split_marked_pages(text: str) -> list[tuple[Optional[int], str]]:
+    """[(page number or None for text before the first marker, body), ...] in order, duplicates kept."""
+    parts = re.split(r"={3,}\s*PAGE\s+(\d+)\s*={3,}", text or "")
+    out: list[tuple[Optional[int], str]] = [(None, parts[0])] if parts[0].strip() else []
+    out += [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts), 2)]
+    return out
+
+
+def find_untranslated_pages(translated: str, original: str, min_words: int = 25) -> list[int]:
+    """Pages of a translation that still carry a passage of the original's prose, copied unchanged."""
+    source: dict[int, list[str]] = {}
+    for pn, body in _split_marked_pages(original):
+        if pn is not None:
+            source.setdefault(pn, []).append(body)
+    found = set()
+    for pn, body in _split_marked_pages(translated):
+        if pn is None or not body.strip():
+            continue
+        # text may drift across a page break: the neighbouring pages count as the same source
+        ref = "\n".join("\n".join(source.get(p, [])) for p in (pn - 1, pn, pn + 1))
+        if ref.strip() and _copied_source_prose(body, ref, min_words):
+            found.add(pn)
+    return sorted(found)
+
+
+_EMPTY_DUPLICATE_MARKER_RE = re.compile(r"={3,}\s*PAGE\s+(\d+)\s*={3,}\s*(?=={3,}\s*PAGE\s+\1\s*={3,})")
+
+
+def collapse_empty_duplicate_markers(text: str) -> str:
+    """'=== PAGE 14 ===' left empty right before another '=== PAGE 14 ===' (a split page's seam) is dropped."""
+    return _EMPTY_DUPLICATE_MARKER_RE.sub("", text or "")
+
+
+def _quality_retry_hint(issues: list[str], answer: str, source: str, greek_target: bool) -> str:
+    """What the retry after a flagged answer is told about the previous attempt's faults."""
+    if not greek_target:
+        return ""
+    hint = ""
+    bad_tokens = _find_mixed_script_tokens(answer, source_text=source)
+    if bad_tokens:
+        hint += (
+            "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ ΜΕΙΚΤΟΥ ΑΛΦΑΒΗΤΟΥ ---\n"
+            f"Στην προηγούμενη προσπάθεια εμφανίστηκαν λέξεις με ξένους/λατινικούς χαρακτήρες μέσα σε ελληνικές λέξεις "
+            f"({', '.join(bad_tokens[:8])}). Γράψε ΟΛΕΣ τις ελληνικές λέξεις με 100% καθαρούς ελληνικούς χαρακτήρες!"
+        )
+    if any(i.startswith("dialogue_dashes") for i in issues):
+        hint += (
+            "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ ΔΙΑΛΟΓΩΝ ---\n"
+            "Στην προηγούμενη προσπάθεια οι διάλογοι γράφτηκαν με παύλες (—). Το πρωτότυπο βάζει τους διαλόγους σε "
+            "εισαγωγικά: γράψε ΚΑΘΕ διάλογο μέσα σε «...», όπως σε όλο το υπόλοιπο βιβλίο."
+        )
+    if any(i.startswith("untranslated") for i in issues):
+        hint += (
+            "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ: ΑΜΕΤΑΦΡΑΣΤΟ ΚΕΙΜΕΝΟ ---\n"
+            "Στην προηγούμενη προσπάθεια ένα τμήμα έμεινε στη γλώσσα του πρωτοτύπου. Μετάφρασε ΟΛΟ το κείμενο στα "
+            "Ελληνικά, και τα σκληρά ή βίαια σημεία του κειμένου, πιστά και χωρίς παραλείψεις."
+        )
+    return hint
 
 
 def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
@@ -482,6 +601,9 @@ def sanitize_ai_output(text: str, source_text: str = "") -> str:
     # NFC: models sometimes emit polytonic-block or decomposed accents (e.g. U+1FCB 'Ή', 'Η'+U+0301) that look right
     # but break search, glossary matching, PDF fonts and TTS; NFC maps them to the standard monotonic code points.
     cleaned = unicodedata.normalize("NFC", text).strip()
+    # Polytonic letters ('ῥ', 'δῶθε') are a model's slip in modern Greek, unless the source itself is polytonic
+    if not _POLYTONIC_RE.search(src):
+        cleaned = to_monotonic(cleaned)
     # Strip outer markdown code fence if the model wrapped the whole output
     if "```" not in src:
         cleaned = re.sub(r"^```(?:markdown|text|el|greek)?\s*\n?", "", cleaned, flags=re.IGNORECASE)
@@ -598,6 +720,11 @@ def _answer_problem(
         return "wrong_language(greek)"
     if greek_target and not translating and latin >= 20 and latin > greek and given_greek > given_latin:
         return "wrong_language(latin)"
+    if greek_target and translating:
+        # a model that will not translate a passage (often a violent or crude one) echoes it back unchanged
+        copied = _copied_source_prose(answer, given)
+        if copied:
+            return f"untranslated(copied_words={copied})"
     return ""
 
 
@@ -687,6 +814,15 @@ def detect_greek_output_issues(
         re.IGNORECASE,
     ):
         issues.append("cot_leak")
+
+    # 2b. Dialogue switched to dashes where the source puts its dialogue in quotation marks
+    if greek_target and source_text:
+        dash_line = r"(?m)^\s*[—–]\s?\S"
+        src_quoted = len(re.findall(r'(?m)^\s*["“«]', source_text))
+        extra_dashes = len(re.findall(dash_line, text)) - len(re.findall(dash_line, source_text))
+        out_quoted = len(re.findall(r"(?m)^\s*«", text))
+        if src_quoted >= 3 and extra_dashes >= 3 and out_quoted < src_quoted / 2:
+            issues.append(f"dialogue_dashes({extra_dashes})")
 
     # 3. Missing page markers check
     if expected_pages and len(expected_pages) >= 2:
@@ -1540,14 +1676,8 @@ async def polish_text_with_gemini(
                     bad_model = meta.get("model")
                     if bad_model and not key.startswith(("AQ.Test", "AIzaTest")):
                         try:
-                            retry_instruction = batch_instruction
-                            bad_tokens = _find_mixed_script_tokens(polished, source_text=draft_batch_text)
-                            if bad_tokens and is_greek_target:
-                                retry_instruction += (
-                                    "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ ΜΕΙΚΤΟΥ ΑΛΦΑΒΗΤΟΥ ---\n"
-                                    f"Στην προηγούμενη προσπάθεια εμφανίστηκαν λέξεις με ξένους/λατινικούς χαρακτήρες μέσα σε ελληνικές λέξεις ({', '.join(bad_tokens[:8])}). "
-                                    "Γράψε ΟΛΕΣ τις ελληνικές λέξεις με 100% καθαρούς ελληνικούς χαρακτήρες!"
-                                )
+                            retry_instruction = batch_instruction + _quality_retry_hint(
+                                issues, polished, draft_batch_text, is_greek_target)
                             # Only exclude bad_model if another full (non-lite, non-gemma) model is available
                             other_full_models = [
                                 m for m in (_CACHED_AVAILABLE_MODELS or [])
@@ -2602,14 +2732,7 @@ async def translate_and_polish_direct_with_gemini(
                     bad_model = meta.get("model")
                     if bad_model:
                         try:
-                            retry_sys = batch_sys
-                            bad_tokens = _find_mixed_script_tokens(translated_b, source_text=batch_src)
-                            if bad_tokens:
-                                retry_sys += (
-                                    "\n\n--- ΚΡΙΣΙΜΗ ΔΙΟΡΘΩΣΗ ΜΕΙΚΤΟΥ ΑΛΦΑΒΗΤΟΥ ---\n"
-                                    f"Στην προηγούμενη προσπάθεια εμφανίστηκαν λέξεις με ξένους/λατινικούς χαρακτήρες μέσα σε ελληνικές λέξεις ({', '.join(bad_tokens[:8])}). "
-                                    "Γράψε ΟΛΕΣ τις ελληνικές λέξεις με 100% καθαρούς ελληνικούς χαρακτήρες!"
-                                )
+                            retry_sys = batch_sys + _quality_retry_hint(issues, translated_b, batch_src, True)
                             other_full_models = [
                                 m for m in (_CACHED_AVAILABLE_MODELS or [])
                                 if m != bad_model and not m.startswith("gemma") and "lite" not in m.lower()
@@ -2644,7 +2767,8 @@ async def translate_and_polish_direct_with_gemini(
                     translated_b, batch_src, is_target_greek,
                     expected_pages=expected_pnums if len(expected_pnums) >= 2 else None, translating=True)
                 if problem:
-                    if problem.startswith(("missing_pages", "truncated")):
+                    # a passage echoed untranslated is often one paragraph the model balks at: smaller pieces pass
+                    if problem.startswith(("missing_pages", "truncated", "untranslated")):
                         recovered = await _bisect_direct(problem)
                         if recovered is not None:
                             return recovered
@@ -2761,12 +2885,15 @@ async def translate_and_polish_direct_with_gemini(
         if cleaned_r:
             dedup_results.append(cleaned_r)
 
-    final_text = "\n\n".join(dedup_results)
+    final_text = collapse_empty_duplicate_markers("\n\n".join(dedup_results))
     final_text = sanitize_ai_output(final_text, source_text=full_original)
     final_text = apply_glossary(final_text, target_lang, style=style, translated=True)
     if target_lang.lower() in ("greek", "el"):
         from backend.typography import format_greek_typography
         final_text = format_greek_typography(final_text)
+        if not api_key.startswith(("AQ.Test", "AIzaTest")) and _exotic_greek_tokens(final_text, full_original):
+            update_job(job_id, current_step="Correcting words with letters of another alphabet...", progress=94)
+            final_text, _left = await repair_mixed_script_words(final_text, api_key, source_text=full_original)
 
     Path(output_path).write_text(final_text, encoding="utf-8")
     update_job(job_id, progress=95, current_step="Finalizing AI translated document...", output_path=output_path)
@@ -2779,6 +2906,126 @@ async def translate_and_polish_direct_with_gemini(
 # ---------------------------------------------------------------------------
 
 REVISION_TEMPERATURE = 0.15
+
+_REPAIR_WORDS_PROMPT_EL = (
+    "Είσαι διορθωτής ελληνικών κειμένων. Σε κάθε αριθμημένη γραμμή, η λέξη μέσα σε [[ ]] αλλοιώθηκε: μπήκαν μέσα της "
+    "γράμματα άλλου αλφαβήτου (λατινικά, κυριλλικά, εβραϊκά, αραβικά, κινεζικά κ.λπ.). Γράψε τη σωστή ελληνική λέξη, "
+    "με τον τόνο της, που ταιριάζει στη θέση της στην πρόταση. Απάντησε ΜΟΝΟ με γραμμές της μορφής «N. λέξη», μία "
+    "για κάθε αριθμό, χωρίς σχόλια."
+)
+_TOKEN_EDGE = r"\s,;.:!?«»\"'()\[\]—–\-/\\*<>"
+
+
+def _exotic_greek_tokens(text: str, source_text: str = "") -> list[str]:
+    """Greek words carrying letters of another alphabet ('ποгда', 'Ίσות', 'κ临床')."""
+    return [t for t in _find_mixed_script_tokens(text, source_text=source_text)
+            if _GREEK_CHAR_RE.search(t) and _EXOTIC_SCRIPT_RE.search(t)]
+
+
+async def repair_mixed_script_words(
+    text: str,
+    api_key: str,
+    source_text: str = "",
+    session: Optional[aiohttp.ClientSession] = None,
+    max_words: int = 60,
+) -> tuple[str, list[str]]:
+    """
+    Greek words still carrying letters of another alphabet after the batch retries, corrected by one small AI request
+    that sees each word in its sentence. Only a whole Greek word of similar length replaces a corrupted one; anything
+    else leaves it as it is. Returns (text, corrupted words left as they were).
+    """
+    tokens = _exotic_greek_tokens(text, source_text)
+    if not tokens or not (api_key or "").strip():
+        return text, tokens
+    todo = tokens[:max_words]
+    lines = []
+    for n, tok in enumerate(todo, 1):
+        at = text.find(tok)
+        start = max(text.rfind("\n", 0, at) + 1, at - 160)
+        end = text.find("\n", at + len(tok))
+        end = min(len(text) if end < 0 else end, at + len(tok) + 160)
+        lines.append(f"{n}. " + " ".join((text[start:at] + f"[[{tok}]]" + text[at + len(tok):end]).split()))
+    try:
+        answer = await _call_gemini_api("\n".join(lines), api_key, _REPAIR_WORDS_PROMPT_EL, session=session,
+                                        temperature=0.1, cache_gate=lambda _out: True)
+    except Exception as ex:  # quota, key or network: the words stay as they are and are reported
+        logger.warning(f"Corrupted-word repair skipped ({ex}); {len(tokens)} word(s) left as they are.")
+        return text, tokens
+    fixes: dict[str, str] = {}
+    for m in re.finditer(r"(?m)^\s*(\d+)[.)]\s*(.+?)\s*$", answer or ""):
+        n = int(m.group(1))
+        if not 1 <= n <= len(todo):
+            continue
+        tok, word = todo[n - 1], m.group(2).strip().strip("«»\"'“”[]")
+        if not re.fullmatch(r"[Ͱ-Ͽ]+(?:['’][Ͱ-Ͽ]+)?", word):
+            continue
+        if not 0.5 * len(tok) <= len(word) <= 2 * len(tok) + 2:
+            continue
+        if tok[:1].isupper() and word[:1].islower():
+            word = word[:1].upper() + word[1:]
+        fixes[tok] = word
+    for tok, word in fixes.items():
+        text = re.sub(rf"(?<![^{_TOKEN_EDGE}]){re.escape(tok)}(?![^{_TOKEN_EDGE}])", lambda _m, w=word: w, text)
+    if fixes:
+        logger.info(f"Repaired {len(fixes)} word(s) with letters of another alphabet.")
+    return text, [t for t in tokens if t not in fixes]
+
+
+def translation_leftover_notes(translated: str, original: str, greek_target: bool = True) -> list[str]:
+    """What the finished translation still carries that the reader would notice, for the job's final message."""
+    if not greek_target or not translated:
+        return []
+    notes = []
+    pages = find_untranslated_pages(translated, original or "")
+    if pages:
+        shown = ", ".join(map(str, pages[:10])) + (" …" if len(pages) > 10 else "")
+        notes.append(f"{len(pages)} page(s) still contain text in the original language (pages {shown} of the "
+                     f"original): translate again to retry them.")
+    words = _exotic_greek_tokens(translated, original or "")
+    if words:
+        notes.append(f"{len(words)} word(s) contain letters of another alphabet ({', '.join(words[:5])}): "
+                     f"please check them.")
+    return notes
+
+
+def _revised_page_ok(old: str, new: str, greek_target: bool) -> bool:
+    old_s, new_s = old.strip(), new.strip()
+    if not new_s:
+        return False
+    ratio = len(new_s) / max(len(old_s), 1)
+    if len(old_s) >= 200 and not 0.6 <= ratio <= 1.6:
+        return False
+    if len(new_s) > 3 * len(old_s) + 100:
+        return False
+    return not _answer_problem(new_s, old_s, greek_target)
+
+
+def merge_revised_pages(draft: str, revised: str, greek_target: bool = True) -> tuple[str, list[int]]:
+    """
+    The revision taken page by page: each page of `draft` gets its revised text when the revision returned that page
+    exactly once and plausibly; any other page keeps the draft. One odd page (a duplicated or lost marker) no longer
+    costs the whole revision. Returns (merged text, page numbers that kept the draft).
+    """
+    revised_by_page: dict[Optional[int], list[str]] = {}
+    for pn, body in _split_marked_pages(revised):
+        if body.strip():
+            revised_by_page.setdefault(pn, []).append(body)
+    draft_pages = _split_marked_pages(draft)
+    filled = Counter(pn for pn, body in draft_pages if body.strip())
+    out: list[str] = []
+    kept: list[int] = []
+    for pn, body in draft_pages:
+        new = body
+        if body.strip():
+            candidates = revised_by_page.get(pn, [])
+            if filled[pn] == 1 and len(candidates) == 1 and _revised_page_ok(body, candidates[0], greek_target):
+                lead = body[:len(body) - len(body.lstrip())]
+                tail = body[len(body.rstrip()):]
+                new = lead + candidates[0].strip() + tail
+            elif pn is not None:
+                kept.append(pn)
+        out.append(new if pn is None else f"=== PAGE {pn} ==={new}")
+    return "".join(out), kept
 
 
 async def revise_translation_against_source(
@@ -2844,13 +3091,21 @@ async def revise_translation_against_source(
     finally:
         _FULL_MODELS_ONLY.reset(policy_token)
 
-    marker_re = re.compile(r"={3,}\s*PAGE\s+(\d+)\s*={3,}")
     if not revised or not revised.strip():
         report.update(status="error", reason="empty_revision")
         return report
-    if marker_re.findall(revised) != marker_re.findall(draft):
-        report.update(status="error", reason="page_markers_changed")
-        return report
+    greek_target = target_lang.lower() in ("greek", "el", "gr")
+    revised, kept_pages = merge_revised_pages(draft, revised, greek_target=greek_target)
+    if kept_pages:
+        logger.warning(f"[{job_id}] Revision: {len(kept_pages)} page(s) keep the first pass "
+                       f"(missing, duplicated or implausible in the revision): {kept_pages[:20]}")
+        report.update(kept_pages=len(kept_pages), kept_page_list=kept_pages[:30])
+        filled_pages = sum(1 for pn, body in _split_marked_pages(draft) if pn is not None and body.strip())
+        if len(kept_pages) >= filled_pages:
+            report.update(status="error", reason="revision_unusable")
+            return report
+    if greek_target and not api_key.startswith(("AQ.Test", "AIzaTest")):
+        revised, _left = await repair_mixed_script_words(revised, api_key, source_text=original)
     ratio = len(revised) / max(len(draft), 1)
     if not (0.8 <= ratio <= 1.25):
         report.update(status="error", reason=f"length_ratio_{ratio:.2f}")

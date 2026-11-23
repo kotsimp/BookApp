@@ -692,6 +692,29 @@ async def _run_max_quality_revision(job_id, file_path, output_path, api_key, tar
     return report
 
 
+def _revision_notes(report) -> list[str]:
+    """The job's final message about the second AI pass, when it did not simply succeed."""
+    report = report or {}
+    if report.get("status") == "error":
+        return [f"The second AI pass (Maximum quality) did not complete ({report.get('reason') or 'error'}); "
+                f"the first-pass translation was kept."]
+    if report.get("kept_pages"):
+        return [f"Maximum quality: {report['kept_pages']} page(s) kept the first-pass translation because the "
+                f"revision of those pages was unusable."]
+    return []
+
+
+def _leftover_notes(translated: str, original_path: Path, target_lang: str) -> list[str]:
+    """Pages still in the source language and words with letters of another alphabet, for the final message."""
+    from backend.ai_polisher import translation_leftover_notes
+    try:
+        original = original_path.read_text(encoding="utf-8") if original_path.is_file() else ""
+        return translation_leftover_notes(translated, original, greek_target=target_lang.lower() in ("greek", "el"))
+    except Exception as e:  # a report must never fail the translation
+        logger.warning(f"Leftover check skipped: {e}")
+        return []
+
+
 async def _run_translation(job_id, file_path, file_type, source_lang, target_lang, output_path, ai_polish=False, api_key=None, quota_behavior="wait"):
     task = asyncio.current_task()
     if task:
@@ -818,11 +841,13 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             if is_job_cancelled(job_id):
                 return
             if getattr(job, "max_quality", False):
-                await _run_max_quality_revision(job_id, file_path, output_path, resolved_key, target_lang,
-                                                style_for_layout, quota_behavior)
+                rev = await _run_max_quality_revision(job_id, file_path, output_path, resolved_key, target_lang,
+                                                      style_for_layout, quota_behavior)
                 if is_job_cancelled(job_id):
                     return
+                warnings.extend(_revision_notes(rev))
             txt_content = Path(output_path).read_text(encoding="utf-8")
+            warnings.extend(_leftover_notes(txt_content, Path(output_path).parent / f"{stem}_original.txt", target_lang))
             update_job(job_id, current_step=f"Exporting AI-polished {fmt.upper()}...", progress=95)
             final_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=layout)
 

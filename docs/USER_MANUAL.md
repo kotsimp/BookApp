@@ -208,6 +208,8 @@ All translated text passes automatically through the built-in publishing typogra
      - **Epigraph Isolation:** Separates quotes and source attributions (e.g. «—Ted Bundy») from main narrative blocks.
      - **Cross-Page Sentence Continuation:** Smoothly merges sentences broken by page breaks in the source file.
      - **Scene Breaks:** Centers and standardizes divider marks (e.g. `* * *`).
+     - **Table of Contents:** a contents page is recognised and shown as a clean list under "Περιεχόμενα". The original edition's page numbers are replaced by this PDF's own page numbers, and the titles it lists (parts or named sections) start on a new page, as in the printed book.
+     - **Bookmarks:** the PDF has a bookmark for every chapter, so a reader app's sidebar jumps straight to it.
 
 5. **🎨 Book Cover Image Management:**
    - **Auto-Detection & Extraction:** When uploading a PDF, EPUB, or DOCX, the first page is analyzed. If full-page artwork is detected, it is extracted immediately, a thumbnail is displayed, and the badge turns green:  
@@ -298,6 +300,9 @@ With **AI Polish** on, the translation is written for a demanding reader:
 * **Faithful to the original:** nothing left out, nothing added, no "decorated" wording. The author's voice and sentence rhythm are kept.
 * **Natural Greek:** it avoids the typical signs of a translated text, such as needless "αυτός/αυτή", a "του/της" after every noun, chains of "ο οποίος", and literal idioms and false friends ("makes sense" is not "κάνει νόημα").
 * **Correct typography:** chapter titles in Greek capitalisation ("Κεφάλαιο τρίτο: Το γράμμα…"), Greek punctuation, and «» quotation marks.
+* **Nothing left in English:** the AI sometimes hands a passage back untranslated (often a violent or crude scene). BookApp refuses such an answer, splits the page into smaller pieces and asks again. If a page still stays in English, the job's final message lists it ("N page(s) still contain text in the original language…"); translate the file again to retry those pages.
+* **Clean Greek letters:** a word with stray letters of another alphabet inside it (Cyrillic, Hebrew, Arabic, Chinese) is corrected at the end with one small extra AI request; any left over are named in the final message. Old-style polytonic accents (ῥ, ῶ, ἴ) become modern monotonic ones, unless the original itself is written in polytonic Greek.
+* **One dialogue style:** when a part of the book comes back with dash dialogue (— …) although the original uses quotation marks, it is asked again, so the whole book uses «…».
 * **Consistent across the whole book:** names, genders, how characters address each other (εσύ/εσείς), and narrative tense, using a register built from the whole book before translation starts.
 * **Translations into English** now get English editing rules.
 
@@ -308,6 +313,7 @@ Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After
 * It needs AI Polish and a Gemini key; ticking it switches AI Polish on automatically.
 * It always uses the full Gemini models. If those are unavailable (for example, their daily limit is used up), the revision is skipped and you keep the normal AI translation. The translation never fails because of this step.
 * A notification at the end tells you how many lines were corrected.
+* The revision is applied page by page. If a few pages come back unusable (missing, duplicated or cut short), only those pages keep the first-pass translation, and the notification and the job's final message say how many. If the revision doesn't complete at all, the final message says so, so you know you got only the first pass.
 * It isn't applied to Smart Batch Queue items, and switching to Basic Mode turns it off.
 
 ### 🔑 Gemini Multi-Key API Pool & Auto-Failover

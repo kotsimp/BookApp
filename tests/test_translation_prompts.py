@@ -285,8 +285,8 @@ class TestMaxQualityRevision(unittest.TestCase):
     def test_guards_keep_first_pass(self):
         from backend.ai_polisher import DailyQuotaExhaustedError
         cases = [
-            (dict(transform=lambda d: d.replace("=== PAGE 2 ===", "=== PAGE 3 ===")), "page_markers_changed"),
-            (dict(transform=lambda d: d + "\n\n" + d + "\n\n" + d), None),          # length / page guard
+            (dict(transform=lambda d: d.replace("=== PAGE", "=== P")), "revision_unusable"),  # no page recognisable
+            (dict(transform=lambda d: d + "\n\n" + d + "\n\n" + d), "revision_unusable"),     # every page tripled
             (dict(exc=DailyQuotaExhaustedError("no full model")), "quota_exhausted"),
             (dict(exc=PermissionError("bad key")), "auth_failed"),
         ]
@@ -300,6 +300,20 @@ class TestMaxQualityRevision(unittest.TestCase):
                     self.assertEqual(rep["reason"], reason)
                 self.assertEqual(tr.read_text(encoding="utf-8"), self.DRAFT, "first-pass translation must be kept")
                 self.assertFalse(ap._FULL_MODELS_ONLY.get())
+
+    def test_empty_duplicate_marker_no_longer_discards_the_revision(self):
+        # A split page's seam left '=== PAGE 1 ===' twice in the draft, the first one empty: the revision used to be
+        # thrown away whole ('page_markers_changed'); now every page takes its revision.
+        draft = self.DRAFT.replace("=== PAGE 1 ===", "=== PAGE 1 ===\n\n=== PAGE 1 ===", 1)
+        with tempfile.TemporaryDirectory() as td:
+            tr, orig = self._files(td, draft=draft)
+            fake, _ = self._reviser()
+            rep = self._run(fake, tr, orig)
+            self.assertEqual(rep["status"], "revised", rep)
+            self.assertNotIn("kept_pages", rep)
+            out = tr.read_text(encoding="utf-8")
+            self.assertIn("στην κάσα", out)
+            self.assertIn("Κόντεψε να πεταχτεί", out)
 
     def test_skips_and_clean(self):
         with tempfile.TemporaryDirectory() as td:

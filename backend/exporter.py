@@ -666,6 +666,55 @@ def _is_scene_break(line: str) -> bool:
     return bool(_SCENE_BREAK_RE.match(line.strip()))
 
 
+_TOC_NUMBER_RE = re.compile(r"^\d{1,4}$")
+_TOC_LINE_RE = re.compile(r"^(?P<title>\S.{0,78}?[^\s.!?;:,])(?:\s*\.{2,}\s*|\s+)(?P<num>\d{1,4})$")
+_TOC_SENTINEL = "\x00contents\x00"    # a contents list among the text blocks: entry titles joined by \x1f
+_TOC_HEADING = "\x00heading\x00"      # a line that opens a chapter because the contents list names it
+
+
+def _toc_key(title: str) -> str:
+    """A title compared without case, accents, spacing or trailing punctuation."""
+    bare = "".join(c for c in unicodedata.normalize("NFD", title or "") if not unicodedata.combining(c))
+    return " ".join(bare.casefold().split()).rstrip(" .:;")
+
+
+def _contents_page(lines: list[str]) -> Optional[list[tuple[str, str]]]:
+    """
+    The page as [("entry", title) | ("text", line)] when it is a table of contents: at least three titles each
+    followed by a page number, on its own line or at the line's end, the numbers rising. Otherwise None.
+    The original's page numbers are dropped: they do not hold in the new layout.
+    """
+    rows = [ln.strip() for ln in lines if ln.strip()]
+    items: list[tuple[str, str]] = []
+    numbers: list[int] = []
+    i = 0
+    while i < len(rows):
+        row = rows[i]
+        if (i + 1 < len(rows) and _TOC_NUMBER_RE.match(rows[i + 1]) and not _TOC_NUMBER_RE.match(row)
+                and len(row) <= 80 and row[-1] not in ".!?;,"):
+            items.append(("entry", row))
+            numbers.append(int(rows[i + 1]))
+            i += 2
+            continue
+        m = _TOC_LINE_RE.match(row)
+        if m:
+            items.append(("entry", m.group("title").rstrip(" .")))
+            numbers.append(int(m.group("num")))
+        else:
+            items.append(("text", row))
+        i += 1
+    entries = len(numbers)
+    if entries < 3 or entries < len(items) - entries or numbers != sorted(numbers) or numbers[-1] <= numbers[0]:
+        return None
+    return items
+
+
+def _contents_label(titles: list[str]) -> str:
+    sample = " ".join(titles)
+    greek = len(re.findall(r"[Ͱ-Ͽἀ-῿]", sample))
+    return "Περιεχόμενα" if greek >= len(re.findall(r"[A-Za-z]", sample)) else "Contents"
+
+
 def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list[dict]:
     """
     Cleans PDF page-break artifacts, running headers/footers, merges sentences broken
@@ -749,12 +798,32 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
             last -= 1
         cleaned_pages.append(page_lines[first:last])
 
-    for lines in cleaned_pages:
+    # A table of contents: its entries become a contents list (the original's page numbers do not hold in the new
+    # layout), and the same titles standing alone on later pages open chapters (a novel's parts, an appendix).
+    toc_at: dict[int, list[tuple[str, str]]] = {}
+    for index, lines in enumerate(cleaned_pages):
+        items = _contents_page(lines)
+        if items and (not toc_at or index == max(toc_at) + 1):
+            toc_at[index] = items
+        elif toc_at:
+            break
+    toc_titles = {_toc_key(t) for items in toc_at.values() for kind, t in items if kind == "entry"}
+    after_toc = max(toc_at) + 1 if toc_at else None
+
+    def is_heading_block(block: str) -> bool:
+        return block.startswith((_TOC_SENTINEL, _TOC_HEADING)) or _is_chapter_heading(block)
+
+    for index, lines in enumerate(cleaned_pages):
         while lines and not lines[0]:
             lines.pop(0)
         while lines and not lines[-1]:
             lines.pop()
         if not lines:
+            continue
+        if index in toc_at:
+            text_rows = [row for kind, row in toc_at[index] if kind == "text"]
+            merged_blocks.extend(text_rows)
+            merged_blocks.append(_TOC_SENTINEL + "\x1f".join(row for kind, row in toc_at[index] if kind == "entry"))
             continue
 
         # Split into distinct paragraphs, isolating chapter headings, scene breaks & epigraphs
@@ -765,6 +834,14 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
                 if curr:
                     paras.append(" ".join(curr))
                     curr = []
+                continue
+
+            if (after_toc is not None and index >= after_toc and _toc_key(line) in toc_titles
+                    and (not curr or curr[-1][-1:] in '.!?»"”…:;')):
+                if curr:
+                    paras.append(" ".join(curr))
+                    curr = []
+                paras.append(line if _is_chapter_heading(line) else _TOC_HEADING + line)
                 continue
 
             if _is_chapter_heading(line) or _is_scene_break(line):
@@ -802,8 +879,8 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
         for para in paras:
             if (
                 merged_blocks
-                and not _is_chapter_heading(para)
-                and not _is_chapter_heading(merged_blocks[-1])
+                and not is_heading_block(para)
+                and not is_heading_block(merged_blocks[-1])
                 and not _is_scene_break(para)
                 and not _is_scene_break(merged_blocks[-1])
             ):
@@ -822,15 +899,23 @@ def _prepare_literature_chapters(text: str, default_title: str = "Book") -> list
     seen_heading = False
 
     for blk in merged_blocks:
-        if _is_chapter_heading(blk):
-            if current_chapter["paragraphs"] or seen_heading:  # a heading may have no text of its own ("Part One")
+        if blk.startswith(_TOC_SENTINEL):
+            entries = blk[len(_TOC_SENTINEL):].split("\x1f")
+            if current_chapter["paragraphs"] or (seen_heading and current_chapter["title"]):
+                chapters.append(current_chapter)
+            chapters.append({"title": _contents_label(entries), "paragraphs": entries, "toc": True})
+            seen_heading = True
+            current_chapter = {"title": "", "paragraphs": []}  # what follows (epigraphs) until the next heading
+        elif is_heading_block(blk):
+            # a heading may have no text of its own ("Part One"); an untitled stretch with no text is nothing
+            if current_chapter["paragraphs"] or (seen_heading and current_chapter["title"]):
                 chapters.append(current_chapter)
             seen_heading = True
-            current_chapter = {"title": blk, "paragraphs": []}
+            current_chapter = {"title": blk.removeprefix(_TOC_HEADING), "paragraphs": []}
         else:
             current_chapter["paragraphs"].append(blk)
 
-    if current_chapter["paragraphs"] or seen_heading or not chapters:
+    if current_chapter["paragraphs"] or (seen_heading and current_chapter["title"]) or not chapters:
         chapters.append(current_chapter)
 
     # Nothing is filtered out: a title page, a "Part One" page or a contents list is text of the book. Headings
@@ -1073,9 +1158,18 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         return pg, margin_top
 
     chapters = _prepare_literature_chapters(text, default_title=out_path.stem)
+    outline: list[list] = []                          # PDF bookmarks: [level, title, 1-based page]
+    contents_slots: list[tuple[int, float, str]] = []  # (page index, baseline, entry) awaiting its page number
+    chapter_starts: dict[str, int] = {}                # chapter title key -> first page index, after the contents
+    past_contents = False
 
     for ch_idx, ch in enumerate(chapters):
         page, y = new_book_page()
+        if ch["title"] and (len(chapters) > 1 or ch["title"] != out_path.stem):
+            outline.append([1, ch["title"], page.number + 1])
+            if past_contents:
+                chapter_starts.setdefault(_toc_key(ch["title"]), page.number)
+        past_contents = past_contents or bool(ch.get("toc"))
 
         # Chapter title
         if ch["title"] and (len(chapters) > 1 or ch["title"] != out_path.stem):
@@ -1091,6 +1185,20 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         line_height = 16.5
         indent = 16.0
         is_first = True
+
+        if ch.get("toc"):
+            # one entry per line; the page numbers are written once every chapter has found its page
+            for entry in ch["paragraphs"]:
+                if y + line_height + 6.0 > content_bottom:
+                    page, y = new_book_page()
+                safe_entry = _sanitize_for_pdf_font(entry, font_obj)
+                size = body_size
+                while size > 8.0 and font_obj.text_length(safe_entry, fontsize=size) > max_line_w - 36.0:
+                    size -= 0.5
+                _draw_pdf_text(page, pymupdf.Point(margin_x, y), safe_entry, font_obj, size, fname, (0.12, 0.12, 0.12))
+                contents_slots.append((page.number, y, entry))
+                y += line_height + 6.0
+            continue
 
         for para in ch["paragraphs"]:
             if _is_scene_break(para):
@@ -1129,6 +1237,21 @@ def _export_literature_pdf(text: str, out_path: Path, cover_image: Optional[byte
         footer = f"- {display_num} -"
         fw = font_obj.text_length(footer, fontsize=9.0)
         pg.insert_text(pymupdf.Point((width - fw) / 2.0, height - 28.0), footer, fontsize=9.0, fontname=fname, color=(0.45, 0.45, 0.45))
+
+    # The contents list's page numbers, as printed in the footers of this edition
+    for p_index, baseline, entry in contents_slots:
+        target = chapter_starts.get(_toc_key(entry))
+        if target is None:
+            continue
+        number = str(target if has_cover_page else target + 1)
+        nw = font_obj.text_length(number, fontsize=11.0)
+        doc[p_index].insert_text(pymupdf.Point(width - margin_x - nw, baseline), number, fontsize=11.0,
+                                 fontname=fname, color=(0.12, 0.12, 0.12))
+    if outline:
+        try:
+            doc.set_toc(outline)
+        except Exception as e:  # bookmarks are a convenience: never fail the export over them
+            logger.warning(f"PDF bookmarks skipped: {e}")
 
     try:
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
