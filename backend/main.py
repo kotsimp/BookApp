@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import time
 import uuid
 from urllib.parse import urlsplit, quote
 from contextlib import asynccontextmanager
@@ -654,14 +655,30 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
 
 
+def _revision_time_left(elapsed: float, done: int, total: int) -> str:
+    """' · απομένουν ~12 λεπτά' from the pace so far ('' before the first part is back)."""
+    if done <= 0 or total <= done:
+        return ""
+    minutes = round(elapsed / done * (total - done) / 60)
+    if minutes < 1:
+        return " · απομένει λιγότερο από 1 λεπτό"
+    if minutes < 60:
+        return f" · απομένουν ~{minutes} λεπτά"
+    hours, rest = divmod(minutes, 60)
+    return f" · απομένουν ~{hours} ώρ{'α' if hours == 1 else 'ες'}" + (f" {rest} λεπτά" if rest else "")
+
+
 async def _run_max_quality_revision(job_id, file_path, output_path, api_key, target_lang, style, quota_behavior):
     """Second AI pass (Advanced Mode): revises the finished AI translation against the original. Never fatal."""
     from backend.ai_polisher import revise_translation_against_source
     original_path = Path(output_path).parent / f"{Path(file_path).stem}_original.txt"
-    update_job(job_id, current_step="🏆 Αναθεώρηση της μετάφρασης με το πρωτότυπο (2ο πέρασμα AI)…", progress=94)
+    update_job(job_id, current_step="🏆 Αναθεώρηση της μετάφρασης με το πρωτότυπο (2ο πέρασμα AI, πολύ αργή διαδικασία)· "
+                                    "ο χρόνος που απομένει φαίνεται μετά το πρώτο τμήμα…", progress=94)
+    started = time.monotonic()
 
     def _prog(done, total):
-        update_job(job_id, current_step=f"🏆 Αναθεώρηση με το πρωτότυπο: τμήμα {done}/{max(total, 1)}…")
+        update_job(job_id, current_step=f"🏆 Αναθεώρηση με το πρωτότυπο (πολύ αργή διαδικασία): τμήμα {done}/{max(total, 1)}"
+                                        f"{_revision_time_left(time.monotonic() - started, done, total)}…")
 
     try:
         report = await revise_translation_against_source(

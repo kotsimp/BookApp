@@ -133,6 +133,10 @@ For users who require granular configuration over every parameter:
 The application includes a specialized pipeline for illustrated publications:
 1. **100% Preserved Artwork:** The engine translates **strictly the text inside speech balloons**, keeping all original artwork completely intact.
 2. **Two-Pass Inpainting & Rendering:** Original English dialogue is cleanly erased and infilled with the balloon's authentic background color across two passes (all backgrounds filled first, then all centered text drawn on top, preventing overlapping balloons from obscuring neighboring text).
+   - On scanned pages the app finds each balloon's outline. The English is erased in the balloon's own shape and colour, every letter of it even where Gemini's box was too small, and the outline and the artwork around it stay untouched (no white rectangles).
+   - The Greek follows the balloon's shape: an oval gets shorter lines at the top and bottom, centred where the original text was.
+   - Text sizes follow the original lettering, so a short line is no longer lettered twice as big as its neighbours.
+   - Text written straight on the artwork, without a balloon, still gets a rectangle behind it, as does text too long for a very small balloon, so it stays readable.
 3. **Smart Fit-to-Box (Zero Blank Balloons) & Natural Page Sorting:** Because Greek text takes ~20% more space, the engine deterministically computes the ideal font size (down to `3.0pt` with whole-word wrapping, fallback to `Arial Narrow`, and subtle bounding box expansion where necessary) — ensuring **no balloon is ever left blank**. For `.cbz`/`.zip` archives, pages are sorted using **natural numeric order** (`page_1`, `page_2`, ..., `page_10`) with Zip Slip security checks. The dialogue sanitizer standardizes comic uppercase Greek (`Ϊ`/`Ϋ`), elision apostrophes (`Σ'`, `ΓΙ'`), and Greek question marks (`;`).
 4. **Japanese Manga Support (Right-to-Left — RTL):**
    - Select **Manga (Right-to-Left ⬅️)** under Reading Direction.
@@ -299,7 +303,8 @@ With **AI Polish** on, the translation is written for a demanding reader:
 
 #### 🏆 Maximum quality (Advanced Mode)
 Under **AI Polish** you can tick **🏆 Μέγιστη ποιότητα**. After the AI translation, a second AI "reviser" compares every sentence with the original, as a second editor at a publishing house would. It corrects mistakes of meaning, anything left out or added, grammatical agreement, inexact words and literally translated idioms. Anything already correct stays as it is.
-* ⚠️ **It costs more:** about **1.5×** the Gemini tokens of the AI translation, and roughly **twice the time**. A warning with an estimate for your document appears when you tick the box.
+* 🐢 **It is very slow:** count on about **3–8 seconds per page** on top of the AI translation (for example 15–40 minutes for a 300-page book). The warning that appears when you tick the box gives the estimate for your document, and while the revision runs the progress line shows the time left.
+* ⚠️ **It costs more:** about **1.5×** the Gemini tokens of the AI translation. It sends about one Gemini request per 3 pages; a free key may allow only 20 requests a day per model, so on a long book the revision can stop early and you keep the first-pass translation.
 * It needs AI Polish and a Gemini key; ticking it switches AI Polish on automatically.
 * It always uses the full Gemini models. If those are unavailable (for example, their daily limit is used up), the revision is skipped and you keep the normal AI translation. The translation never fails because of this step.
 * A notification at the end tells you how many lines were corrected.

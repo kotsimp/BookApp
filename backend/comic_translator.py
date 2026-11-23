@@ -12,18 +12,20 @@ Features:
 - Dual output: High-resolution Translated Comic PDF + Text dialogue script
 """
 
+import io
 import os
 import re
 import json
 import shutil
+import statistics
 import uuid
 import logging
 import asyncio
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any, List, Tuple
+from typing import Optional, Callable, Dict, Any, List, NamedTuple, Tuple
 
 import pymupdf as fitz
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 from backend.job_manager import update_job, is_job_cancelled
 from backend import translator as _translator
@@ -1368,6 +1370,298 @@ async def _detect_comic_balloons_vision_async(
     return detected_items
 
 
+_BALLOON_ZOOM = 2.0  # pixels per point when looking for the balloon around a text box
+_PAPER_TOLERANCE = 56  # largest channel difference still counted as the balloon's paper (JPEG noise, paper tint)
+_CAP_HEIGHT = 0.73  # capital height of the lettering font, in em: turns measured letters into a font size
+_FLIP = bytes([1, 0] + [0] * 254)  # bytes.translate table: 0 <-> 1
+
+
+class _BalloonShape(NamedTuple):
+    """A balloon found around a Vision text box. Masks are "L" images over `window`, 255 = inside."""
+    window: fitz.Rect  # page area the masks cover
+    zoom: float
+    cover: Image.Image  # the balloon inside, letters included, one pixel clear of the outline
+    bbox: fitz.Rect  # the balloon's extent
+    letters: Optional[fitz.Rect]  # the original lettering
+    paper: Tuple[int, int, int]  # the balloon's colour (0-255)
+    fontsize: Optional[float]  # size of the original lettering, in points
+
+    def holds(self, point: fitz.Point) -> bool:
+        x, y = int((point.x - self.window.x0) * self.zoom), int((point.y - self.window.y0) * self.zoom)
+        return 0 <= x < self.cover.width and 0 <= y < self.cover.height and self.cover.getpixel((x, y)) > 0
+
+    def contains(self, rect: fitz.Rect) -> bool:
+        """True when all of `rect` lies inside the balloon."""
+        z, win = self.zoom, self.window
+        box = (int((rect.x0 - win.x0) * z), int((rect.y0 - win.y0) * z),
+               int((rect.x1 - win.x0) * z) + 1, int((rect.y1 - win.y0) * z) + 1)
+        if box[0] < 0 or box[1] < 0 or box[2] > self.cover.width or box[3] > self.cover.height:
+            return False
+        return self.cover.crop(box).getextrema()[0] == 255
+
+
+def _flood(state: bytearray, width: int, height: int, seeds: List[Tuple[int, int]]) -> bytearray:
+    """
+    Scanline flood fill (4-way, so a diagonal gap in a thin outline doesn't leak): marks every 1 in `state` connected
+    to a seed. Whole runs are found with bytes.find, so a page costs milliseconds without numpy. Consumes `state`.
+    """
+    filled = bytearray(len(state))
+    stack = list(seeds)
+    while stack:
+        x, y = stack.pop()
+        row = y * width
+        i = row + x
+        if not state[i]:
+            continue
+        left = state.rfind(b"\x00", row, i) + 1 or row
+        right = state.find(b"\x00", i, row + width)
+        if right == -1:
+            right = row + width
+        state[left:right] = bytes(right - left)
+        filled[left:right] = b"\x01" * (right - left)
+        for ny in (y - 1, y + 1):
+            if 0 <= ny < height:
+                nrow = ny * width
+                pos, end = nrow + left - row, nrow + right - row
+                while True:
+                    pos = state.find(b"\x01", pos, end)
+                    if pos == -1:
+                        break
+                    stack.append((pos - nrow, ny))
+                    pos = state.find(b"\x00", pos, end)
+                    if pos == -1:
+                        break
+    return filled
+
+
+def _mask(data: bytes, size: Tuple[int, int]) -> Image.Image:
+    return Image.frombytes("L", size, bytes(data)).point(lambda v: 255 if v else 0)
+
+
+def _lettering_size(letters: Image.Image, zoom: float) -> Optional[float]:
+    """Font size of the original lettering: the rows with ink form the text lines, and their height is the capitals'."""
+    box = letters.getbbox()
+    if not box:
+        return None
+    strip = letters.crop(box)
+    rows = strip.resize((1, strip.height), Image.Resampling.BOX).tobytes()
+    runs, run = [], 0
+    for v in rows + b"\x00":
+        if v:
+            run += 1
+        elif run:
+            runs.append(run)
+            run = 0
+    lines = [r for r in runs if r >= 3]  # a stray dot or a comma is not a line
+    if not lines:
+        return None
+    # the smoothed edge rows above and below each line add about one pixel together
+    return round((statistics.median(lines) - 1) / zoom / _CAP_HEIGHT, 2)
+
+
+def _wrap_to_widths(words: List[str], units: List[float], space: float, fontsize: float,
+                    widths: List[float]) -> Optional[List[str]]:
+    """
+    Fills lines of the given widths in order with whole words; None when the words don't all fit.
+    `units` are the words' widths at size 1 and `space` a space's (widths grow with the size).
+    """
+    lines, i = [], 0
+    for width in widths:
+        if i >= len(words):
+            break
+        room = width / fontsize
+        used = units[i]
+        if used > room:
+            return None
+        start, i = i, i + 1
+        while i < len(words) and used + space + units[i] <= room:
+            used, i = used + space + units[i], i + 1
+        lines.append(" ".join(words[start:i]))
+    return lines if i >= len(words) else None
+
+
+def _plan_in_balloon(
+    shape: "_BalloonShape",
+    text: str,
+    font_path: str,
+    max_fontsize: float,
+) -> Optional[Tuple[str, str, Any, fitz.Rect, float, List[str], float]]:
+    """
+    Lays text out in the balloon's own shape: each line gets the width the balloon has at its height (an oval is
+    narrow at the top and bottom), centred where the original lettering was, 1.5pt clear of the outline. The
+    largest size up to `max_fontsize` that fits wins; the narrow font is tried before going below 4.5pt.
+    Same plan tuple as _plan_balloon_layout; None when nothing fits.
+    """
+    words = text.split()
+    if not words:
+        return None
+    zoom, win = shape.zoom, shape.window
+    width, height = shape.cover.size
+    anchor = shape.letters or shape.bbox
+    cx = int(((anchor.x0 + anchor.x1) / 2 - win.x0) * zoom)
+    if not 0 <= cx < width:
+        return None
+
+    def reach(mask: Image.Image) -> List[int]:
+        """Per pixel row: how far the inside reaches on both sides of the centre line."""
+        pixels, halves = mask.tobytes(), []
+        for y in range(height):
+            row = y * width
+            if not pixels[row + cx]:
+                halves.append(0)
+                continue
+            left = pixels.rfind(b"\x00", row, row + cx) + 1 or row
+            right = pixels.find(b"\x00", row + cx, row + width)
+            right = row + width if right == -1 else right
+            halves.append(min(cx - (left - row), (right - row) - cx))
+        return halves
+
+    condensed_path = _get_condensed_comic_font_path()
+    fonts = [(font_path, "comic", _balloon_font(font_path), 4.5)]
+    if condensed_path and os.path.exists(condensed_path) and condensed_path != font_path:
+        fonts.append((condensed_path, "comic_narrow", _balloon_font(condensed_path), 3.0))
+    centre_x, centre_y = win.x0 + cx / zoom, (anchor.y0 + anchor.y1) / 2
+    # 1.5pt clear of the outline with airy lines first; a full balloon may use all of its inside, lines closer
+    for mask, line_mult in ((shape.cover.filter(ImageFilter.MinFilter(5)), 1.12), (shape.cover, 1.04)):
+        halves = reach(mask)
+
+        def room(top: float, bottom: float) -> float:
+            y0, y1 = int((top - win.y0) * zoom), int((bottom - win.y0) * zoom) + 1
+            if y0 < 0 or y1 > height:
+                return 0.0
+            return 2.0 * min(halves[y0:y1]) / zoom - 0.5
+
+        for fpath, fname, fobj, smallest in fonts:
+            units = [fobj.text_length(word, fontsize=1.0) for word in words]
+            space = fobj.text_length(" ", fontsize=1.0)
+            fs = min(13.0, max_fontsize)
+            while fs >= smallest:
+                line_h = fs * line_mult
+                for k in range(1, int(shape.bbox.height / line_h) + 2):
+                    for shift in (0.0, line_h / 2, -line_h / 2):
+                        top = centre_y - k * line_h / 2 + shift
+                        widths = [room(top + i * line_h + 0.07 * fs, top + i * line_h + 1.03 * fs) for i in range(k)]
+                        if min(widths) <= 0:
+                            continue
+                        lines = _wrap_to_widths(words, units, space, fs, widths)
+                        if lines:
+                            widest = max(fobj.text_length(ln, fontsize=fs) for ln in lines)
+                            box = fitz.Rect(centre_x - widest / 2 - 1, top - 1,
+                                            centre_x + widest / 2 + 1, top - 1 + len(lines) * line_h + 2)
+                            return (fpath, fname, fobj, box, fs, lines, line_h)
+                fs = round(fs - 0.5, 2)
+    return None
+
+
+def _find_balloon(page_img: Image.Image, page_rect: fitz.Rect, rect: fitz.Rect,
+                  zoom: float = _BALLOON_ZOOM) -> Optional[_BalloonShape]:
+    """
+    The balloon (or caption box) around a Vision text box. Its paper colour is the commonest colour in the box; the
+    paper is flooded from the box's middle and stops at the outline. Unreachable spots inside are the letters, so
+    the real extent of the lettering is known even where Vision's box was too small. None for text written straight
+    on the artwork (the flood runs out of the window): the caller covers a rectangle as before.
+    """
+    box_px = (int(rect.x0 * zoom), int(rect.y0 * zoom), int(rect.x1 * zoom), int(rect.y1 * zoom))
+    box_px = (max(0, box_px[0]), max(0, box_px[1]), min(page_img.width, box_px[2]), min(page_img.height, box_px[3]))
+    if box_px[2] - box_px[0] < 4 or box_px[3] - box_px[1] < 4:
+        return None
+    core = page_img.crop(box_px)
+    binned = core.point(lambda v: v & 0xF0)
+    colors = binned.getcolors(maxcolors=1 << 16) or []
+    if not colors:
+        return None
+    count, mode = max(colors)
+    if count < 0.3 * core.width * core.height:
+        return None  # no colour dominates: the text sits on the artwork
+    same = ImageChops.difference(binned, Image.new("RGB", core.size, mode)).convert("L").point(lambda v: 255 if v == 0 else 0)
+    paper = tuple(int(round(c)) for c in ImageStat.Stat(core, same).mean[:3])
+
+    # Vision's box may hold only part of a tall balloon: a window the paper fills to its edges is widened twice
+    for grow, least in ((0.6, 14.0), (1.5, 36.0), (3.0, 72.0)):
+        margin_x, margin_y = max(least, rect.width * grow), max(least, rect.height * grow)
+        window = fitz.Rect(rect.x0 - margin_x, rect.y0 - margin_y, rect.x1 + margin_x, rect.y1 + margin_y) & page_rect
+        left, top = int(window.x0 * zoom), int(window.y0 * zoom)
+        crop = page_img.crop((left, top, int(window.x1 * zoom), int(window.y1 * zoom)))
+        width, height = crop.size
+        tx0, ty0, tx1, ty1 = box_px[0] - left, box_px[1] - top, box_px[2] - left, box_px[3] - top
+        if width < 8 or height < 8 or tx0 < 0 or ty0 < 0 or tx1 > width or ty1 > height:
+            return None
+        window = fitz.Rect(left / zoom, top / zoom, (left + width) / zoom, (top + height) / zoom)
+
+        r, g, b = ImageChops.difference(crop, Image.new("RGB", crop.size, paper)).split()
+        distance = ImageChops.lighter(ImageChops.lighter(r, g), b)
+        state = bytearray(distance.point(lambda v: 1 if v <= _PAPER_TOLERANCE else 0).tobytes())
+        mid_x, mid_y = (tx0 + tx1) // 2, (ty0 + ty1) // 2
+        seeds = [(x, mid_y) for x in range(tx0, tx1)] + [(mid_x, y) for y in range(ty0, ty1)]
+        seeds = [(x, y) for x, y in seeds if state[y * width + x]]
+        if not seeds:
+            return None
+        inside = _flood(state, width, height, seeds)
+        in_box = sum(inside[y * width + tx0:y * width + tx1].count(1) for y in range(ty0, ty1))
+        if in_box < 0.35 * core.width * core.height:
+            return None  # what looked like paper is not most of the text box (heavy lettering, artwork)
+
+        edge = (inside[:width].count(1) + inside[-width:].count(1)
+                + sum(inside[y * width] + inside[y * width + width - 1] for y in range(height)))
+        if edge <= 0.12 * 2 * (width + height):
+            break  # closed inside the window (a tail may touch its edge, far less)
+    else:
+        return None  # the paper runs on past every window: no closed balloon
+
+    outside_state = bytearray(inside.translate(_FLIP))
+    rim = [(x, 0) for x in range(width)] + [(x, height - 1) for x in range(width)]
+    rim += [(0, y) for y in range(height)] + [(width - 1, y) for y in range(height)]
+    outside = _flood(outside_state, width, height, rim)
+    hull = _mask(outside.translate(_FLIP), crop.size)
+    area = hull.histogram()[255]
+    if area < 0.25 * core.width * core.height or area > 0.9 * width * height:
+        return None  # a speck of paper inside a letter, or not a balloon at all
+    letters_mask = ImageChops.subtract(hull, _mask(inside, crop.size))
+
+    def to_page(box: Tuple[int, int, int, int]) -> fitz.Rect:
+        return fitz.Rect(window.x0 + box[0] / zoom, window.y0 + box[1] / zoom,
+                         window.x0 + box[2] / zoom, window.y0 + box[3] / zoom)
+
+    letter_box = letters_mask.getbbox()
+    return _BalloonShape(
+        window=window,
+        zoom=zoom,
+        cover=hull.filter(ImageFilter.MinFilter(3)),
+        bbox=to_page(hull.getbbox()),
+        letters=to_page(letter_box) if letter_box else None,
+        paper=paper,
+        fontsize=_lettering_size(letters_mask, zoom),
+    )
+
+
+def _paint_balloon(page: fitz.Page, shape: _BalloonShape, region: fitz.Rect) -> bool:
+    """Covers `region` in the balloon's own colour, only inside the balloon: its outline and the artwork stay."""
+    zoom, win = shape.zoom, shape.window
+    box = ((region.x0 - win.x0) * zoom, (region.y0 - win.y0) * zoom, (region.x1 - win.x0) * zoom, (region.y1 - win.y0) * zoom)
+    area = Image.new("L", shape.cover.size, 0)
+    ImageDraw.Draw(area).rectangle(box, fill=255)
+    alpha = ImageChops.multiply(area, shape.cover)
+    found = alpha.getbbox()
+    if not found:
+        return False
+    patch = Image.new("RGBA", shape.cover.size, shape.paper + (0,))
+    patch.putalpha(alpha)
+    buf = io.BytesIO()
+    patch.crop(found).save(buf, format="PNG", optimize=True)
+    target = fitz.Rect(win.x0 + found[0] / zoom, win.y0 + found[1] / zoom, win.x0 + found[2] / zoom, win.y0 + found[3] / zoom)
+    page.insert_image(target, stream=buf.getvalue(), overlay=True)
+    return True
+
+
+def _page_picture(page: fitz.Page, zoom: float = _BALLOON_ZOOM) -> Optional[Image.Image]:
+    try:
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csRGB, alpha=False)
+        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    except Exception as ex:
+        logger.debug(f"Cannot look at the page for balloons: {ex}")
+        return None
+
+
 def _render_vision_balloons_on_page(
     page: fitz.Page,
     detected_items: List[Dict[str, Any]],
@@ -1375,9 +1669,11 @@ def _render_vision_balloons_on_page(
     target_lang: str = "greek",
 ) -> List[str]:
     """
-    Covers detected scanned balloon text with opaque matching background fill and renders centered
-    Greek comic dialogue using a two-pass renderer (all background fills first, all text on top)
-    so neighboring balloons can never paint over each other's text.
+    Covers detected scanned balloon text and renders centered Greek comic dialogue using a two-pass renderer (all
+    covers first, all text on top) so neighboring balloons can never paint over each other's text.
+    Where a closed balloon is found around the text (_find_balloon), the cover takes the balloon's shape and colour
+    and reaches every original letter, the text uses the room inside the balloon, and font sizes follow the original
+    lettering (a short line no longer comes out twice the size of its neighbours). Elsewhere a rectangle is covered.
     """
     if not detected_items:
         return []
@@ -1423,16 +1719,66 @@ def _render_vision_balloons_on_page(
 
         balloons.append((rect, greek_text, bg_rgb, text_color))
 
-    # Pass 1: Plan every balloon's layout and draw all opaque background rectangles first
-    rooms = _separate_text_areas(page, [b[0] for b in balloons])
-    for (rect, greek_text, bg_rgb, text_color), (area, limit) in zip(balloons, rooms):
-        plan = _plan_balloon_layout(page, area, greek_text, font_path, max_fontsize=13.0, limit=limit)
+    # Look at the page once, before anything is drawn on it
+    picture = _page_picture(page) if balloons else None
+    shapes: List[Optional[_BalloonShape]] = []
+    for rect, *_rest in balloons:
+        shape = None
+        if picture is not None:
+            try:
+                shape = _find_balloon(picture, page.rect, rect)
+            except Exception as ex:
+                logger.debug(f"Balloon search failed: {ex}")
+        shapes.append(shape)
+
+    # A balloon holding one text gives it all its room; two texts in one balloon keep their own boxes
+    alone = [
+        shape is not None and not any(
+            j != i and shape.holds(fitz.Point((other[0].x0 + other[0].x1) / 2, (other[0].y0 + other[0].y1) / 2))
+            for j, other in enumerate(balloons))
+        for i, shape in enumerate(shapes)
+    ]
+    rooms = _separate_text_areas(page, [(s.letters or b[0]) if a else b[0] for b, s, a in zip(balloons, shapes, alone)])
+    rooms = [(area, limit & s.bbox if s is not None else limit) for (area, limit), s in zip(rooms, shapes)]
+
+    # Font sizes follow the original lettering: none much bigger than the page's usual size, unless its own was
+    known = [s.fontsize for s in shapes if s is not None and s.fontsize]
+    reference = statistics.median(known) if known else None
+    if reference is None and len(balloons) >= 2:
+        first = [_plan_balloon_layout(page, area, b[1], font_path, max_fontsize=13.0, limit=limit)
+                 for b, (area, limit) in zip(balloons, rooms)]
+        sizes = [p[4] for p in first if p]
+        reference = statistics.median(sizes) if sizes else None
+    caps = []
+    for s in shapes:
+        base = max((s.fontsize or 0.0) if s is not None else 0.0, reference or 0.0)
+        caps.append(min(13.0, max(4.5, base * 1.12)) if base else 13.0)
+
+    # Pass 1: Plan every balloon's layout and draw all covers first
+    for (rect, greek_text, bg_rgb, text_color), (area, limit), shape, cap, own in zip(
+            balloons, rooms, shapes, caps, alone):
+        plan = _plan_in_balloon(shape, greek_text, font_path, cap) if own else None
+        shaped = plan is not None
+        if plan is None:
+            plan = _plan_balloon_layout(page, area, greek_text, font_path, max_fontsize=cap, limit=limit)
         if plan is None:
             continue
 
-        # Cover both original text rect and planned text box
+        # Cover both original text rect and planned text box (and every original letter the balloon holds)
         cover_rect = rect | plan[3]
-        page.draw_rect(cover_rect, color=bg_rgb, fill=bg_rgb, overlay=True)
+        painted = False
+        if shape is not None:
+            region = cover_rect | (shape.letters + (-1, -1, 1, 1)) if shape.letters else cover_rect
+            painted = _paint_balloon(page, shape, region)
+            if painted:
+                paper = tuple(c / 255.0 for c in shape.paper)
+                r, g, b = paper
+                text_color = (1.0, 1.0, 1.0) if 0.299 * r + 0.587 * g + 0.114 * b < 0.4 else (0.05, 0.05, 0.05)
+                if not shaped and not shape.contains(plan[3]):
+                    # text that outgrew its balloon keeps a backdrop in the balloon's colour, never the artwork
+                    page.draw_rect(plan[3], color=paper, fill=paper, overlay=True)
+        if not painted:
+            page.draw_rect(cover_rect, color=bg_rgb, fill=bg_rgb, overlay=True)
         planned_balloons.append((plan, text_color))
         page_dialogues.append(greek_text)
 

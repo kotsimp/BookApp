@@ -89,6 +89,17 @@ class TestUsageAccounting(unittest.TestCase):
         self.assertIn("total_tokens", info["usage_today"])
 
 
+class TestRevisionTimeLeft(unittest.TestCase):
+    def test_the_slow_second_pass_says_how_long_is_left(self):
+        from backend.main import _revision_time_left as left
+        self.assertEqual(left(0.0, 0, 40), "")                      # nothing back yet: no guess
+        self.assertEqual(left(120.0, 4, 40), " · απομένουν ~18 λεπτά")
+        self.assertEqual(left(300.0, 2, 30), " · απομένουν ~1 ώρα 10 λεπτά")
+        self.assertEqual(left(900.0, 1, 9), " · απομένουν ~2 ώρες")
+        self.assertEqual(left(20.0, 9, 10), " · απομένει λιγότερο από 1 λεπτό")
+        self.assertEqual(left(300.0, 10, 10), "")                   # finished
+
+
 class TestSlowModelMemory(unittest.TestCase):
 
     def test_timed_out_model_is_tried_last_until_success(self):

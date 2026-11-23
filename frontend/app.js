@@ -1446,12 +1446,41 @@ function onMaxQualityToggle() {
   const estTxt = pages
     ? ` Για αυτό το έγγραφο: περίπου <strong>${Math.round(pages * 300 * 4.5).toLocaleString('el-GR')} επιπλέον tokens</strong>.`
     : '';
+  const [low, high] = revisionMinutes(pages);
+  const requests = Math.ceil(pages / REVISION_PAGES_PER_REQUEST);
+  const timeTxt = pages
+    ? `Για αυτό το έγγραφο (~${pages} σελίδες) υπολογίστε περίπου <strong>${formatMinutesEl(low)} – ${formatMinutesEl(high)}</strong> ` +
+      'επιπλέον, πάνω από τον χρόνο της AI μετάφρασης.'
+    : 'Υπολογίστε περίπου <strong>3–8 δευτερόλεπτα ανά σελίδα</strong> επιπλέον (π.χ. 15–40 λεπτά για βιβλίο 300 σελίδων).';
+  const dailyTxt = requests > 20
+    ? ` Χρειάζονται περίπου ${requests} αιτήματα Gemini: με δωρεάν κλειδί το ημερήσιο όριο ενός μοντέλου μπορεί να είναι μόλις 20, ` +
+      'οπότε η αναθεώρηση μπορεί να σταματήσει νωρίτερα (κρατιέται τότε η μετάφραση του 1ου περάσματος).'
+    : '';
   const hasKey = hasGeminiKey();
-  warn.innerHTML = '⚠️ <strong>Επιπλέον κατανάλωση Gemini API:</strong> το πρωτότυπο και η μετάφραση αποστέλλονται ξανά για αναθεώρηση. ' +
-    'Η κατανάλωση tokens είναι περίπου <strong>1,5 φορά</strong> αυτή της AI μετάφρασης και ο χρόνος περίπου διπλάσιος.' + estTxt +
+  warn.innerHTML = '🐢 <strong>Πολύ αργή διαδικασία.</strong> ' + timeTxt +
+    ' Κατά την εκτέλεση εμφανίζεται ο χρόνος που απομένει.' + dailyTxt + '<br>' +
+    '⚠️ <strong>Επιπλέον κατανάλωση Gemini API:</strong> το πρωτότυπο και η μετάφραση αποστέλλονται ξανά για αναθεώρηση. ' +
+    'Η κατανάλωση tokens είναι περίπου <strong>1,5 φορά</strong> αυτή της AI μετάφρασης.' + estTxt +
     ' Μετράει στο ημερήσιο όριο των κλειδιών σας. Χρησιμοποιούνται μόνο πλήρη μοντέλα Gemini· αν δεν είναι διαθέσιμα, κρατιέται η μετάφραση του 1ου περάσματος.' +
     (hasKey ? '' : ' <br>❗ Δεν έχει οριστεί Gemini API Key — απαιτείται.');
   warn.style.display = '';
+}
+
+// The 2nd pass sends up to 3 pages per Gemini request, 5 at a time, with the full (slower) models only:
+// about 3–8 seconds per page in practice, waits for per-minute limits included.
+const REVISION_PAGES_PER_REQUEST = 3;
+
+function revisionMinutes(pages) {
+  if (!pages) return [0, 0];
+  return [Math.max(1, Math.round(pages * 3 / 60)), Math.max(1, Math.ceil(pages * 8 / 60))];
+}
+
+function formatMinutesEl(minutes) {
+  if (minutes < 60) return minutes === 1 ? '1 λεπτό' : `${minutes} λεπτά`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const hours = h === 1 ? '1 ώρα' : `${h} ώρες`;
+  return m ? `${hours} ${m === 1 ? '1 λεπτό' : `${m} λεπτά`}` : hours;
 }
 
 const _shownRevisionReports = new Set();

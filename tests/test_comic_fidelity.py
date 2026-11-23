@@ -402,6 +402,93 @@ class TestScriptsAndNames(unittest.TestCase):
                          "ΝΤΟΝΟΒΑΝ ΚΑΙ ΝΤΑΝΙΕΛ, Ντόνοβαν.")
 
 
+class TestBalloonShapes(unittest.TestCase):
+    """Drawn balloons: an oval with a black outline on blue artwork, red 'letters' inside (5pt high lines)."""
+    BLUE, RED, PAPER = (40, 70, 160), (200, 20, 20), (250, 248, 240)
+    OVAL = (60, 40, 240, 160)  # points, on a 300 x 400 page
+
+    def page(self, lines=3, background=None):
+        z = 4  # draw finely, like a scan
+        img = Image.new("RGB", (300 * z, 400 * z), background or self.BLUE)
+        draw = __import__("PIL.ImageDraw", fromlist=["ImageDraw"]).Draw(img)
+        x0, y0, x1, y1 = self.OVAL
+        draw.ellipse((x0 * z, y0 * z, x1 * z, y1 * z), fill=self.PAPER, outline=None if background else (0, 0, 0),
+                     width=2 * z)
+        for i in range(lines):  # strokes like capitals: 5pt high, lines 3pt apart, centred in the oval
+            y = 82 + i * 8
+            for k in range(32):
+                sx = 110 + k * 2.5
+                draw.rectangle((sx * z, y * z, (sx + 0.8) * z, (y + 5) * z), fill=self.RED)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        doc = pymupdf.open()
+        doc.new_page(width=300, height=400).insert_image(pymupdf.Rect(0, 0, 300, 400), stream=buf.getvalue())
+        return doc
+
+    @staticmethod
+    def item(box_pt, text):  # box in points -> Vision's 0..1000 box_2d
+        x0, y0, x1, y1 = box_pt
+        return {"box_2d": [y0 / 400 * 1000, x0 / 300 * 1000, y1 / 400 * 1000, x1 / 300 * 1000], "translated_text": text}
+
+    def pixels(self, page, zoom=2):
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+    def test_the_balloon_its_letters_and_their_size_are_found(self):
+        doc = self.page()
+        shape = ct._find_balloon(ct._page_picture(doc[0]), doc[0].rect, pymupdf.Rect(110, 80, 190, 90))
+        self.assertIsNotNone(shape)
+        self.assertLess(max(abs(a - b) for a, b in zip(shape.paper, (250, 248, 240))), 6)
+        # Vision's box held only the first line; the letters reach all three
+        self.assertLess(abs(shape.letters.y1 - 103), 1.5)
+        self.assertLess(abs(shape.letters.x0 - 110), 1.5)
+        self.assertLess(abs(shape.fontsize - 5 / ct._CAP_HEIGHT), 0.6)
+        self.assertTrue(shape.holds(pymupdf.Point(150, 70)))
+        self.assertFalse(shape.holds(pymupdf.Point(62, 42)))  # the corner of the oval's box is artwork
+
+    def test_text_without_an_outline_is_no_balloon(self):
+        doc = self.page(background=self.PAPER)  # the paper runs on past any window: a rectangle is covered instead
+        self.assertIsNone(ct._find_balloon(ct._page_picture(doc[0]), doc[0].rect, pymupdf.Rect(110, 80, 190, 90)))
+
+    def test_the_cover_reaches_every_letter_and_keeps_the_outline_and_artwork(self):
+        doc = self.page()
+        page = doc[0]
+        ct._render_vision_balloons_on_page(page, [self.item((110, 80, 190, 90), "ΓΕΙΑ ΣΟΥ ΦΙΛΕ, ΤΙ ΚΑΝΕΙΣ ΣΗΜΕΡΑ;")],
+                                           ct._get_comic_font_path())
+        img = self.pixels(page)
+        reds = [img.getpixel((x, y)) for x in range(200, 400, 2) for y in range(150, 220, 2)]
+        self.assertFalse([p for p in reds if p[0] > 150 and p[1] < 90], "an original letter is still showing")
+        # the outline at the oval's top and the artwork beside the oval are untouched
+        self.assertLess(max(img.getpixel((300, 81))), 60)
+        self.assertEqual(img.getpixel((116, 82)), self.BLUE)
+        # the new text stays inside the oval
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    x0, y0, x1, y1 = span["bbox"]
+                    cx, cy, rx, ry = 150, 100, 90, 60
+                    for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+                        self.assertLess(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2, 1.0, span["text"])
+
+    def test_a_short_line_is_not_lettered_bigger_than_the_original(self):
+        doc = self.page(lines=1)
+        page = doc[0]
+        ct._render_vision_balloons_on_page(page, [self.item((110, 80, 190, 88), "ΝΑΙ!")], ct._get_comic_font_path())
+        sizes = [s["size"] for b in page.get_text("dict")["blocks"] for ln in b.get("lines", []) for s in ln["spans"]]
+        self.assertTrue(sizes)
+        self.assertLessEqual(max(sizes), 5 / ct._CAP_HEIGHT * 1.12 + 0.3)  # was 13pt: the balloon had room for it
+
+    def test_scanline_flood_follows_four_way_paths_only(self):
+        grid = ("1100\n"
+                "0110\n"
+                "0001\n"
+                "1111")
+        rows = grid.split("\n")
+        state = bytearray(int(c) for row in rows for c in row)
+        filled = ct._flood(state, 4, 4, [(0, 0)])
+        self.assertEqual("".join(map(str, filled)), "1100" "0110" "0000" "0000")  # the diagonal step is no path
+
+
 class TestBookPages(unittest.TestCase):
     """A whole scanned book: what the next page is told, which names are aligned, and what the notes say."""
 
