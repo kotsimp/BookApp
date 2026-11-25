@@ -15,6 +15,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 3. [Document Translation](#3-document-translation)
    - [Supported File Formats](#supported-file-formats)
    - [Graphic Novels, Comics & Manga (RTL)](#-graphic-novels-comics--manga-rtl)
+   - [Scanned PDFs (Page Images Only)](#-scanned-pdfs-page-images-only)
    - [Auto-Genre & Document Style Detection](#-auto-genre--document-style-detection)
    - [Automatic Greek Editorial Typography](#-automatic-greek-editorial-typography)
    - [Step-by-Step Translation Guide](#step-by-step-translation-guide)
@@ -65,7 +66,7 @@ The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the
 * Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
 
 ### ❓ Help: Guide & FAQ
-The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, scanned PDFs, names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
+The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
 
 ### ☀️ / 🌙 Light by Day, Dark at Night
 The interface is light from sunrise to sunset and dark at night, by itself (the times follow the date; on Greek time they are those of Athens). The **Theme** button at the top right still switches it whenever you like: your choice holds until the next sunrise or sunset, and then the automatic theme takes over again. Hover over the button to see until when your choice lasts.
@@ -163,6 +164,13 @@ The application includes a specialized pipeline for illustrated publications:
    - A page that comes back empty is checked by a second model, so a page full of balloons is not skipped.
    - **A name is spelled one way through the whole book.** Each page is told how the earlier pages wrote the names, and before the PDF is drawn every name gets the spelling most pages used. To choose a spelling yourself, add the name to the **Glossary** (for example `Kowalsky` → `Κοβάλσκι`): the glossary always wins. Greek case endings (`ΔΙΟΙΚΗΤΑ` / `ΔΙΟΙΚΗΤΗΣ`) are left as they are.
    - When the job finishes, the progress card lists the pages left untranslated, with the reason, and the scanned pages where no text was found (see the FAQ below).
+
+### 📑 Scanned PDFs (Page Images Only)
+A scanned PDF can be translated as it is, **without OCR**:
+* On upload the app sees that the pages are pictures with almost no text, shows `🎨 Graphic Novel / Comic Auto-Detected` and switches to the **Graphic Novel** layout by itself. You do not need to choose it.
+* **Gemini Vision** reads the text from the page images, and the translation is drawn onto the same pages as described above. This needs a Gemini key; without one the job stops with a message saying so.
+* It is made for comics. A scanned novel takes the same path, so it comes out as page images with the translation drawn on them (PDF, CBZ, CBR or Fixed-Layout EPUB), not as plain text.
+* **When you do need OCR first:** for a translation as plain text (DOCX, TXT or a normal EPUB), for an audiobook, and for Book Insights. These read the PDF's text, and a scanned PDF has none. An OCR program (for example the free OCRmyPDF) adds a text layer; then upload the new PDF.
 
 ### 💡 Auto-Genre & Document Style Detection
 Upon uploading a document, the system automatically analyzes the opening pages:
@@ -390,6 +398,8 @@ Every translation and every audiobook goes through one more automatic step at th
 
 Convert any document into high-fidelity MP3 and M4B audiobooks with embedded chapter metadata and cover art.
 
+The audiobook reads the document's text. A scanned PDF (pictures of pages only) has none, so run it through an OCR program first (see [Scanned PDFs](#-scanned-pdfs-page-images-only)).
+
 ### Available Neural Voices & Live Auditions
 * **Greek Neural Voices (🇬🇷):**
   * 👨 **Nestoras (Male)** (`el-GR-NestorasNeural`) — exceptional pronunciation and acronym handling. It is the only Greek voice: Microsoft's Athina voice was removed because it returned cut-off audio for most parts in tests. Audiobooks saved with Athina are read by Nestoras.
@@ -484,7 +494,7 @@ For each, choose the **output language** (Greek or English) and the **output for
 ### 📏 Minimum length
 * **Synopsis:** needs at least **~1.5 pages of real text** (about 375 words). The app counts only meaningful text and ignores page numbers, repeated headers and links, so page counts of PDFs do not matter. For shorter documents the synopsis buttons are disabled, with an explanation.
 * **Summary:** needs at least about 80 words.
-* Scanned books (images only) contain no extractable text and cannot be summarised.
+* Scanned books (images only) contain no extractable text and cannot be summarised. Run them through an OCR program first, then upload the new PDF.
 
 ### ✅ Quality check before you see anything
 Every text is checked automatically before it is displayed:
@@ -534,8 +544,9 @@ The **Session History** panel at the bottom of the page tracks all jobs (with us
 #### ❓ Can I polish text directly in the Editor without uploading a file?
 * **Yes!** Open the **Direct Editor**, paste your text, and click **✨ AI Polish**. The system processes your text and lets you download it as TXT, DOCX, PDF, or EPUB.
 
-#### ❓ How are scanned PDF comics translated?
-* The upload analyzer automatically detects scanned comics (`🎨 Graphic Novel / Comic Auto-Detected`) and locks the interface to comic-safe options. The **Gemini Vision AI** reads speech balloons, 3 pages at a time, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact.
+#### ❓ How are scanned PDFs translated? Do I need OCR first?
+* **No OCR is needed to translate.** The upload analyzer automatically detects scanned PDFs, comics and books alike (`🎨 Graphic Novel / Comic Auto-Detected`), and locks the interface to comic-safe options. The **Gemini Vision AI** reads the text, 3 pages at a time, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact. A Gemini key is required.
+* A scanned novel also comes out as page images with the translation drawn on them. For plain text, an audiobook or Book Insights, run the PDF through an OCR program first (see [Scanned PDFs](#-scanned-pdfs-page-images-only)).
 
 #### ❓ A comic job says "page(s) left untranslated" or "No text found on page(s)". What do I do?
 * **Left untranslated (with a reason in brackets):** Gemini Vision could not read those pages, for example `HTTP 429 (rate limit)`, `HTTP 503 (overloaded)` or a timeout. Translate the file again: the pages already done come from the cache, so only the listed pages are sent again.
