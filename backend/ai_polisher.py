@@ -582,6 +582,16 @@ def _extract_gemini_text_and_reason(result: dict) -> tuple[str, str]:
     return "".join(text_parts).strip(), finish_reason
 
 
+def clean_transcription(text: str) -> str:
+    """A page's text as Gemini read it from a picture: only the wrappers a model adds are removed (code fences, special
+    tokens). The translation sanitiser would also drop things that are the book's own, such as a bracketed note."""
+    cleaned = unicodedata.normalize("NFC", text or "").strip()
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+    cleaned = _LLM_SPECIAL_TOKEN_RE.sub("", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
 def sanitize_ai_output(text: str, source_text: str = "") -> str:
     """
     Defensively removes LLM artifacts from generated/polished text:
@@ -2020,13 +2030,23 @@ async def _call_gemini_api(
     bypass_cache: bool = False,
     meta_out: Optional[dict[str, Any]] = None,
     cache_gate: Optional[Callable[[str], bool]] = None,
+    image: Optional[tuple[str, bytes]] = None,
+    prefer_models: Optional[list[str]] = None,
 ) -> str:
     """Invokes Gemini generateContent with cache, full-Flash priority, thought filtering, safety/block detection, and MAX_TOKENS protection.
 
     ``cache_gate``: optional predicate deciding whether a successful output may be cached. By default only
     outputs passing the Greek translation quality gate are cached, which rejects legitimately short or
     non-Greek outputs (summaries, notes, English text); callers producing those pass their own gate.
+    ``image``: (mime type, bytes) sent with the request, such as a scanned page to read. Its answer is the page's own
+    text, so it gets only a light cleaning instead of the translation sanitiser.
+    ``prefer_models``: models tried before the usual order when the key has them (e.g. Flash-Lite for easy work).
     """
+    import base64
+
+    clean_answer = sanitize_ai_output if image is None else (lambda t, source_text="": clean_transcription(t))
+    image_hash = hashlib.sha256(image[1]).hexdigest() if image is not None else ""
+    cache_source = content_text if image is None else f"{content_text}\n#image:{image_hash}"
     from backend.gemini_key_pool import GeminiKeyPool, GeminiRateLimiter, parse_gemini_error, mask_api_key
 
     # Resolve active key: use provided key or next available key from the 4-key pool
@@ -2054,6 +2074,8 @@ async def _call_gemini_api(
 
     if current_key.startswith("AQ.Test") or current_key.startswith("AIzaTest"):
         logger.info("Test API key detected - returning mock polished text.")
+        if image is not None:
+            return f"The text of a scanned page ({image_hash[:8]}). It was a bright cold day in April."
         for tag in ("DRAFT_TO_POLISH", "TEXT_TO_POLISH", "TEXT_TO_TRANSLATE"):
             m_tag = re.search(rf"<{tag}>(.*?)</{tag}>", content_text, re.DOTALL | re.IGNORECASE)
             if m_tag:
@@ -2076,19 +2098,19 @@ async def _call_gemini_api(
     if not bypass_cache:
         try:
             from backend.database import compute_cache_key, db_get_cached_translation
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v5",
+            cache_key = compute_cache_key(cache_source, "draft", "greek", engine="gemini_polish_v5",
                                           extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
             cached_result = db_get_cached_translation(cache_key)
             if cached_result is not None:
                 logger.info("Retrieved AI polished chunk directly from SQLite cache.")
                 record_gemini_usage(cached=True)
-                return sanitize_ai_output(cached_result, source_text=content_text)
+                return clean_answer(cached_result, source_text=content_text)
         except Exception as ex:
             logger.debug(f"Polish cache check skipped: {ex}")
     else:
         try:
             from backend.database import compute_cache_key
-            cache_key = compute_cache_key(content_text, "draft", "greek", engine="gemini_polish_v5",
+            cache_key = compute_cache_key(cache_source, "draft", "greek", engine="gemini_polish_v5",
                                           extra=f"{prompt_hash}:{temperature}{':full' if _FULL_MODELS_ONLY.get() else ''}")
         except Exception:
             pass
@@ -2100,17 +2122,24 @@ async def _call_gemini_api(
     payload_chars = len(system_prompt or "") + len(content_text or "")
     est_tokens = max(500, min(60_000, payload_chars // 2))          # ~input + comparable output
     req_timeout_s = float(max(45.0, min(180.0, 45.0 + len(content_text or "") / 120.0)))
+    if image is not None:
+        est_tokens += 3000           # the picture (Gemini counts it in tiles) and a full page of text back
+        req_timeout_s = max(req_timeout_s, 90.0)
 
     # the instructions open the prompt; the book's own names and terms are appended below them
     prompt_greek, prompt_latin = _script_counts((system_prompt or "")[:600])
     label = "ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ" if prompt_greek > prompt_latin else "INPUT TEXT"
+    user_parts: list[dict[str, Any]] = [{"text": f"{system_prompt}\n\n--- {label} ---\n{content_text}"}]
+    if image is not None:
+        user_parts = [
+            {"text": f"{system_prompt}\n\n{content_text}"},
+            {"inlineData": {"mimeType": image[0], "data": base64.b64encode(image[1]).decode("ascii")}},
+        ]
     base_payload = {
         "contents": [
             {
                 "role": "user",
-                "parts": [
-                    {"text": f"{system_prompt}\n\n--- {label} ---\n{content_text}"}
-                ]
+                "parts": user_parts,
             }
         ],
         "generationConfig": {
@@ -2154,6 +2183,10 @@ async def _call_gemini_api(
                 for fb in PREFERRED_FLASH_MODELS:
                     if fb not in candidates:
                         candidates.append(fb)
+
+            if prefer_models:
+                first = [m for m in prefer_models if m in candidates]
+                candidates = first + [m for m in candidates if m not in first]
 
             if exclude_models:
                 filtered = [m for m in candidates if m not in exclude_models]
@@ -2246,7 +2279,7 @@ async def _call_gemini_api(
                                     logger.warning(f"Model {model} hit MAX_TOKENS ({len(raw_text)} chars) — rejecting truncated output.")
                                     saw_truncation = True
                                     raise _TruncatedOutputError(f"Model {model} hit MAX_TOKENS")
-                                polished = sanitize_ai_output(raw_text, source_text=content_text)
+                                polished = clean_answer(raw_text, source_text=content_text)
                                 if not polished:
                                     saw_block = True
                                     last_error = f"Model {model} returned empty text after sanitization."
@@ -2262,12 +2295,13 @@ async def _call_gemini_api(
                                 _MODEL_SLOW_UNTIL.pop(model, None)
                                 cacheable = (
                                     cache_gate(polished) if cache_gate is not None
-                                    else not detect_greek_output_issues(polished, source_text=content_text)
+                                    else image is not None
+                                    or not detect_greek_output_issues(polished, source_text=content_text)
                                 )
                                 if cache_key and cacheable:
                                     try:
                                         from backend.database import db_set_cached_translation
-                                        db_set_cached_translation(cache_key, content_text, polished, "draft", "greek", engine="gemini_polish_v5")
+                                        db_set_cached_translation(cache_key, cache_source, polished, "draft", "greek", engine="gemini_polish_v5")
                                     except Exception:
                                         pass
                                 return polished
@@ -2312,6 +2346,8 @@ async def _call_gemini_api(
                                     GeminiKeyPool.mark_model_exhausted(
                                         active_key, exh_mod, cooldown_seconds=cooldown_mod, reason=err_text[:120]
                                     )
+                                    from backend.gemini_key_pool import record_model_daily_limit
+                                    record_model_daily_limit(exh_mod, parsed_err.get("quota_value"))
                                     logger.warning(
                                         f"[Gemini Key Pool] Model '{exh_mod}' reached daily quota limit ({parsed_err.get('quota_value', 'daily')} requests) "
                                         f"on key {mask_api_key(active_key)}. Seamlessly falling back to next candidate model on SAME key..."
@@ -2460,6 +2496,7 @@ async def translate_and_polish_direct_with_gemini(
     api_key: str,
     style: str = "literature",
     quota_behavior: str = "wait",
+    page_range: Optional[tuple[int, int]] = None,
 ) -> str:
     """
     Single-Pass Direct AI Translation + Literary Polish via Gemini Flash.
@@ -2467,6 +2504,10 @@ async def translate_and_polish_direct_with_gemini(
     parses the document, extracts an entity consistency dossier, applies user glossary,
     and translates+polishes multi-page batches concurrently (5 parallel workers),
     saving both *_original.txt (for split-screen editor) and the polished output.
+
+    ``page_range`` (first, last): a sample. Only the batches holding those pages are translated (whole batches, so it
+    may end a page or two later; the job's sample_range gives the pages done). Names, glossary and batches are those of
+    the whole book and the checkpoint is kept, so translating the whole book afterwards reuses the sample's batches.
     """
     from backend.parsers import parse_document
     from backend.job_manager import update_job, is_job_cancelled
@@ -2546,12 +2587,21 @@ async def translate_and_polish_direct_with_gemini(
     if curr_b:
         batches.append(curr_b)
 
-    total_batches = max(1, len(batches))
+    run = list(range(len(batches)))
+    if page_range:
+        lo, hi = page_range
+        run = [i for i, b in enumerate(batches) if any(lo <= pn <= hi for pn, _ in b)]
+        if not run:
+            raise ValueError(f"Pages {lo}–{hi} hold no text to translate.")
+        total_pages = sum(len(batches[i]) for i in run)
+        update_job(job_id, sample_range=[batches[run[0]][0][0], batches[run[-1]][-1][0]])
+
+    total_batches = max(1, len(run))
     results = ["" for _ in batches]
     completed = 0
     pages_done = 0
     cached_b = checkpoint_data.get("batches", {})
-    for i in range(total_batches):
+    for i in run:
         if str(i) in cached_b and cached_b[str(i)].strip():
             results[i] = cached_b[str(i)]
             completed += 1
@@ -2883,9 +2933,9 @@ async def translate_and_polish_direct_with_gemini(
                 current_step=step_msg,
             )
 
-        await gather_or_cancel(_worker(i, b) for i, b in enumerate(batches))
+        await gather_or_cancel(_worker(i, batches[i]) for i in run)
 
-    if checkpoint_file.exists():
+    if checkpoint_file.exists() and not page_range:  # a sample's batches wait for the whole book
         try:
             checkpoint_file.unlink(missing_ok=True)
         except Exception:

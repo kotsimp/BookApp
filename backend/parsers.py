@@ -265,8 +265,16 @@ def parse_pdf(file_path: str) -> Generator[dict, None, None]:
     """
     Yields dicts: {page: int, text: str} for each page of a PDF.
     Tries multiple extraction modes for best text coverage, stripping running headers/footers.
+    A scanned book whose pages Gemini Vision has read (backend.scan_reader) yields that text instead.
     """
     import pymupdf  # fitz
+    from backend.scan_reader import read_pages
+
+    scanned_text = read_pages(file_path)
+    if scanned_text is not None:
+        logger.info(f"Scanned PDF: using the text read from its {len(scanned_text)} page images: {file_path}")
+        yield from scanned_text
+        return
 
     with pymupdf.open(file_path) as doc:
         if doc.needs_pass:

@@ -369,7 +369,7 @@ class TestMaxQualityRevision(unittest.TestCase):
         update_job(job.job_id, output_format="txt", layout_mode="standard", status="running", max_quality=max_quality)
         calls = []
 
-        async def fake_direct(job_id, file_path, file_type, source_lang, target_lang, output_path, api_key, style="literature", quota_behavior="wait"):
+        async def fake_direct(job_id, file_path, file_type, source_lang, target_lang, output_path, api_key, style="literature", quota_behavior="wait", page_range=None):
             Path(output_path).write_text(self.DRAFT, encoding="utf-8")
             (Path(output_path).parent / f"{Path(file_path).stem}_original.txt").write_text(self.ORIGINAL, encoding="utf-8")
 

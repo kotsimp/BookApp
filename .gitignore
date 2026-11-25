@@ -47,3 +47,7 @@ config/*.tmp
 
 # One-time first-administrator setup code (user accounts mode)
 data/setup_code.txt
+
+# Per-user e-reader link hashes and ntfy notification topics (📲 Devices)
+data/connections.json
+data/.connections.json.*

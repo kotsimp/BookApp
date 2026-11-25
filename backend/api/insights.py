@@ -124,12 +124,19 @@ async def insights_analysis(job_id: str):
     """Meaningful-text length, detected language and summary/synopsis availability for a document."""
     from backend.book_insights import analyze_text, list_insights
     from backend.gemini_key_pool import resolve_gemini_api_key
+    from backend.scan_reader import needs_reading, pages_to_read
     job = _insights_job(job_id)
     text = await _insights_source_text(job)
     info = await asyncio.to_thread(analyze_text, text)
     info["has_api_key"] = bool(resolve_gemini_api_key(None))
     info["file_name"] = job.file_name
     info["existing"] = list_insights(_job_output_dir(job_id))
+    if await asyncio.to_thread(needs_reading, job.file_path, job.file_type, job.file_name or ""):
+        # a scanned book: its text is read from the page images first (Gemini Vision), when a summary is asked for
+        info["needs_scan_reading"] = True
+        info["scan_pages"] = await asyncio.to_thread(pages_to_read, job.file_path)
+        if info["has_api_key"]:
+            info["can_summary"] = info["can_synopsis"] = True
     return info
 
 
@@ -162,15 +169,21 @@ async def insights_generate(req: InsightsGenerateRequest):
     api_key = resolve_gemini_api_key(req.api_key)
     if not api_key:
         raise _insights_http_error(InsightsError("no_api_key", http_status=401))
+    from backend.scan_reader import needs_reading, read_scanned_text
     text = await _insights_source_text(job)
-    # Fail fast (before any API usage) when the document is ineligible
-    info = await asyncio.to_thread(analyze_text, text)
-    if not info["can_summary"]:
-        raise _insights_http_error(InsightsError("insufficient_text", http_status=422))
-    if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and not info["can_synopsis"]:
-        raise HTTPException(422, info["reasons"]["synopsis"])
-    if lang == "auto" and info["detected_language"] is None:
-        raise _insights_http_error(InsightsError("language_detection_failed", http_status=422))
+    scanned = await asyncio.to_thread(needs_reading, job.file_path, job.file_type, job.file_name or "")
+
+    def _check(info: dict) -> None:
+        """Fail fast (before any API usage) when the document is ineligible."""
+        if not info["can_summary"]:
+            raise _insights_http_error(InsightsError("insufficient_text", http_status=422))
+        if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and not info["can_synopsis"]:
+            raise HTTPException(422, info["reasons"]["synopsis"])
+        if lang == "auto" and info["detected_language"] is None:
+            raise _insights_http_error(InsightsError("language_detection_failed", http_status=422))
+
+    if not scanned:  # a scanned book is checked once its pages have been read
+        _check(await asyncio.to_thread(analyze_text, text))
 
     out_dir = _job_output_dir(req.job_id)
     title = Path(job.file_name or "document").stem
@@ -178,7 +191,19 @@ async def insights_generate(req: InsightsGenerateRequest):
     async def _run(task):
         def _prog(pct, step):
             task.progress, task.step = int(pct), step
-        return await generate_insight(text, insight_type, None if lang == "auto" else lang, api_key,
+        source = text
+        if scanned:
+            def _read_prog(done, total):
+                _prog(int(done / max(total, 1) * 40), f"📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision): σελίδα {done} από {total}...")
+            await read_scanned_text(job.file_path, api_key, progress=_read_prog)
+            source = await _insights_source_text(job)
+            info = await asyncio.to_thread(analyze_text, source)
+            try:
+                _check(info)
+            except HTTPException as e:  # inside the task: reported as the task's error
+                detail = e.detail if isinstance(e.detail, str) else (e.detail or {}).get("message", "")
+                raise InsightsError("insufficient_text", detail or "")
+        return await generate_insight(source, insight_type, None if lang == "auto" else lang, api_key,
                                       title=title, job_output_dir=out_dir, progress=_prog)
 
     task, duplicate = start_task(req.job_id, "generate", insight_type, lang, _run)

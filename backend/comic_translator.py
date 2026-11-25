@@ -1336,6 +1336,9 @@ async def _detect_comic_balloons_vision_async(
                             if category in ("QUOTA_EXCEEDED_DAILY_MODEL", "MODEL_TIER_RESTRICTED"):
                                 cooldown = delay if category == "QUOTA_EXCEEDED_DAILY_MODEL" and delay else 86400.0
                                 GeminiKeyPool.mark_model_exhausted(api_key, model, cooldown, reason=err_detail[:120])
+                                if category == "QUOTA_EXCEEDED_DAILY_MODEL":
+                                    from backend.gemini_key_pool import record_model_daily_limit
+                                    record_model_daily_limit(info.get("model") or model, info.get("quota_value"))
                             elif resp.status == 429:
                                 # a per-minute limit: the next model now, a second round after the wait Google names
                                 round_wait = max(round_wait, min(30.0, delay or 4.0))
@@ -1812,6 +1815,7 @@ async def translate_comic_document(
     progress_callback: Optional[Callable] = None,
     quota_behavior: str = "wait",
     notes: Optional[List[str]] = None,
+    page_range: Optional[Tuple[int, int]] = None,
 ) -> str:
     """
     Main entry point for Graphic Novel / Comic translation.
@@ -1881,12 +1885,21 @@ async def translate_comic_document(
         total_pages = len(doc)
         if total_pages == 0:
             raise ValueError("Comic PDF contains 0 pages and cannot be translated.")
+        # A sample translates only the chosen pages (the output holds just those); page numbers stay the book's own
+        selected = list(range(total_pages))
+        if page_range:
+            lo, hi = max(1, int(page_range[0])), min(total_pages, int(page_range[1]))
+            if lo > hi:
+                raise ValueError(f"The comic has {total_pages} pages: page {page_range[0]} is past its end.")
+            selected = list(range(lo - 1, hi))
+            update_job(job_id, sample_range=[lo, hi])
+        n_pages = len(selected)
 
         # Check if this comic is primarily scanned/image-only
         has_vector_text = any(
             not _is_image_page(
                 doc[i], [b for b in doc[i].get_text("blocks") if len(b) >= 5 and b[4].strip() and b[1] != b[3]], False)
-            for i in range(min(5, total_pages))
+            for i in selected[:5]
         )
         if not has_vector_text and not resolved_api_key:
             raise ValueError(
@@ -1894,7 +1907,7 @@ async def translate_comic_document(
                 "for Vision AI balloon detection and translation."
             )
 
-        update_job(job_id, total_chunks=total_pages, done_chunks=0, current_step=f"Translating {total_pages} comic pages (parallel Vision engine)...")
+        update_job(job_id, total_chunks=n_pages, done_chunks=0, current_step=f"Translating {n_pages} comic pages (parallel Vision engine)...")
 
         all_document_dialogues: List[Tuple[int, List[str]]] = [(i + 1, []) for i in range(total_pages)]
         vision_pages_to_process: List[Tuple[int, bytes]] = []
@@ -1904,7 +1917,7 @@ async def translate_comic_document(
         blank_pages: List[int] = []  # scanned pages where Vision found no text to place
 
         # Pass 1: Process vector text pages immediately and collect raster pages for parallel Vision AI
-        for page_idx in range(total_pages):
+        for page_idx in selected:
             if is_job_cancelled(job_id):
                 raise asyncio.CancelledError("Comic translation cancelled by user.")
 
@@ -1926,10 +1939,10 @@ async def translate_comic_document(
                 quota_note = " (⚠️ Χωρίς AI Polish: εξαντλήθηκε το ημερήσιο όριο Gemini)" if is_gemini_quota_exhausted() else ""
                 update_job(
                     job_id,
-                    current_step=f"Translating graphic novel page {completed_count} of {total_pages}{quota_note}...",
-                    progress=int((completed_count / max(total_pages, 1)) * 92),
+                    current_step=f"Translating graphic novel page {completed_count} of {n_pages}{quota_note}...",
+                    progress=int((completed_count / max(n_pages, 1)) * 92),
                     done_chunks=completed_count,
-                    total_chunks=total_pages,
+                    total_chunks=n_pages,
                 )
             else:
                 if resolved_api_key:
@@ -2041,10 +2054,10 @@ async def translate_comic_document(
                     completed_count += 1
                     update_job(
                         job_id,
-                        current_step=f"AI Vision translated graphic novel page {completed_count} of {total_pages}...",
-                        progress=int((completed_count / max(total_pages, 1)) * 92),
+                        current_step=f"AI Vision translated graphic novel page {completed_count} of {n_pages}...",
+                        progress=int((completed_count / max(n_pages, 1)) * 92),
                         done_chunks=completed_count,
-                        total_chunks=total_pages,
+                        total_chunks=n_pages,
                     )
 
                 from backend.async_utils import gather_or_cancel
@@ -2109,6 +2122,9 @@ async def translate_comic_document(
         final_comic_pdf = out_dir / f"{stem}_translated_{target_lang}.pdf"
         from backend.pdf_text_names import fix_text_names
         fix_text_names(doc, "\n".join(t for _p, texts in all_document_dialogues for t in texts))
+        if len(selected) < total_pages:
+            doc.select(selected)  # a sample: only its pages
+            all_document_dialogues = [all_document_dialogues[i] for i in selected]
         doc.save(str(final_comic_pdf), garbage=3)  # stand-in fonts once, not on every page
     finally:
         if doc is not None:
@@ -2165,8 +2181,8 @@ async def translate_comic_document(
         job_id,
         status="running",
         progress=95,
-        done_chunks=total_pages,
-        total_chunks=total_pages,
+        done_chunks=n_pages,
+        total_chunks=n_pages,
         output_path=str(final_comic_pdf),
         current_step="Graphic novel translation complete! Preparing export...",
     )

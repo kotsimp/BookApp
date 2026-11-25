@@ -232,6 +232,14 @@ async function loadInsightsAnalysis() {
     insState.analysis = a;
     if (a.file_name && !insState.fileName) insState.fileName = a.file_name;
     const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
+    if (a.needs_scan_reading) {
+      // a scanned book: Gemini Vision reads its pages first, when a summary or synopsis is asked for
+      document.getElementById('ins-file-meta').textContent =
+        `📖 Σκαναρισμένο PDF: πρώτα διαβάζονται ${a.scan_pages} σελίδες με Gemini Vision (1 αίτημα ανά σελίδα)`;
+      if (!a.has_api_key) showInsightsError('Χρειάζεται κλειδί Gemini για να διαβαστεί το κείμενο των σελίδων.');
+      updateInsightsButtons();
+      return;
+    }
     document.getElementById('ins-file-meta').textContent =
       `~${a.meaningful_words.toLocaleString('el-GR')} λέξεις · ~${a.estimated_pages} σελίδες · ${lang}`;
     if (!a.can_summary) showInsightsError(a.reasons?.summary || 'Το έγγραφο δεν περιέχει αρκετό κείμενο.');

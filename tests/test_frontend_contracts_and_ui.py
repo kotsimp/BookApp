@@ -1236,6 +1236,268 @@ process.stdout.write('OK');
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Light by day, dark at night, manual switch until the next change: OK")
 
+    def test_16_scanned_book_choice_sample_and_estimate(self):
+        """A scanned PDF offers Book / Comic; a sample sends its pages and resumes as the same sample; the estimate
+        line says how many Gemini requests and what the keys allow, in both interface languages."""
+        print("-> 16. Testing the scanned-book choice, the sample run and the request estimate...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        index = Path("frontend/index.html").read_text(encoding="utf-8")
+        for el_id in ("tr-scan-choice", "scan-kind-book", "scan-kind-comic", "tr-sample-row", "tr-sample-from",
+                      "tr-sample-to", "tr-sample-btn", "tr-estimate", "tr-sample-done"):
+            self.assertIn(f'id="{el_id}"', index)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', href: '', dataset: {},
+    style: { display: '' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; },
+    removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+      toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)) },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const calls = [];
+const win = { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} };
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, Notification: undefined, Audio: class { play() { return Promise.resolve(); } },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, sessionStorage: { getItem: () => null, setItem() {} },
+  URLSearchParams,
+  fetch: async (url, opts) => { calls.push({ url, opts }); return { ok: true, status: 200, json: async () => ({}) }; },
+  window: win,
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+ctx.connectSSE = () => {};
+ctx.closeEditor = () => {};
+vm.runInContext("state.tr.jobId = 'J1'; state.tr.status = 'idle'; state.tr.estimatedPages = 120;", ctx);
+getEl('tr-layout-mode').value = 'standard';
+getEl('tr-output-format').value = 'pdf';
+getEl('tr-file-name').textContent = 'Old Scan.pdf';
+
+(async () => {
+  // Book / Comic
+  ctx.showScanChoice('comic');
+  assert.strictEqual(getEl('tr-scan-choice').style.display, '');
+  assert.strictEqual(getEl('tr-layout-mode').value, 'comic', 'Comic locks the Graphic Novel layout');
+  assert.ok(getEl('scan-kind-comic').classList.contains('active'));
+  ctx.chooseScanKind('book');
+  assert.strictEqual(vm.runInContext('state.tr.scanKind', ctx), 'book');
+  assert.strictEqual(getEl('tr-layout-mode').value, 'standard', 'Book unlocks the book layouts');
+  assert.strictEqual(getEl('scan-kind-book').attrs['aria-checked'], 'true');
+  assert.strictEqual(getEl('scan-kind-comic').attrs['aria-checked'], 'false');
+  assert.strictEqual(getEl('tr-scan-hint-comic').style.display, 'none');
+
+  // the sample row: pages 1-10 by default, kept within the document
+  ctx.updateSampleRow(true);
+  assert.strictEqual(getEl('tr-sample-row').style.display, '');
+  assert.strictEqual(getEl('tr-sample-unit').textContent, 'σελίδες');
+  assert.strictEqual(getEl('tr-sample-to').value, '10');
+  getEl('tr-sample-from').value = '3'; getEl('tr-sample-to').value = '500';
+  assert.deepStrictEqual(Array.from(ctx.readSampleRange()), [3, 120]);
+  getEl('tr-sample-to').value = '12';
+
+  const lastBody = () => JSON.parse(calls.filter((c) => /\/translate$/.test(c.url)).pop().opts.body);
+  ctx.startSampleTranslation();
+  await new Promise((r) => setImmediate(r));
+  let body = lastBody();
+  assert.strictEqual(body.page_from, 3); assert.strictEqual(body.page_to, 12);
+  assert.strictEqual(body.read_scanned_text, true, 'the Book choice reads the text first');
+  assert.strictEqual(getEl('tr-sample-row').style.display, 'none', 'hidden while it runs');
+  // a stopped sample resumes as the same sample
+  vm.runInContext("state.tr.status = 'error';", ctx);
+  await ctx.resumeTranslation('tr');
+  body = lastBody();
+  assert.strictEqual(body.page_from, 3, 'resume keeps the sample');
+  // the whole book after the sample
+  vm.runInContext("state.tr.status = 'done';", ctx);
+  ctx.startFullAfterSample();
+  await new Promise((r) => setImmediate(r));
+  body = lastBody();
+  assert.strictEqual(body.page_from, null); assert.strictEqual(body.page_to, null);
+  vm.runInContext("state.tr.status = 'done';", ctx);
+  await ctx.resumeTranslation('tr');
+  assert.strictEqual(lastBody().page_from, null, 'after a whole-book start, resume is the whole book');
+
+  // the finished sample says so, with a button for the whole book
+  ctx.playCompletionNotification = () => {};
+  ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'standard', sample_range: [3, 13] });
+  assert.strictEqual(getEl('tr-sample-done').style.display, '');
+  assert.ok(getEl('tr-sample-done-text').textContent.includes('3–13'));
+  ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'standard', sample_range: null });
+  assert.strictEqual(getEl('tr-sample-done').style.display, 'none');
+
+  // the estimate query carries the settings
+  getEl('tr-ai-polish').checked = true;
+  const q = new URLSearchParams(ctx.estimateQuery([1, 10]));
+  assert.strictEqual(q.get('ai_polish'), 'true'); assert.strictEqual(q.get('read_scanned_text'), 'true');
+  assert.strictEqual(q.get('page_from'), '1'); assert.strictEqual(q.get('page_to'), '10');
+
+  // the estimate line
+  const base = { has_key: true, keys: 3, best_per_day: 60, best_days: 2, read_scanned_text: true };
+  let html = ctx.formatEstimate({ ...base, requests: { read: 120, translate: 50, revise: 0 }, total: 170 },
+    { sample: [1, 10], total: 18 });
+  assert.ok(html.includes('📊 Εκτίμηση: ~170 αιτήματα Gemini'));
+  assert.ok(html.includes('~120 ανάγνωση σελίδων') && html.includes('~50 μετάφραση'));
+  assert.ok(html.includes('χωράνε σήμερα'), html);
+  assert.ok(html.includes('Δείγμα 1–10: ~18 αιτήματα.'));
+  html = ctx.formatEstimate({ ...base, requests: { read: 0, translate: 90, revise: 0 }, total: 90 });
+  assert.ok(html.includes('ελαφρύτερο μοντέλο'), html);
+  html = ctx.formatEstimate({ ...base, requests: { read: 0, translate: 50, revise: 50 }, total: 100 });
+  assert.ok(html.includes('~2 μέρες') && html.includes('~50 2ο πέρασμα'), html);
+  assert.ok(ctx.formatEstimate({ ...base, read_scanned_text: false, requests: {}, total: 0 }).includes('δωρεάν μηχανή'));
+  assert.ok(ctx.formatEstimate({ ...base, has_key: false, requests: { read: 5 }, total: 5 }).includes('Χρειάζεται κλειδί Gemini'));
+
+  // every piece of it switches to English
+  const i18n = vm.createContext({ console, MutationObserver: class { observe() {} }, CustomEvent: class {},
+    localStorage: { getItem: () => null, setItem() {} }, navigator: { language: 'el-GR' },
+    document: { documentElement: {}, addEventListener() {}, querySelectorAll: () => [], dispatchEvent() {} },
+    window: {}, NodeFilter: {} });
+  vm.runInContext(fs.readFileSync('frontend/i18n.js', 'utf8') + ';globalThis.I18N = I18N;', i18n);
+  const t = (s) => i18n.I18N.text(s, 'en');
+  const pieces = [];
+  for (const e of [
+    { ...base, requests: { read: 120, translate: 50, revise: 0 }, total: 170 },
+    { ...base, requests: { read: 0, translate: 90, revise: 0 }, total: 90 },
+    { ...base, requests: { read: 0, translate: 50, revise: 50 }, total: 100 },
+    { ...base, read_scanned_text: false, requests: {}, total: 0 },
+    { ...base, has_key: false, requests: { read: 5 }, total: 5 },
+  ]) {
+    const h = ctx.formatEstimate(e, { sample: [1, 10], total: 1 });
+    for (const m of h.matchAll(/<span>([^<]*)<\/span>/g)) pieces.push(m[1]);
+  }
+  pieces.push('🧪 Αυτό είναι δείγμα (3–13). Αν σας αρέσει, μεταφράστε όλο το βιβλίο.',
+    '📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision): σελίδα 12 από 300...');
+  const untranslated = pieces.filter((p) => t(p) === p);
+  assert.deepStrictEqual(untranslated, [], 'estimate / sample texts without an English pair');
+  // the server's own wording (English) in a Greek interface
+  const el = (s) => i18n.I18N.text(s, 'el');
+  assert.strictEqual(el('Exported PDF · 🧪 Sample: pages 1–12'), 'Εξήχθη PDF · 🧪 Δείγμα: σελίδες 1–12');
+  assert.ok(!el('3 scanned page(s) could not be read (4, 9, 12): timed out. Start again to read them: the pages already read are kept.').includes('Start again'));
+  assert.ok(!el('A scanned book needs a Gemini API key: Gemini Vision reads the text of its page images. Add a key with 🔑, or choose Comic to translate on the page images.').includes('needs'));
+  assert.strictEqual(t('Τα κλειδιά σας (3) δίνουν ~60 την ημέρα στο καλύτερο μοντέλο: χωράνε σήμερα.'),
+    'Your keys (3) give ~60 a day on the best model: it fits today.');
+  process.stdout.write('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Scanned-book choice, sample run and request estimate: OK")
+
+    def test_17_read_along_bilingual_and_devices(self):
+        """The player lights the sentence being read and jumps to a clicked one; the bilingual download follows the
+        chosen format; the Devices window shows the link state and sends the notification settings."""
+        print("-> 17. Testing reading along, the bilingual download and the Devices window...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        index = Path("frontend/index.html").read_text(encoding="utf-8")
+        for el_id in ("ab-readalong-btn", "ab-readalong", "ab-readalong-text", "ab-readalong-follow", "tr-bilingual-btn",
+                      "btn-devices", "devices-modal", "ntfy-topic", "ntfy-server", "opds-link", "opds-new-btn"):
+            self.assertIn(f'id="{el_id}"', index)
+        self.assertIn('id="ab-readalong-text" translate="no"', index, "the book's own text is never switched")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: true, disabled: false, title: '', href: '', dataset: {},
+    style: { display: '' }, attrs: {}, offsetTop: 0, offsetHeight: 20, clientHeight: 300, scrollTop: 0,
+    setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; }, removeAttribute() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+      toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)) },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const calls = [];
+const win = { location: { origin: 'http://192.168.1.5:8000', hostname: '192.168.1.5', protocol: 'http:', href: '' },
+  addEventListener() {}, confirm: () => true };
+const responses = {};
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, Notification: undefined,
+  Audio: class { play() { return Promise.resolve(); } },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, URLSearchParams,
+  fetch: async (url, opts) => { calls.push({ url, opts });
+    const r = Object.entries(responses).sort((a, b) => b[0].length - a[0].length).find(([k]) => url.includes(k));
+    return { ok: true, status: 200, json: async () => (r ? r[1] : {}) }; },
+  window: win, navigator: {},
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+ctx.toast = () => {};
+(async () => {
+  // reading along
+  responses['/read-along'] = { segments: [
+    { s: 0, e: 1000, t: 'First <one>.', p: 1 }, { s: 1000, e: 2500, t: 'Second.', p: 0 }, { s: 2500, e: 4000, t: 'Τρίτη.', p: 1 }] };
+  vm.runInContext("state.ab.jobId = 'A1';", ctx);
+  await ctx.loadReadAlong('A1');
+  assert.strictEqual(getEl('ab-readalong-btn').style.display, '', 'the button shows when there are times');
+  const idx = (ms) => ctx.readAlongIndex(ms);
+  assert.deepStrictEqual([idx(-5), idx(0), idx(999), idx(1000), idx(2499), idx(9000)], [-1, 0, 0, 1, 1, 2]);
+  const box = getEl('ab-readalong-text');
+  const spans = {};
+  box.querySelector = (sel) => { const m = /data-i="(-?\d+)"/.exec(sel); if (!m) return null;
+    return spans[m[1]] || (spans[m[1]] = makeEl('span' + m[1])); };
+  getEl('ab-readalong').style.display = 'none';
+  ctx.toggleReadAlong();
+  assert.strictEqual(getEl('ab-readalong').style.display, '');
+  assert.strictEqual(getEl('ab-readalong-btn').attrs['aria-expanded'], 'true');
+  assert.ok(box.innerHTML.includes('First &lt;one&gt;.'), 'book text is escaped');
+  assert.strictEqual((box.innerHTML.match(/<p>/g) || []).length, 2, 'paragraphs kept');
+  ctx.readAlongAt(1200);
+  assert.ok(spans['1'].classList.contains('ra-current'));
+  ctx.readAlongAt(3000);
+  assert.ok(!spans['1'].classList.contains('ra-current') && spans['2'].classList.contains('ra-current'));
+  // no times for an audiobook: no button
+  responses['/read-along'] = { segments: [] };
+  await ctx.loadReadAlong('A1');
+  assert.strictEqual(getEl('ab-readalong-btn').style.display, 'none');
+
+  // bilingual download in the chosen format (PDF when the chosen one has no bilingual form)
+  vm.runInContext("state.tr.jobId = 'T1'; state.tr.status = 'done';", ctx);
+  getEl('tr-output-format').value = 'docx';
+  ctx.downloadBilingual();
+  assert.ok(win.location.href.endsWith('/download/T1/bilingual?format=docx'), win.location.href);
+  getEl('tr-output-format').value = 'txt';
+  ctx.downloadBilingual();
+  assert.ok(win.location.href.endsWith('/bilingual?format=pdf'));
+  ctx.playCompletionNotification = () => {};
+  getEl('tr-layout-mode').value = 'comic';
+  ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'comic' });
+  assert.strictEqual(getEl('tr-bilingual-btn').style.display, 'none', 'no bilingual comic');
+  ctx.showResult('tr', { output_format: 'pdf', layout_mode: 'standard' });
+  assert.strictEqual(getEl('tr-bilingual-btn').style.display, '');
+
+  // the Devices window
+  responses['/connections'] = { opds: { exists: true, created: 1764000000 },
+    ntfy: { enabled: true, topic: 'bookapp-abc123', server: 'https://ntfy.sh' } };
+  await ctx.openDevicesModal();
+  assert.strictEqual(getEl('devices-modal').style.display, 'flex');
+  assert.strictEqual(getEl('ntfy-topic').value, 'bookapp-abc123');
+  assert.ok(getEl('opds-status').textContent.startsWith('Υπάρχει σύνδεσμος από'));
+  assert.strictEqual(getEl('opds-remove-btn').style.display, '');
+  assert.strictEqual(getEl('opds-localhost-note').style.display, 'none', 'a LAN address works on the e-reader');
+  const body = JSON.parse(ctx.ntfyRequestBody());
+  assert.deepStrictEqual([body.topic, body.app_url, body.lang], ['bookapp-abc123', 'http://192.168.1.5:8000', 'el']);
+  responses['/connections/opds'] = { path: '/opds/SECRET123/' };
+  await ctx.newOpdsLink();
+  assert.strictEqual(getEl('opds-link').value, 'http://192.168.1.5:8000/opds/SECRET123/');
+  assert.strictEqual(getEl('opds-link-box').style.display, '');
+  ctx.suggestNtfyTopic === undefined || (getEl('ntfy-topic').value = '');
+  win.crypto = { getRandomValues: (a) => { a.fill(7); return a; } };
+  ctx.suggestNtfyTopic();
+  assert.match(getEl('ntfy-topic').value, /^bookapp-[a-z0-9]{12}$/);
+  process.stdout.write('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Reading along, bilingual download and Devices window: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 1. [Accessing the Application](#1-accessing-the-application)
    - [Help: Guide & FAQ](#-help-guide--faq)
    - [Light by Day, Dark at Night](#--light-by-day-dark-at-night)
+   - [Devices: Phone Notifications & E-reader Catalogue](#-devices-phone-notifications--e-reader-catalogue)
    - [Signing In & Your Account](#-signing-in--your-account)
    - [Managing Users (Administrators)](#-managing-users-administrators)
 2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
@@ -16,6 +17,8 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Supported File Formats](#supported-file-formats)
    - [Graphic Novels, Comics & Manga (RTL)](#-graphic-novels-comics--manga-rtl)
    - [Scanned PDFs (Page Images Only)](#-scanned-pdfs-page-images-only)
+   - [Gemini Request Estimate](#-gemini-request-estimate)
+   - [Sample First: Translate a Few Pages](#-sample-first-translate-a-few-pages)
    - [Auto-Genre & Document Style Detection](#-auto-genre--document-style-detection)
    - [Automatic Greek Editorial Typography](#-automatic-greek-editorial-typography)
    - [Step-by-Step Translation Guide](#step-by-step-translation-guide)
@@ -24,6 +27,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Book Cover Image Management](#-book-cover-image-management)
    - [Gemini Quota Handling Choice & Free Mode](#-gemini-quota-handling-choice--free-mode)
    - [Instant On-Demand Export Without Retranslating](#-instant-on-demand-export-without-retranslating)
+   - [Bilingual Edition](#-bilingual-edition)
    - [Distraction-Free "Read Now" Reader View](#-distraction-free-read-now-reader-view)
    - [Smart Resume Banner](#-smart-resume-banner)
    - [Live ETA, Speed & Hybrid Engine Badge](#-live-eta-speed--hybrid-engine-badge)
@@ -42,6 +46,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Narration Styles, Speed & Pitch Tuning](#-narration-styles-speed--pitch-tuning)
    - [AI Polish for Spoken Audio](#-ai-polish-for-spoken-audio)
    - [Built-In Pro Audiobook Player](#-built-in-pro-audiobook-player)
+   - [Reading Along](#-reading-along)
    - [Understanding Progress: "Audio Parts" vs "Pages"](#understanding-progress-audio-parts-vs-pages)
 5. [Book Insights: Summaries, Synopses & Audio](#5-book-insights-summaries-synopses--audio)
 6. [Session History & Task Management](#6-session-history--task-management)
@@ -66,10 +71,28 @@ The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the
 * Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
 
 ### ❓ Help: Guide & FAQ
-The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
+The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, trying a few pages first, a message on your phone when a job finishes, reading on an e-reader, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
 
 ### ☀️ / 🌙 Light by Day, Dark at Night
 The interface is light from sunrise to sunset and dark at night, by itself (the times follow the date; on Greek time they are those of Athens). The **Theme** button at the top right still switches it whenever you like: your choice holds until the next sunrise or sunset, and then the automatic theme takes over again. Hover over the button to see until when your choice lasts.
+
+### 📲 Devices: Phone Notifications & E-reader Catalogue
+The **📲 Συσκευές** button in the tab bar opens a window with two links to your other devices. With user accounts, each user sets up their own.
+
+**🔔 Phone notifications (ntfy).** When a translation or an audiobook finishes, or stops (for example at the Gemini daily limit, or with an error), a message comes to your phone, even with the page closed.
+1. On the phone, install the free **ntfy** app (Android, iPhone).
+2. In the window, write a **topic name** (or press **🎲** for a random one that is hard to guess) and press **💾 Αποθήκευση**.
+3. In the ntfy app press **+** and add the same topic. **📨 Δοκιμαστικό μήνυμα** checks that it arrives.
+* The message says what happened (`✅ Η μετάφραση ολοκληρώθηκε`, `🎧 Το ηχοβιβλίο είναι έτοιμο`, `⏳ Σταμάτησε στο ημερήσιο όριο Gemini`, `⚠️ … σταμάτησε` with the reason) and the file name. Tapping it opens BookApp. It is written in the interface language chosen when you saved.
+* The topic works like a password: whoever knows it sees the messages. Only the file name and the outcome are sent, never the book's text.
+* The public server `https://ntfy.sh` is used unless you write the address of your own ntfy server. **🔕 Απενεργοποίηση** stops the messages.
+
+**📚 E-reader catalogue (OPDS).** Reading apps such as **KOReader**, **Moon+ Reader**, **Librera** or **Panels** (comics) list your finished translations and download them directly.
+1. Press **🔗 Νέος σύνδεσμος** and copy the link (`http://<server>:8000/opds/…/`).
+2. In the reading app, add it as an OPDS catalogue (KOReader: *Search → OPDS catalog → +*; Moon+ Reader: *My Shelf → Net Library → Add*).
+* Books offer **EPUB**, **PDF** and **Δίγλωσσο EPUB** (the bilingual edition); comics offer **CBZ** and **PDF**. Files are made on demand, as the app's own downloads are.
+* The link is secret: whoever has it sees your books, so don't share it. It is shown only when made; a new link stops the old one, and **🗑️ Κατάργηση** stops it for good.
+* If you opened BookApp as `localhost`, put the server's network address (e.g. `192.168.1.10`) in its place on the e-reader. The e-reader must reach the server (same network, or through your HTTPS address).
 
 ### 🔐 Signing In & Your Account
 
@@ -166,11 +189,37 @@ The application includes a specialized pipeline for illustrated publications:
    - When the job finishes, the progress card lists the pages left untranslated, with the reason, and the scanned pages where no text was found (see the FAQ below).
 
 ### 📑 Scanned PDFs (Page Images Only)
-A scanned PDF can be translated as it is, **without OCR**:
-* On upload the app sees that the pages are pictures with almost no text, shows `🎨 Graphic Novel / Comic Auto-Detected` and switches to the **Graphic Novel** layout by itself. You do not need to choose it.
-* **Gemini Vision** reads the text from the page images, and the translation is drawn onto the same pages as described above. This needs a Gemini key; without one the job stops with a message saying so.
-* It is made for comics. A scanned novel takes the same path, so it comes out as page images with the translation drawn on them (PDF, CBZ, CBR or Fixed-Layout EPUB), not as plain text.
-* **When you do need OCR first:** for a translation as plain text (DOCX, TXT or a normal EPUB), for an audiobook, and for Book Insights. These read the PDF's text, and a scanned PDF has none. An OCR program (for example the free OCRmyPDF) adds a text layer; then upload the new PDF.
+A scanned PDF can be translated as it is, **without OCR**. On upload the app sees that the pages are pictures with almost no text, and the card asks **🖨️ Σκαναρισμένο PDF. Τι περιέχει;** with two choices. One is already selected by a guess: pages of print on light paper suggest a book, coloured panels or large dark areas suggest a comic, and a comic word in the file name (comic, manga…) decides for a comic. Change it if the guess is wrong.
+
+* **📖 Βιβλίο (Book):** Gemini Vision first reads the text of every page, then the text is translated like a digital book, in any layout and format (PDF, DOCX, EPUB, TXT).
+  - Each page is one request, sent first to the light Flash-Lite models: reading print is easy for them and their daily allowance is large (about 1,500 a day per key), which leaves the best model's small allowance for the translation itself. A page with real text of its own (a digital title page) is not sent.
+  - The progress card shows `📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision): σελίδα 12 από 300…`, then the translation as usual.
+  - The text read is kept with the uploaded file. Later jobs on the same file (another translation, an **audiobook**, **Book Insights**, the original in **✏️ Review & Edit**) use it without reading again. An audiobook or Book Insights of a scanned book that has not been read yet reads it first, by itself.
+  - A page Gemini refuses stays empty; a page that fails for another reason (a timeout) stops the job with a message naming it, and **Start** again reads only the pages still missing. Every page read is also cached, so nothing is ever paid for twice.
+* **🎨 Κόμικ (Comic):** the translation is drawn onto the page images, in the balloons, as described in the section above (PDF, CBZ, CBR or Fixed-Layout EPUB).
+* Both need a Gemini key. Without one, a book stops with a message, and the estimate above the Start button says so before you start.
+* In the **Smart Batch Queue**, each scanned PDF keeps the choice guessed on upload.
+
+### 📊 Gemini Request Estimate
+Above the Start button, a line says about how many Gemini requests the translation needs with the settings chosen, and what your keys allow a day. It changes as you change AI Polish, Maximum quality, the layout, the format, the Book / Comic choice or the sample pages. For example:
+
+`📊 Εκτίμηση: ~214 αιτήματα Gemini (~120 ανάγνωση σελίδων · ~47 μετάφραση · ~47 2ο πέρασμα). Τα κλειδιά σας (3) δίνουν ~60 την ημέρα στο καλύτερο μοντέλο· το 2ο πέρασμα δουλεύει μόνο με πλήρη μοντέλα: ~2 μέρες. Δείγμα 1–10: ~13 αιτήματα.`
+
+* **Reading the pages** (a scanned book): one request per page not read yet.
+* **Translation:** the AI translation sends about 3 pages (up to ~5,500 characters) per request, plus one request for the names and terms of a long book. DOCX → DOCX and EPUB → EPUB with AI send their paragraphs in parts of about 4,000 characters. A comic sends one request per page.
+* **2nd pass** (Maximum quality): about as many as the translation.
+* **What your keys allow:** the best model's daily allowance per key (for example 20 requests for `gemini-3.5-flash`) times your keys. If the translation needs more, it continues the same day on a lighter model. The 2nd pass uses full models only, so the line says how many days it needs. When Google reports a different limit for a model, the estimate uses Google's number from then on.
+* Without AI Polish the free engine translates and needs no Gemini requests, unless Google refuses (then Gemini translates in batches).
+* It is an estimate: retries of a failed answer, and answers already cached, change the real count a little. When the job finishes, a notification gives the real number of requests.
+
+### 🧪 Sample First: Translate a Few Pages
+Under the estimate, **🧪 Δείγμα πρώτα: σελίδες [1] έως [10] · 🧪 Μετάφραση δείγματος** translates only those pages (chapters, for an EPUB), with all the settings of the card, so you can judge the style and quality before spending hours and quota on the whole book.
+* The AI translation works on whole requests of about 3 pages, so a sample may end a page or two after the last page you chose. The card then says which pages were done.
+* The result card says `🧪 Αυτό είναι δείγμα (1–11)…`, with a **🌐 Μετάφραση ολόκληρου του βιβλίου** button. Download, Read Now, Review & Edit and the audiobook all work on the sample. Its files download with `_sample_p1-11` in the name.
+* **Nothing is translated twice:** with AI Polish on a page-based translation (PDF, TXT, or a DOCX / EPUB to another format), the whole book reuses the sample's requests, as long as the languages and style stay the same. The free engine and comics reuse them through the cache. Two exceptions: DOCX → DOCX and EPUB → EPUB with AI translate the sample page by page but the whole book in place (to keep its formatting), and a scanned book's sample is translated before the rest of the book has been read. In both, the sample's translation requests are spent once more for the whole book.
+* A scanned book's sample reads only its own pages (and two more). The rest are read when the whole book is translated; the pages already read are not read again.
+* A sample stopped by the daily limit resumes as the same sample.
+* Maximum quality also works on a sample, for judging the 2nd pass.
 
 ### 💡 Auto-Genre & Document Style Detection
 Upon uploading a document, the system automatically analyzes the opening pages:
@@ -270,6 +319,13 @@ You never need to re-translate a document to obtain another file format:
   * 📱 **EPUB** — E-reader publication with spine and chapter formatting.
   * 📃 **TXT** — Clean UTF-8 plain text for quick reading or scripts.
 * Clicking any format generates and downloads the file **instantaneously (< 1 second)** on-demand from the cached translation text without re-translating or consuming quota.
+
+### 🔀 Bilingual Edition
+On the result card, **🔀 Δίγλωσσο** downloads the original and the translation together, paragraph by paragraph: each passage of the original, smaller and in grey italics, followed by its translation. It suits learners and checking a translation.
+* It comes in the chosen format if that is **PDF**, **DOCX** or **EPUB** (otherwise as PDF). Files are named `<book>_bilingual.<ext>`.
+* Passages are matched page by page and then paragraph by paragraph. Where the translation joined two paragraphs into one (dialogue, for example), or split one, they are matched by their lengths, so a passage never drifts away from its translation.
+* It is made from the current translation, so edits in Review & Edit appear in it. A sample gives a bilingual sample.
+* Comics have no bilingual edition: their text is part of the pictures.
 
 ### 📖 Distraction-Free "Read Now" Reader View
 Read your translated book directly inside the application:
@@ -398,7 +454,7 @@ Every translation and every audiobook goes through one more automatic step at th
 
 Convert any document into high-fidelity MP3 and M4B audiobooks with embedded chapter metadata and cover art.
 
-The audiobook reads the document's text. A scanned PDF (pictures of pages only) has none, so run it through an OCR program first (see [Scanned PDFs](#-scanned-pdfs-page-images-only)).
+The audiobook reads the document's text. For a scanned PDF (pictures of pages only), Gemini Vision first reads the text of its pages, unless it was read already for a translation (see [Scanned PDFs](#-scanned-pdfs-page-images-only)). This needs a Gemini key.
 
 ### Available Neural Voices & Live Auditions
 * **Greek Neural Voices (🇬🇷):**
@@ -463,6 +519,11 @@ Enable **✨ AI Polish for Spoken Audio (Gemini)** to optimize scripts for speec
 * **Playback Speed Presets:** Select between `0.8x`, `1.0x`, `1.2x`, and `1.5x`.
 * **Chapter Navigator:** Jump directly between book chapters.
 
+### 📖 Reading Along
+Audiobooks made with this version show **📖 Κείμενο** in the player. It opens the book's text under the player: the sentence being read is highlighted and kept in view, and a click on any sentence plays from there. Untick **Ακολουθεί την αφήγηση** to scroll freely while it plays.
+* Each part of the recording (about a minute) is timed exactly; within a part, a sentence's time follows its length, so the highlight can run a second or two ahead or behind in long sentences.
+* Audiobooks made before this feature have no timing; make the audiobook again to read along.
+
 ### Understanding Progress: "Audio Parts" vs "Pages"
 The progress indicator displays:  
 `Generating audio part 2 of 5...`
@@ -494,7 +555,7 @@ For each, choose the **output language** (Greek or English) and the **output for
 ### 📏 Minimum length
 * **Synopsis:** needs at least **~1.5 pages of real text** (about 375 words). The app counts only meaningful text and ignores page numbers, repeated headers and links, so page counts of PDFs do not matter. For shorter documents the synopsis buttons are disabled, with an explanation.
 * **Summary:** needs at least about 80 words.
-* Scanned books (images only) contain no extractable text and cannot be summarised. Run them through an OCR program first, then upload the new PDF.
+* Scanned books (images only) have no text of their own. The panel says `📖 Σκαναρισμένο PDF: πρώτα διαβάζονται N σελίδες με Gemini Vision`, and the summary or synopsis reads them first (one request per page, shown in the progress), then checks the length and the language. Pages read for a translation or an audiobook are not read again. A scanned PDF uploaded as a comic is not summarised.
 
 ### ✅ Quality check before you see anything
 Every text is checked automatically before it is displayed:
@@ -513,7 +574,7 @@ Press **🎧 Create audio** under any result. The final text is narrated exactly
 ### ⚠️ Messages you may see
 | Message | What to do |
 |---|---|
-| Document too short / not enough text | Use a longer document; scanned images have no text. |
+| Document too short / not enough text | Use a longer document. A scanned PDF uploaded as a comic is not read as text. |
 | Language not detected | Choose the output language in Advanced Mode. |
 | Gemini key required / key rejected | Add or correct your key with **🔑 Gemini API Key**. |
 | Daily Gemini limit reached / too many requests | Wait, or add another key to the pool. |
@@ -545,8 +606,10 @@ The **Session History** panel at the bottom of the page tracks all jobs (with us
 * **Yes!** Open the **Direct Editor**, paste your text, and click **✨ AI Polish**. The system processes your text and lets you download it as TXT, DOCX, PDF, or EPUB.
 
 #### ❓ How are scanned PDFs translated? Do I need OCR first?
-* **No OCR is needed to translate.** The upload analyzer automatically detects scanned PDFs, comics and books alike (`🎨 Graphic Novel / Comic Auto-Detected`), and locks the interface to comic-safe options. The **Gemini Vision AI** reads the text, 3 pages at a time, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact. A Gemini key is required.
-* A scanned novel also comes out as page images with the translation drawn on them. For plain text, an audiobook or Book Insights, run the PDF through an OCR program first (see [Scanned PDFs](#-scanned-pdfs-page-images-only)).
+* **No OCR is needed.** The upload analyzer detects scanned PDFs and asks whether the file is a **📖 Book** or a **🎨 Comic**, with a guess already selected.
+* **Book:** Gemini Vision reads the text of every page first, then it is translated like a digital book in any format. The text read also serves audiobooks and Book Insights.
+* **Comic:** the interface locks to comic-safe options. The **Gemini Vision AI** reads the speech balloons, 3 pages at a time, inpainting backgrounds and drawing translated text in comic typography while keeping 100% of the artwork intact.
+* Both need a Gemini key. See [Scanned PDFs](#-scanned-pdfs-page-images-only).
 
 #### ❓ A comic job says "page(s) left untranslated" or "No text found on page(s)". What do I do?
 * **Left untranslated (with a reason in brackets):** Gemini Vision could not read those pages, for example `HTTP 429 (rate limit)`, `HTTP 503 (overloaded)` or a timeout. Translate the file again: the pages already done come from the cache, so only the listed pages are sent again.
@@ -580,7 +643,7 @@ Yes. On a server shared by several people, your administrator switches on **user
 Open BookApp in Safari, tap **Share** (the square with the arrow) and then **Add to Home Screen**. The shortcut shows BookApp's icon (a stack of books) and the name **BookApp**, and opens the app in Safari. The same icon shows in the tabs of Chrome, Firefox, Safari and Edge, and on Android's home screen. A shortcut or bookmark made before the icon existed keeps its old letter: delete it and add it again. A browser may also need a reload (or a restart) to update the tab icon.
 
 #### ❓ Do I need to pay for an API key?
-* **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and scanned comics.
+* **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and for scanned PDFs (books and comics).
 
 #### ❓ How long does translation or audio generation take?
 * Small documents (1–5 pages): **2 to 10 seconds**.

@@ -1233,6 +1233,51 @@ html:not([lang="en"]) .help-lang[lang="en"] { display: none; }
 .help-faq details[open] summary { border-bottom: 1px solid var(--border); }
 .help-faq details p { padding: 10px 14px; margin: 0; }
 
+/* ---- Scanned PDF choice, sample first, request estimate ---- */
+.scan-choice { margin-top: 12px; padding: 12px 14px; border: 1.5px solid rgba(245, 158, 11, 0.45); border-radius: var(--radius-md); background: rgba(245, 158, 11, 0.07); }
+.scan-choice-title { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
+.scan-choice-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.scan-choice-hint { font-size: 0.78rem; line-height: 1.45; color: var(--text-secondary); margin-top: 8px; }
+.estimate-line { margin-top: 14px; padding: 9px 12px; font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.sample-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; font-size: 0.85rem; color: var(--text-secondary); }
+.sample-title { font-weight: 600; color: var(--text-primary); }
+.sample-field { display: inline-flex; align-items: center; gap: 6px; }
+.sample-input { width: 4.6em; padding: 5px 8px; font: inherit; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.sample-input:focus { outline: none; border-color: var(--border-focus); }
+.sample-hint { flex-basis: 100%; font-size: 0.76rem; color: var(--text-muted); }
+.sample-done { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; margin: 12px auto 0; max-width: 640px; padding: 10px 14px; font-size: 0.86rem; color: var(--text-primary); background: rgba(124, 58, 237, 0.1); border: 1px solid rgba(124, 58, 237, 0.4); border-radius: var(--radius-md); }
+@media (max-width: 480px) {
+  .scan-choice-options { grid-template-columns: 1fr; }
+}
+
+/* ---- Reading along with the audiobook player ---- */
+.readalong { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-input); }
+.readalong-bar { display: flex; justify-content: flex-end; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 0.78rem; color: var(--text-muted); }
+.readalong-follow { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.readalong-text { position: relative; max-height: 340px; overflow-y: auto; padding: 12px 16px; font-family: Georgia, "Times New Roman", serif; font-size: 1rem; line-height: 1.7; color: var(--text-secondary); }
+.readalong-text p { margin: 0 0 0.8em; }
+.readalong-text .ra-s { cursor: pointer; border-radius: 4px; transition: background 0.2s, color 0.2s; }
+.readalong-text .ra-s:hover { color: var(--text-primary); }
+.readalong-text .ra-s.ra-current { background: rgba(124, 58, 237, 0.22); color: var(--text-primary); box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.22); }
+@media (max-width: 480px) { .readalong-text { max-height: 50vh; font-size: 0.95rem; } }
+
+/* ---- 📲 Devices: phone notifications and the e-reader catalogue ---- */
+.devices-body { font-size: 0.88rem; line-height: 1.5; color: var(--text-secondary); }
+.devices-body h3 { font-size: 0.98rem; color: var(--text-primary); margin: 0 0 6px; }
+.devices-body p { margin: 0 0 10px; }
+.devices-body strong { color: var(--text-primary); }
+.devices-section + .devices-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.devices-field { display: block; margin: 0 0 10px; font-weight: 600; color: var(--text-primary); }
+.devices-field .form-input { margin-top: 4px; width: 100%; }
+.devices-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.devices-row .form-input { margin-top: 0; flex: 1; min-width: 0; }
+.devices-note { font-size: 0.78rem; color: var(--text-muted); }
+.devices-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.devices-actions .btn-primary, .sample-done .btn-primary { width: auto; } /* a small button among others */
+.devices-status { min-height: 1.2em; margin-top: 8px; font-size: 0.82rem; color: var(--text-primary); }
+.devices-link { display: flex; gap: 8px; align-items: center; margin: 0 0 6px; }
+.devices-link .form-input { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; }
+
 /* ---- Glossary Table & Form ---- */
 .glossary-add-form {
   display: flex;

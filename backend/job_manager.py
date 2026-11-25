@@ -7,10 +7,13 @@ import uuid
 import time
 import json
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,6 +49,9 @@ class Job:
     gemini_usage: Optional[dict] = None  # Gemini requests/tokens consumed by the last run of this job
     audiobook_options: Optional[dict] = None  # settings of the last audiobook run, restored by Smart Resume
     owner: str = ""  # user id of the account that uploaded it (user accounts mode); "" = administrators' jobs
+    scanned: bool = False  # a scanned PDF: pictures of pages, without text (detected on upload)
+    read_scanned_text: bool = False  # a scanned book: its text is read from the page images, then translated as text
+    sample_range: Optional[list] = None  # [first, last] page of a sample translation; None = the whole book
     # SSE subscriber queues (list of asyncio.Queue)
     subscribers: list       = field(default_factory=list)
 
@@ -120,8 +126,23 @@ def _job_to_db_dict(job: Job) -> dict:
             "gemini_usage": getattr(job, "gemini_usage", None),
             "audiobook_options": getattr(job, "audiobook_options", None),
             "owner": getattr(job, "owner", "") or "",
+            "scanned": bool(getattr(job, "scanned", False)),
+            "read_scanned_text": bool(getattr(job, "read_scanned_text", False)),
+            "sample_range": getattr(job, "sample_range", None),
         },
     }
+
+
+def _valid_sample_range(value) -> Optional[list]:
+    """[first, last] page numbers of a sample translation, or None (the whole book)."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            first, last = int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
+        if 1 <= first <= last:
+            return [first, last]
+    return None
 
 
 def _job_from_db_row(row: dict) -> Job:
@@ -171,6 +192,9 @@ def _job_from_db_row(row: dict) -> Job:
         gemini_usage=meta.get("gemini_usage") if isinstance(meta.get("gemini_usage"), dict) else None,
         audiobook_options=meta.get("audiobook_options") if isinstance(meta.get("audiobook_options"), dict) else None,
         owner=str(meta.get("owner") or ""),
+        scanned=bool(meta.get("scanned", False)),
+        read_scanned_text=bool(meta.get("read_scanned_text", False)),
+        sample_range=_valid_sample_range(meta.get("sample_range")),
     )
 
     if healed_fp != orig_fp and healed_fp:
@@ -429,6 +453,7 @@ def update_job(job_id: str, **kwargs):
                 kwargs.pop("progress", None)
                 kwargs.pop("output_path", None)
                 kwargs.pop("error", None)
+        was_running = job.status == "running"
         for k, v in kwargs.items():
             setattr(job, k, v)
         job.updated_at = time.time()
@@ -440,6 +465,13 @@ def update_job(job_id: str, **kwargs):
             pass
         # Notify SSE subscribers
         _notify_subscribers(job)
+        # The owner's phone hears about a translation or audiobook that finished or stopped (ntfy, if set up)
+        if was_running and job.status in ("done", "error") and job.mode in ("translate", "audiobook"):
+            try:
+                from backend.notify import job_finished
+                job_finished(job)
+            except Exception as e:
+                logger.warning(f"[{job_id}] Finish notification skipped: {e}")
 
 
 def _push_to_queue(q: asyncio.Queue, payload: dict) -> None:
@@ -478,6 +510,8 @@ def _notify_subscribers(job: Job):
         "revision_report": getattr(job, "revision_report", None),
         "gemini_usage": getattr(job, "gemini_usage", None),
         "max_quality": bool(getattr(job, "max_quality", False)),
+        "read_scanned_text": bool(getattr(job, "read_scanned_text", False)),
+        "sample_range": getattr(job, "sample_range", None),
     }
     try:
         running_loop = asyncio.get_running_loop()

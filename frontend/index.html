@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.10.5" />
-  <script src="i18n.js?v=1.2.2"></script>
+  <link rel="stylesheet" href="style.css?v=2.12.0" />
+  <script src="i18n.js?v=1.4.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -85,6 +85,10 @@
     <button class="tab-btn tab-btn-tool" id="btn-glossary" onclick="openGlossaryModal()" title="Γλωσσάρι (Glossary)" style="margin-left:auto">
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
+    </button>
+    <button class="tab-btn tab-btn-tool" id="btn-devices" onclick="openDevicesModal()" title="Ειδοποιήσεις στο κινητό και κατάλογος για e-reader">
+      <span class="tab-icon">📲</span>
+      <span class="tab-label">Συσκευές</span>
     </button>
     <button class="tab-btn tab-btn-tool" id="btn-help" onclick="openHelpModal()" title="Οδηγός &amp; συχνές ερωτήσεις">
       <span class="tab-icon">❓</span>
@@ -187,6 +191,23 @@
         <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
       </div>
       <div id="tr-genre-hint" class="genre-badge-hint" style="display:none"></div>
+      <div id="tr-scan-choice" class="scan-choice" style="display:none">
+        <div class="scan-choice-title">🖨️ Σκαναρισμένο PDF (μόνο εικόνες σελίδων). Τι περιέχει;</div>
+        <div class="scan-choice-options" role="radiogroup" aria-label="Τι περιέχει το σκαναρισμένο PDF">
+          <button type="button" class="format-btn" id="scan-kind-book" role="radio" aria-checked="false" onclick="chooseScanKind('book')">
+            <span class="format-icon">📖</span>
+            <span class="format-label">Βιβλίο</span>
+            <span class="format-desc">Πρώτα διαβάζεται το κείμενο, μετά μεταφράζεται</span>
+          </button>
+          <button type="button" class="format-btn" id="scan-kind-comic" role="radio" aria-checked="false" onclick="chooseScanKind('comic')">
+            <span class="format-icon">🎨</span>
+            <span class="format-label">Κόμικ</span>
+            <span class="format-desc">Η μετάφραση γράφεται πάνω στις σελίδες</span>
+          </button>
+        </div>
+        <div class="scan-choice-hint" id="tr-scan-hint-book">Το Gemini Vision διαβάζει κάθε σελίδα μία φορά (1 αίτημα ανά σελίδα, σε ελαφρύ μοντέλο) και μετά το κείμενο μεταφράζεται όπως ενός ψηφιακού βιβλίου. Το κείμενο που διαβάστηκε χρησιμεύει και για ηχοβιβλίο και Book Insights. Χρειάζεται κλειδί Gemini.</div>
+        <div class="scan-choice-hint" id="tr-scan-hint-comic">Το Gemini Vision διαβάζει τα μπαλόνια κάθε σελίδας και η μετάφραση γράφεται πάνω στην εικόνα. Χρειάζεται κλειδί Gemini.</div>
+      </div>
       <div id="tr-batch-upload" class="batch-upload-status" style="display:none" aria-live="polite">
         <div class="file-info-meta" id="tr-batch-upload-text"></div>
         <div class="upload-bar" role="progressbar" aria-label="Ανέβασμα αρχείων" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="tr-batch-upload-fill" style="width:0%"></div></div>
@@ -434,6 +455,20 @@
         <span>Free translation tries Google, then MyMemory (a small daily limit). Google often refuses: a free Gemini key is then needed and used automatically. Large documents (500+ pages) may take 10–60+ minutes. Progress is shown in real time.</span>
       </div>
 
+      <div id="tr-estimate" class="estimate-line" style="display:none" aria-live="polite"></div>
+
+      <div id="tr-sample-row" class="sample-row" style="display:none">
+        <span class="sample-title">🧪 Δείγμα πρώτα:</span>
+        <label class="sample-field"><span id="tr-sample-unit">σελίδες</span>
+          <input type="number" id="tr-sample-from" class="sample-input" min="1" value="1" inputmode="numeric" aria-label="Πρώτη σελίδα του δείγματος" onchange="onSampleRangeChange()" />
+        </label>
+        <label class="sample-field">έως
+          <input type="number" id="tr-sample-to" class="sample-input" min="1" value="10" inputmode="numeric" aria-label="Τελευταία σελίδα του δείγματος" onchange="onSampleRangeChange()" />
+        </label>
+        <button type="button" class="btn-sm btn-outline" id="tr-sample-btn" onclick="startSampleTranslation()" disabled>🧪 Μετάφραση δείγματος</button>
+        <span class="sample-hint">Μεταφράζονται μόνο αυτές οι σελίδες, για να δείτε ύφος και ποιότητα πριν από ολόκληρο το βιβλίο.</span>
+      </div>
+
       <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
         <button class="btn btn-primary" id="tr-start-btn" onclick="startTranslation()" disabled style="flex:1; min-width:190px">
           🌐 Start Translation
@@ -501,6 +536,10 @@
       <div style="font-size:3rem; margin-bottom:12px">✅</div>
       <h3>Translation Complete!</h3>
       <p id="tr-result-meta">Your document has been translated successfully.</p>
+      <div id="tr-sample-done" class="sample-done" style="display:none">
+        <span id="tr-sample-done-text"></span>
+        <button type="button" class="btn-sm btn-primary" onclick="startFullAfterSample()">🌐 Μετάφραση ολόκληρου του βιβλίου</button>
+      </div>
       <div id="tr-result-quota-notice" style="display:none; margin:12px auto; max-width:640px; padding:10px 16px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.5); border-radius:10px; font-size:0.85rem; color:var(--text-primary); text-align:left; line-height:1.4">
         ⚠️ <strong>Ειδοποίηση Ορίου Gemini:</strong> <span id="tr-result-quota-text"></span>
       </div>
@@ -513,6 +552,7 @@
           <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'docx')" title="Κατέβασμα ως Word DOCX" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(59,130,246,0.4); color:var(--blue)">📝 DOCX</button>
           <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'epub')" title="Κατέβασμα ως EPUB e-book" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(16,185,129,0.4); color:var(--emerald)">📱 EPUB</button>
           <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'txt')" title="Κατέβασμα ως Plain Text" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(124,58,237,0.4); color:var(--violet)">📃 TXT</button>
+          <button type="button" class="btn btn-outline" id="tr-bilingual-btn" onclick="downloadBilingual()" title="Πρωτότυπο και μετάφραση μαζί, παράγραφο προς παράγραφο (PDF, DOCX ή EPUB)" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(245,158,11,0.5); color:var(--amber)">🔀 Δίγλωσσο</button>
         </div>
         <button class="btn btn-outline" onclick="copyTranslatedText()" id="tr-copy-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet); color:var(--violet); font-weight:600">
           📋 Αντιγραφή Κειμένου
@@ -882,6 +922,15 @@
             <button type="button" class="speed-pill" onclick="setAudioSpeed(1.2, this)">1.2x</button>
             <button type="button" class="speed-pill" onclick="setAudioSpeed(1.5, this)">1.5x</button>
           </div>
+          <button type="button" class="btn btn-sm btn-outline ab-btn-round" id="ab-readalong-btn" onclick="toggleReadAlong()" style="display:none" aria-expanded="false" title="Το κείμενο φωτίζεται καθώς ακούγεται · πατήστε μια πρόταση για να πάτε εκεί">
+            📖 Κείμενο
+          </button>
+        </div>
+        <div class="readalong" id="ab-readalong" style="display:none">
+          <div class="readalong-bar">
+            <label class="readalong-follow"><input type="checkbox" id="ab-readalong-follow" checked /> Ακολουθεί την αφήγηση</label>
+          </div>
+          <div class="readalong-text" id="ab-readalong-text" translate="no"></div>
         </div>
       </div>
 
@@ -1426,6 +1475,52 @@
      MODAL: HELP (short guide & FAQ). Written twice, in Greek and in English: the block of the interface language
      shows (html[lang]); both are translate="no", so the word-by-word switch leaves them alone.
      ════════════════════════════════════ -->
+<div class="modal-overlay" id="devices-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="devices-modal-title">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="devices-modal-title">📲 Συσκευές</div>
+      <button class="modal-close" onclick="closeDevicesModal()" aria-label="Κλείσιμο">✕</button>
+    </div>
+    <div class="modal-body devices-body">
+      <section class="devices-section">
+        <h3>🔔 Ειδοποιήσεις στο κινητό (ntfy)</h3>
+        <p>Όταν τελειώνει ή σταματά μια μετάφραση ή ένα ηχοβιβλίο, έρχεται μήνυμα στο κινητό, ακόμη κι αν η σελίδα είναι κλειστή. Εγκαταστήστε τη δωρεάν εφαρμογή <strong>ntfy</strong>, πατήστε <strong>+</strong> και γράψτε το ίδιο όνομα θέματος με αυτό εδώ.</p>
+        <label class="devices-field">Όνομα θέματος
+          <span class="devices-row">
+            <input type="text" id="ntfy-topic" class="form-input" maxlength="64" autocomplete="off" spellcheck="false" placeholder="π.χ. bookapp-k7x2m9" />
+            <button type="button" class="btn-sm btn-outline" onclick="suggestNtfyTopic()" title="Ένα τυχαίο όνομα που δύσκολα μαντεύει κάποιος">🎲</button>
+          </span>
+        </label>
+        <label class="devices-field">Διακομιστής ntfy
+          <input type="text" id="ntfy-server" class="form-input" autocomplete="off" spellcheck="false" placeholder="https://ntfy.sh" />
+        </label>
+        <p class="devices-note">Το θέμα λειτουργεί σαν κωδικός: όποιος το ξέρει βλέπει τα μηνύματα. Στέλνεται μόνο το όνομα του αρχείου και το αποτέλεσμα, ποτέ το κείμενο του βιβλίου. Με δικό σας διακομιστή ntfy, γράψτε τη διεύθυνσή του.</p>
+        <div class="devices-actions">
+          <button type="button" class="btn-sm btn-outline" onclick="testNtfy()">📨 Δοκιμαστικό μήνυμα</button>
+          <button type="button" class="btn-sm btn-primary" onclick="saveNtfy()">💾 Αποθήκευση</button>
+          <button type="button" class="btn-sm btn-outline" id="ntfy-off-btn" onclick="disableNtfy()">🔕 Απενεργοποίηση</button>
+        </div>
+        <div class="devices-status" id="ntfy-status" aria-live="polite"></div>
+      </section>
+      <section class="devices-section">
+        <h3>📚 Κατάλογος για e-reader (OPDS)</h3>
+        <p>Εφαρμογές ανάγνωσης όπως <strong>KOReader</strong>, <strong>Moon+ Reader</strong>, <strong>Librera</strong> ή <strong>Panels</strong> (για κόμικ) βλέπουν τα τελειωμένα βιβλία σας και τα κατεβάζουν απευθείας. Προσθέστε τον σύνδεσμο ως κατάλογο OPDS.</p>
+        <div id="opds-link-box" class="devices-link" style="display:none">
+          <input type="text" id="opds-link" class="form-input" readonly aria-label="Σύνδεσμος καταλόγου OPDS" />
+          <button type="button" class="btn-sm btn-outline" onclick="copyOpdsLink()">📋 Αντιγραφή</button>
+        </div>
+        <div class="devices-status" id="opds-status" aria-live="polite"></div>
+        <p class="devices-note" id="opds-localhost-note" style="display:none">Ανοίξατε τη σελίδα ως localhost: στη συσκευή ανάγνωσης βάλτε τη διεύθυνση του διακομιστή στο δίκτυο (π.χ. 192.168.1.10) στη θέση του localhost.</p>
+        <p class="devices-note">Ο σύνδεσμος είναι μυστικός: όποιος τον έχει βλέπει τα βιβλία σας. Φαίνεται μόνο τη στιγμή που φτιάχνεται· ένας νέος σύνδεσμος σταματά τον παλιό.</p>
+        <div class="devices-actions">
+          <button type="button" class="btn-sm btn-primary" id="opds-new-btn" onclick="newOpdsLink()">🔗 Νέος σύνδεσμος</button>
+          <button type="button" class="btn-sm btn-outline" id="opds-remove-btn" onclick="removeOpdsLink()">🗑️ Κατάργηση</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="help-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
   <div class="modal-box modal-lg">
     <div class="modal-header">
@@ -1443,11 +1538,12 @@
           <li>Ανεβάστε ένα αρχείο <strong>PDF, DOCX, EPUB</strong> ή κόμικ <strong>CBZ / CBR</strong>. Αν ανεβάσετε πολλά μαζί, μπαίνουν σε ουρά και μεταφράζονται το ένα μετά το άλλο.</li>
           <li><strong>⚡ Απλή λειτουργία:</strong> πατήστε <strong>🌐 Έναρξη μετάφρασης</strong> και η εφαρμογή διαλέγει μόνη της γλώσσα, μορφή και διάταξη.<br/>
             <strong>⚙️ Προχωρημένη λειτουργία:</strong> ορίζετε εσείς την κατεύθυνση, τη μορφή του αρχείου, τη διάταξη (Έγγραφο, Λογοτεχνικό, Graphic Novel), το εξώφυλλο, το AI Polish και τη Μέγιστη ποιότητα.</li>
+          <li>Πάνω από το κουμπί, η <strong>📊 Εκτίμηση</strong> λέει πόσα αιτήματα Gemini θα χρειαστούν και αν χωράνε στο ημερήσιο όριο των κλειδιών σας. Με <strong>🧪 Μετάφραση δείγματος</strong> μεταφράζονται μόνο λίγες σελίδες (π.χ. 1–10), για να δείτε το ύφος πριν από όλο το βιβλίο.</li>
           <li>Η κάρτα προόδου δείχνει το βήμα, το ποσοστό και τον χρόνο που απομένει.</li>
-          <li>Στο τέλος, το πράσινο κουμπί κατεβάζει το αρχείο και τα μικρά κουμπιά δίνουν τις άλλες μορφές (PDF, DOCX, EPUB, TXT). Με <strong>📖 Ανάγνωση τώρα</strong> το διαβάζετε στον browser και με <strong>✏️ Έλεγχος &amp; διόρθωση</strong> διορθώνετε τη μετάφραση δίπλα στο πρωτότυπο.</li>
+          <li>Στο τέλος, το πράσινο κουμπί κατεβάζει το αρχείο και τα μικρά κουμπιά δίνουν τις άλλες μορφές (PDF, DOCX, EPUB, TXT). Με <strong>📖 Ανάγνωση τώρα</strong> το διαβάζετε στον browser και με <strong>✏️ Έλεγχος &amp; διόρθωση</strong> διορθώνετε τη μετάφραση δίπλα στο πρωτότυπο. Το <strong>🔀 Δίγλωσσο</strong> δίνει πρωτότυπο και μετάφραση μαζί, παράγραφο προς παράγραφο.</li>
         </ol>
         <h4>🎧 Ηχητικό βιβλίο</h4>
-        <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια.</p>
+        <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια. Με <strong>📖 Κείμενο</strong> το κείμενο φωτίζεται καθώς ακούγεται· πατήστε μια πρόταση για να πάτε εκεί.</p>
         <h4>💡 Book Insights</h4>
         <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου, στην οθόνη ή ως PDF, DOCX ή TXT. Χρειάζεται κλειδί Gemini.</p>
         <h4>🔑 Κλειδιά Gemini</h4>
@@ -1458,6 +1554,7 @@
           <li><strong>☀️ / 🌙</strong>: φωτεινό θέμα τη μέρα, σκοτεινό τη νύχτα· πατήστε το για να το αλλάξετε.</li>
           <li><strong>📚 Γλωσσάρι</strong>: σταθερή μετάφραση για ονόματα και όρους σε όλο το βιβλίο.</li>
           <li><strong>🕑 Ιστορικό εργασιών</strong>: κατεβάζετε ξανά ή συνεχίζετε παλαιότερες εργασίες.</li>
+          <li><strong>📲 Συσκευές</strong>: μήνυμα στο κινητό όταν τελειώνει μια εργασία (ntfy) και κατάλογος για εφαρμογές e-reader (OPDS).</li>
         </ul>
 
         <h3>💬 Συχνές ερωτήσεις</h3>
@@ -1491,8 +1588,23 @@
             <p>Ένα 2ο πέρασμα AI συγκρίνει κάθε σελίδα της μετάφρασης με το πρωτότυπο και διορθώνει λάθη νοήματος, παραλείψεις και λεξιλόγιο, όπως ένας δεύτερος επιμελητής. Είναι αργό και χρησιμοποιεί περισσότερο από το ημερήσιο όριο. Αν δεν ολοκληρωθεί, κρατιέται η μετάφραση του 1ου περάσματος.</p>
           </details>
           <details>
+            <summary>Μπορώ να δοκιμάσω πρώτα λίγες σελίδες;</summary>
+            <p>Ναι: με <strong>🧪 Μετάφραση δείγματος</strong> μεταφράζονται μόνο οι σελίδες που ορίζετε (στα EPUB, τα κεφάλαια), με τις ίδιες ρυθμίσεις. Η <strong>📊 Εκτίμηση</strong> λέει πόσα αιτήματα Gemini θέλει το δείγμα και πόσα όλο το βιβλίο. Αν σας αρέσει, πατήστε <strong>🌐 Μετάφραση ολόκληρου του βιβλίου</strong>. Το αρχείο του δείγματος κατεβαίνει με «_sample» στο όνομα.</p>
+          </details>
+          <details>
+            <summary>Μπορώ να μάθω στο κινητό πότε τελείωσε;</summary>
+            <p>Ναι: στο <strong>📲 Συσκευές</strong> γράψτε ένα όνομα θέματος (ή πατήστε 🎲) και αποθηκεύστε. Στο κινητό εγκαταστήστε τη δωρεάν εφαρμογή <strong>ntfy</strong> και προσθέστε το ίδιο θέμα. Όταν μια μετάφραση ή ένα ηχοβιβλίο τελειώνει ή σταματά (π.χ. στο ημερήσιο όριο), έρχεται μήνυμα με το όνομα του αρχείου, ακόμη κι αν η σελίδα είναι κλειστή.</p>
+          </details>
+          <details>
+            <summary>Μπορώ να διαβάζω τα βιβλία σε e-reader ή tablet;</summary>
+            <p>Ναι: στο <strong>📲 Συσκευές</strong> πατήστε <strong>🔗 Νέος σύνδεσμος</strong> και προσθέστε τον ως κατάλογο OPDS σε εφαρμογή όπως το KOReader ή το Moon+ Reader. Βλέπετε τα τελειωμένα βιβλία σας και τα κατεβάζετε ως EPUB, PDF ή δίγλωσσο EPUB (τα κόμικ ως CBZ). Ο σύνδεσμος είναι μυστικός· ένας νέος σταματά τον παλιό.</p>
+          </details>
+          <details>
             <summary>Μεταφράζεται ένα σκαναρισμένο PDF (μόνο εικόνες σελίδων);</summary>
-            <p>Ναι, χωρίς OCR. Η εφαρμογή το αναγνωρίζει μόλις ανέβει και περνά μόνη της στη διάταξη <strong>Graphic Novel</strong>: το Gemini Vision διαβάζει το κείμενο από τις εικόνες των σελίδων και η μετάφραση γράφεται πάνω στις ίδιες σελίδες. Χρειάζεται κλειδί Gemini. Είναι φτιαγμένο για κόμικ· ένα σκαναρισμένο μυθιστόρημα βγαίνει κι αυτό ως εικόνες σελίδων με τη μετάφραση πάνω τους. Για μετάφραση σε απλό κείμενο (DOCX, κανονικό EPUB), για ηχοβιβλίο ή για Book Insights χρειάζεται πραγματικό κείμενο, οπότε εκεί περάστε πρώτα το PDF από ένα πρόγραμμα OCR.</p>
+            <p>Ναι, χωρίς OCR. Μόλις ανέβει, η εφαρμογή ρωτά τι περιέχει και προτείνει μία απάντηση:</p>
+            <p><strong>📖 Βιβλίο:</strong> το Gemini Vision διαβάζει πρώτα το κείμενο κάθε σελίδας (ένα αίτημα ανά σελίδα, σε ελαφρύ μοντέλο) και μετά μεταφράζεται όπως ένα ψηφιακό βιβλίο, σε όποια μορφή θέλετε. Το κείμενο που διαβάστηκε χρησιμεύει και για ηχοβιβλίο και Book Insights, που το διαβάζουν μόνα τους αν χρειαστεί.<br/>
+              <strong>🎨 Κόμικ:</strong> η μετάφραση γράφεται πάνω στις ίδιες τις σελίδες, στα μπαλόνια.<br/>
+              Και τα δύο χρειάζονται κλειδί Gemini.</p>
           </details>
           <details>
             <summary>Ένα όνομα μεταφράζεται κάθε φορά διαφορετικά.</summary>
@@ -1526,11 +1638,12 @@
           <li>Upload a <strong>PDF, DOCX, EPUB</strong> file or a <strong>CBZ / CBR</strong> comic. Several files at once go into a queue and are translated one after another.</li>
           <li><strong>⚡ Basic Mode:</strong> press <strong>🌐 Start Translation</strong> and the app picks the language, format and layout itself.<br/>
             <strong>⚙️ Advanced Mode:</strong> you choose the direction, the file format, the layout (Document, Literature, Graphic Novel), the cover, AI Polish and Maximum quality.</li>
+          <li>Above the button, the <strong>📊 Estimate</strong> says how many Gemini requests are needed and whether they fit your keys' daily limit. <strong>🧪 Translate the sample</strong> translates only a few pages (e.g. 1–10), so you can see the style before the whole book.</li>
           <li>The progress card shows the step, the percentage and the time left.</li>
-          <li>When it is done, the green button downloads the file and the small buttons give the other formats (PDF, DOCX, EPUB, TXT). <strong>📖 Read now</strong> opens it in the browser, and <strong>✏️ Review &amp; Edit</strong> lets you correct the translation next to the original.</li>
+          <li>When it is done, the green button downloads the file and the small buttons give the other formats (PDF, DOCX, EPUB, TXT). <strong>📖 Read now</strong> opens it in the browser, and <strong>✏️ Review &amp; Edit</strong> lets you correct the translation next to the original. <strong>🔀 Bilingual</strong> gives the original and the translation together, paragraph by paragraph.</li>
         </ol>
         <h4>🎧 Audiobook</h4>
-        <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters.</p>
+        <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters. With <strong>📖 Text</strong> the text lights up as it is read; press a sentence to go there.</p>
         <h4>💡 Book Insights</h4>
         <p>A short summary or a full synopsis of a book, on screen or as PDF, DOCX or TXT. It needs a Gemini key.</p>
         <h4>🔑 Gemini keys</h4>
@@ -1541,6 +1654,7 @@
           <li><strong>☀️ / 🌙</strong>: the light theme by day, the dark one at night; press it to switch.</li>
           <li><strong>📚 Glossary</strong>: a fixed translation for names and terms across the whole book.</li>
           <li><strong>🕑 Session History</strong>: download again or continue earlier jobs.</li>
+          <li><strong>📲 Devices</strong>: a message on your phone when a job finishes (ntfy) and a catalogue for e-reader apps (OPDS).</li>
         </ul>
 
         <h3>💬 Frequently asked questions</h3>
@@ -1574,8 +1688,23 @@
             <p>A second AI pass compares every page of the translation with the original and corrects errors of meaning, omissions and vocabulary, like a second editor. It is slow and uses more of the daily limit. If it does not complete, the first-pass translation is kept.</p>
           </details>
           <details>
+            <summary>Can I try a few pages first?</summary>
+            <p>Yes: <strong>🧪 Translate the sample</strong> translates only the pages you choose (chapters, for an EPUB), with the same settings. The <strong>📊 Estimate</strong> says how many Gemini requests the sample needs, and how many the whole book. If you like it, press <strong>🌐 Translate the whole book</strong>. The sample's file downloads with “_sample” in its name.</p>
+          </details>
+          <details>
+            <summary>Can my phone tell me when it is done?</summary>
+            <p>Yes: in <strong>📲 Devices</strong> write a topic name (or press 🎲) and save. On the phone, install the free <strong>ntfy</strong> app and add the same topic. When a translation or an audiobook finishes or stops (e.g. at the daily limit), a message with the file name arrives, even with the page closed.</p>
+          </details>
+          <details>
+            <summary>Can I read the books on an e-reader or tablet?</summary>
+            <p>Yes: in <strong>📲 Devices</strong> press <strong>🔗 New link</strong> and add it as an OPDS catalogue in an app such as KOReader or Moon+ Reader. You see your finished books and download them as EPUB, PDF or bilingual EPUB (comics as CBZ). The link is secret; a new one stops the old.</p>
+          </details>
+          <details>
             <summary>Can a scanned PDF (only pictures of pages) be translated?</summary>
-            <p>Yes, without OCR. The app recognises it on upload and switches to the <strong>Graphic Novel</strong> layout by itself: Gemini Vision reads the text from the page images and the translation is drawn onto the same pages. This needs a Gemini key. It is made for comics; a scanned novel also comes out as page images with the translation on them. For a translation as plain text (DOCX, a normal EPUB), an audiobook or Book Insights, the PDF needs real text, so run it through an OCR program first.</p>
+            <p>Yes, without OCR. On upload the app asks what it holds and suggests an answer:</p>
+            <p><strong>📖 Book:</strong> Gemini Vision first reads the text of every page (one request per page, on a light model), then it is translated like a digital book, in any format you like. The text read also serves audiobooks and Book Insights, which read it themselves when needed.<br/>
+              <strong>🎨 Comic:</strong> the translation is drawn onto the pages themselves, in the balloons.<br/>
+              Both need a Gemini key.</p>
           </details>
           <details>
             <summary>A name is translated differently each time.</summary>
@@ -1655,8 +1784,8 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.17.0"></script>
-<script src="insights.js?v=2.9.1"></script>
+<script src="app.js?v=2.19.0"></script>
+<script src="insights.js?v=2.10.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

@@ -50,6 +50,21 @@ DEFAULT_MODEL_RPD: Dict[str, int] = {
 }
 
 
+def record_model_daily_limit(model: str, quota_value: Any) -> None:
+    """The daily request limit that Google's 429 answer gave for a model: estimates use it from then on."""
+    try:
+        limit = int(float(quota_value))
+    except (TypeError, ValueError):
+        return
+    if model and limit > 0:
+        DEFAULT_MODEL_RPD[model] = limit
+
+
+def model_daily_limit(model: str) -> Optional[int]:
+    """Requests a day one free key may send to `model` (what Google last reported, else the known default)."""
+    return DEFAULT_MODEL_RPD.get(model)
+
+
 def mask_api_key(key: str) -> str:
     """Safely masks an API key for logs and UI display (e.g. AIzaSy...4f2D)."""
     k = (key or "").strip()

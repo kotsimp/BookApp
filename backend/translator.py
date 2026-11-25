@@ -559,10 +559,13 @@ async def translate_document(
     output_path: str,
     progress_callback: Optional[Callable] = None,
     style: Optional[str] = None,
+    page_range: Optional[tuple] = None,
 ) -> str:
     """
     Translates a document file from source_lang to target_lang.
     Writes output as a UTF-8 text file with page markers.
+    ``page_range`` (first, last): only those pages (a sample); every translated passage is cached, so the whole book
+    later reuses them.
     Returns the output path.
     """
 
@@ -577,6 +580,12 @@ async def translate_document(
     except Exception as parse_err:
         update_job(job_id, status="error", error=f"Failed to read document: {parse_err}")
         raise
+    if page_range:
+        lo, hi = page_range
+        pages = [p for p in pages if lo <= int(p.get("page") or 0) <= hi]
+        if not any((p.get("text") or "").strip() for p in pages):
+            raise ValueError(f"Pages {lo}–{hi} hold no text to translate.")
+        update_job(job_id, sample_range=[pages[0]["page"], pages[-1]["page"]])
     total_pages = len(pages)
 
     if total_pages == 0:

@@ -421,6 +421,13 @@ function removeFile(prefix) {
     }
     const covGroup = document.getElementById('tr-cover-group');
     if (covGroup) covGroup.style.display = 'none';
+    showScanChoice('');
+    state.tr.sampleRun = null;
+    updateSampleRow();
+    const estEl = document.getElementById('tr-estimate');
+    if (estEl) estEl.style.display = 'none';
+    const sampleDone = document.getElementById('tr-sample-done');
+    if (sampleDone) sampleDone.style.display = 'none';
     const prevLayout = document.getElementById('tr-layout-mode')?.value || 'standard';
     setGraphicNovelLock(false);
     if (!hasQueue) _formatChosenByUser = false;
@@ -521,6 +528,169 @@ function setGraphicNovelLock(isComic, reason = '', isScanned = false) {
       directEditorBtn.title = '';
     }
   }
+}
+
+// ── Scanned PDF: a book (its text is read first) or a comic (translated on the page images) ──
+function showScanChoice(kind, applyLayout = true) {
+  const box = document.getElementById('tr-scan-choice');
+  state.tr.scanKind = kind || '';
+  if (!box) return;
+  box.style.display = kind ? '' : 'none';
+  if (kind) chooseScanKind(kind, applyLayout);
+}
+
+function chooseScanKind(kind, applyLayout = true) {
+  state.tr.scanKind = kind;
+  ['book', 'comic'].forEach((k) => {
+    const btn = document.getElementById(`scan-kind-${k}`);
+    if (btn) {
+      btn.classList.toggle('active', k === kind);
+      btn.setAttribute('aria-checked', String(k === kind));
+    }
+    const hint = document.getElementById(`tr-scan-hint-${k}`);
+    if (hint) hint.style.display = k === kind ? '' : 'none';
+  });
+  if (applyLayout) {
+    if (kind === 'comic') {
+      setGraphicNovelLock(true, '', true);
+    } else {
+      setGraphicNovelLock(false);
+      const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
+      const stdBtn = document.getElementById('layout-standard');
+      if (layout === 'comic' && stdBtn) selectLayout('standard', stdBtn);
+      else updateFormatAvailability(layout, 'pdf');
+      const fmt = document.getElementById('tr-output-format')?.value || '';
+      const pdfBtn = document.getElementById('fmt-pdf');
+      if (['cbz', 'cbr'].includes(fmt) && pdfBtn) selectFormat('pdf', pdfBtn);
+    }
+  }
+  updateSampleRow();
+  scheduleTranslationEstimate();
+}
+
+// ── Sample first: translate a few pages to see the style and quality before the whole book ──
+function sampleUnitIsChapter() {
+  const name = state.tr.file?.name || document.getElementById('tr-file-name')?.textContent || '';
+  return name.split('.').pop().toLowerCase() === 'epub';
+}
+
+function updateSampleRow(resetRange = false) {
+  const row = document.getElementById('tr-sample-row');
+  if (!row) return;
+  const visible = Boolean(state.tr.jobId) && state.tr.status !== 'running';
+  row.style.display = visible ? '' : 'none';
+  const btn = document.getElementById('tr-sample-btn');
+  if (btn) btn.disabled = !visible;
+  const unit = document.getElementById('tr-sample-unit');
+  if (unit) unit.textContent = sampleUnitIsChapter() ? 'κεφάλαια' : 'σελίδες';
+  if (resetRange) {
+    const total = Number(state.tr.estimatedPages || 0);
+    const span = sampleUnitIsChapter() ? 3 : 10;
+    const fromEl = document.getElementById('tr-sample-from');
+    const toEl = document.getElementById('tr-sample-to');
+    if (fromEl) fromEl.value = '1';
+    if (toEl) toEl.value = String(total ? Math.min(span, total) : span);
+  }
+}
+
+function readSampleRange() {
+  const total = Number(state.tr.estimatedPages || 0);
+  let from = Math.max(1, parseInt(document.getElementById('tr-sample-from')?.value, 10) || 1);
+  let to = parseInt(document.getElementById('tr-sample-to')?.value, 10) || from;
+  if (total) {
+    from = Math.min(from, total);
+    to = Math.min(to, total);
+  }
+  return [from, Math.max(from, to)];
+}
+
+function onSampleRangeChange() {
+  const [from, to] = readSampleRange();
+  const fromEl = document.getElementById('tr-sample-from');
+  const toEl = document.getElementById('tr-sample-to');
+  if (fromEl) fromEl.value = String(from);
+  if (toEl) toEl.value = String(to);
+  scheduleTranslationEstimate();
+}
+
+function startSampleTranslation() {
+  if (!state.tr.jobId) return;
+  startTranslation({ sample: readSampleRange() });
+}
+
+function startFullAfterSample() {
+  startTranslation({ sample: null });
+}
+
+// ── Before starting: about how many Gemini requests the translation needs, and what the keys allow a day ──
+let _estimateTimer = null;
+let _estimateSeq = 0;
+
+function scheduleTranslationEstimate() {
+  clearTimeout(_estimateTimer);
+  _estimateTimer = setTimeout(refreshTranslationEstimate, 350);
+}
+
+function estimateQuery(sample = null) {
+  const p = new URLSearchParams({
+    ai_polish: String(Boolean(document.getElementById('tr-ai-polish')?.checked)),
+    max_quality: String(isMaxQualityRequested()),
+    layout_mode: document.getElementById('tr-layout-mode')?.value || 'standard',
+    output_format: document.getElementById('tr-output-format')?.value || '',
+  });
+  if (state.tr.scanKind) p.set('read_scanned_text', String(state.tr.scanKind === 'book'));
+  if (sample) {
+    p.set('page_from', String(sample[0]));
+    p.set('page_to', String(sample[1]));
+  }
+  return p.toString();
+}
+
+async function refreshTranslationEstimate() {
+  const el = document.getElementById('tr-estimate');
+  if (!el) return;
+  const jobId = state.tr.jobId;
+  if (!jobId || state.tr.status === 'running') {
+    el.style.display = 'none';
+    return;
+  }
+  const seq = ++_estimateSeq;
+  const ask = (sample) => fetch(`${API}/translate/estimate/${encodeURIComponent(jobId)}?${estimateQuery(sample)}`)
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const [full, sample] = await Promise.all([ask(null), ask(readSampleRange())]);
+  if (seq !== _estimateSeq || state.tr.jobId !== jobId) return;  // a newer request, or another file
+  if (!full) {
+    el.style.display = 'none';
+    return;
+  }
+  el.innerHTML = formatEstimate(full, sample);
+  el.style.display = '';
+}
+
+function formatEstimate(e, s = null) {
+  const r = e.requests || {};
+  if (e.read_scanned_text && !e.has_key) return '<span>📖 Χρειάζεται κλειδί Gemini για να διαβαστεί το κείμενο των σελίδων.</span>';
+  if (e.comic && e.scanned && !e.has_key) return '<span>🎨 Χρειάζεται κλειδί Gemini για τις σκαναρισμένες σελίδες.</span>';
+  if (!e.total) {
+    return '<span>📊 Χωρίς αιτήματα Gemini: μεταφράζει η δωρεάν μηχανή (αν το Google αρνηθεί, μεταφράζει το Gemini).</span>';
+  }
+  const parts = [];
+  if (r.read) parts.push(`<span>~${r.read} ανάγνωση σελίδων</span>`);
+  if (r.translate) parts.push(`<span>~${r.translate} μετάφραση</span>`);
+  if (r.revise) parts.push(`<span>~${r.revise} 2ο πέρασμα</span>`);
+  let html = `<span>📊 Εκτίμηση: ~${e.total} αιτήματα Gemini</span> (${parts.join(' · ')}).`;
+  const heavy = (r.translate || 0) + (r.revise || 0);
+  if (heavy && heavy <= e.best_per_day) {
+    html += ` <span>Τα κλειδιά σας (${e.keys}) δίνουν ~${e.best_per_day} την ημέρα στο καλύτερο μοντέλο: χωράνε σήμερα.</span>`;
+  } else if (heavy && r.revise) {
+    html += ` <span>Τα κλειδιά σας (${e.keys}) δίνουν ~${e.best_per_day} την ημέρα στο καλύτερο μοντέλο· το 2ο πέρασμα δουλεύει μόνο με πλήρη μοντέλα: ~${e.best_days} μέρες.</span>`;
+  } else if (heavy) {
+    html += ` <span>Τα κλειδιά σας (${e.keys}) δίνουν ~${e.best_per_day} την ημέρα στο καλύτερο μοντέλο· μετά η μετάφραση συνεχίζει με ελαφρύτερο μοντέλο.</span>`;
+  }
+  if (s && Array.isArray(s.sample) && s.total < e.total) {
+    html += ` <span>Δείγμα ${s.sample[0]}–${s.sample[1]}: ~${s.total} αιτήματα.</span>`;
+  }
+  return html;
 }
 
 async function uploadFile(prefix, file) {
@@ -625,6 +795,9 @@ async function uploadFile(prefix, file) {
         // Auto-Genre Detection
         detectDocumentGenre(data.job_id, data.file_type);
       }
+      showScanChoice(data.scan_kind || '', false);  // the lock above already follows the preselected choice
+      updateSampleRow(true);
+      scheduleTranslationEstimate();
     }
   } catch (err) {
     if (state[prefix].upload === upload) state[prefix].upload = null;
@@ -1246,6 +1419,15 @@ async function startTranslation(opts = {}) {
   }
   setStatusBadge('tr', 'running');
   state.tr.etaSamples = [];
+  // A sample: only these pages. Resume keeps the sample it was; a new start is the whole book unless it asks for one.
+  const sample = 'sample' in opts ? opts.sample : (opts.resume ? state.tr.sampleRun : null);
+  state.tr.sampleRun = sample || null;
+  state.tr.status = 'running';
+  updateSampleRow();
+  const estEl = document.getElementById('tr-estimate');
+  if (estEl) estEl.style.display = 'none';
+  const sampleDone = document.getElementById('tr-sample-done');
+  if (sampleDone) sampleDone.style.display = 'none';
 
   try {
     const res = await fetch(`${API}/translate`, {
@@ -1262,6 +1444,9 @@ async function startTranslation(opts = {}) {
         api_key: apiKey || null,
         quota_behavior: quotaBehavior,
         max_quality: isMaxQualityRequested(),
+        read_scanned_text: state.tr.scanKind ? state.tr.scanKind === 'book' : null,
+        page_from: sample ? sample[0] : null,
+        page_to: sample ? sample[1] : null,
       }),
     });
     if (!res.ok) {
@@ -1271,8 +1456,10 @@ async function startTranslation(opts = {}) {
     // Connect SSE for progress
     connectSSE('tr', jobId);
   } catch (err) {
+    state.tr.status = 'error';
     showError('tr', err.message);
     setActionButtonsEnabled('tr', true);
+    updateSampleRow();
   }
 }
 
@@ -1801,7 +1988,9 @@ function updateProgress(prefix, data) {
   // Show detail while actively running
   const detailEl = document.getElementById(`${prefix}-progress-detail`);
   if (data.total_chunks > 0 && data.status !== 'done') {
-    if (prefix === 'tr') {
+    if ((data.current_step || '').startsWith('📖')) {  // a scanned book's pages are read first (Gemini Vision)
+      detailEl.textContent = `Read ${data.done_chunks} of ${data.total_chunks} pages`;
+    } else if (prefix === 'tr') {
       const stepLower = (data.current_step || '').toLowerCase();
       const totalPages = Number(data.total_pages || 0);
       const donePages = Number(data.done_pages || 0);
@@ -1850,6 +2039,7 @@ function updateProgress(prefix, data) {
     if (cancelBtn) cancelBtn.style.display = 'none';
     showResult(prefix, data);
     refreshHistory();
+    if (prefix === 'tr') afterTranslationStopped();
     toast(prefix === 'tr' ? '✅ Translation complete!' : '🎉 Audiobook ready!', 'success');
   } else if (data.status === 'error') {
     state[prefix].status = 'error';
@@ -1859,7 +2049,9 @@ function updateProgress(prefix, data) {
     showError(prefix, data.error || 'An unknown error occurred.');
     setActionButtonsEnabled(prefix, true);
     refreshHistory();
+    if (prefix === 'tr') afterTranslationStopped();
   } else if (data.status === 'cancelled') {
+    if (prefix === 'tr') setTimeout(afterTranslationStopped, 0);
     state[prefix].status = 'cancelled';
     setStatusBadge(prefix, 'cancelled');
     document.getElementById(`${prefix}-progress-bar`).classList.remove('shimmer');
@@ -1874,6 +2066,12 @@ function updateProgress(prefix, data) {
     }
     refreshHistory();
   }
+}
+
+// A translation ended (done, error or cancelled): the sample row and the estimate are offered again
+function afterTranslationStopped() {
+  updateSampleRow();
+  scheduleTranslationEstimate();
 }
 
 async function cancelJob(prefix) {
@@ -1954,6 +2152,11 @@ function resetProgress(prefix, keepButtonsEnabled = false) {
     }
     const playerWrap = document.getElementById('ab-player-container');
     if (playerWrap) playerWrap.style.display = 'none';
+    Object.assign(_readAlong, { jobId: null, segments: [], rendered: false, current: -1 });
+    const raPanel = document.getElementById('ab-readalong');
+    if (raPanel) raPanel.style.display = 'none';
+    const raBtn = document.getElementById('ab-readalong-btn');
+    if (raBtn) raBtn.style.display = 'none';
   }
   state[prefix].status = 'idle';
   const tabBtnId = prefix === 'tr' ? 'btn-translate' : 'btn-audiobook';
@@ -1994,6 +2197,15 @@ function showResult(prefix, data) {
       meta.textContent = `Your document has been translated. Click below to download the ${label} file.`;
     }
     syncResultDownload(fmt, layout);  // the main download button's format label and link
+    const bilingualBtn = document.getElementById('tr-bilingual-btn');
+    if (bilingualBtn) bilingualBtn.style.display = layout === 'comic' ? 'none' : '';  // a comic's text is in its pictures
+    const sampleDone = document.getElementById('tr-sample-done');
+    const sampleText = document.getElementById('tr-sample-done-text');
+    const doneSample = Array.isArray(data?.sample_range) ? data.sample_range : null;
+    if (sampleDone) sampleDone.style.display = doneSample ? '' : 'none';
+    if (doneSample && sampleText) {
+      sampleText.textContent = `🧪 Αυτό είναι δείγμα (${doneSample[0]}–${doneSample[1]}). Αν σας αρέσει, μεταφράστε όλο το βιβλίο.`;
+    }
     const dlBtn = document.getElementById('tr-download-btn');
     if (dlBtn && state.tr.jobId) {
       dlBtn.setAttribute('aria-disabled', 'false');
@@ -2018,6 +2230,7 @@ function showResult(prefix, data) {
       playerWrap.style.display = 'block';
       audio.src = `${API}/download/${state.ab.jobId}?format=mp3`;
       loadAudioChapters(state.ab.jobId);
+      loadReadAlong(state.ab.jobId);
       if (trackTitle) trackTitle.textContent = (data && data.file_name) || state.ab.file?.name || 'Audiobook';
       if (trackVoice) {
         const vName = (data && data.voice_name) || state.selectedVoice || 'Neural Voice';
@@ -2196,7 +2409,7 @@ async function resumeTranslation(prefix = 'tr') {
     await startAudiobook();
   } else {
     toast('Συνέχιση μετάφρασης από το αποθηκευμένο σημείο (checkpoint)...', 'info');
-    await startTranslation();
+    await startTranslation({ resume: true });
   }
 }
 
@@ -2225,6 +2438,19 @@ async function downloadOutput(prefix, overrideFmt = null) {
     const targetUrl = `${API}/download/${jobId}?format=${overrideFmt || 'mp3'}`; // not "latest output": that may be a PDF
     window.location.href = targetUrl;
   }
+}
+
+// The bilingual edition (original and translation, paragraph by paragraph) in the chosen format: PDF, DOCX or EPUB
+function downloadBilingual() {
+  const jobId = state.tr.jobId;
+  if (!jobId) return;
+  if (state.tr.status === 'running') {
+    toast('⏳ Please wait until this translation is completed before downloading.', 'info');
+    return;
+  }
+  const chosen = (document.getElementById('tr-output-format')?.value || 'pdf').toLowerCase();
+  const fmt = ['pdf', 'docx', 'epub'].includes(chosen) ? chosen : 'pdf';
+  window.location.href = `${API}/download/${encodeURIComponent(jobId)}/bilingual?format=${fmt}`;
 }
 
 function downloadOutputM4b() {
@@ -2265,6 +2491,116 @@ async function loadAudioChapters(jobId) {
       .map((c) => `<option value="${Number(c.start_seconds) || 0}">${escHtml(c.title)}</option>`).join('');
     wrap.style.display = '';
   } catch (_) {}
+}
+
+// ── Reading along: the sentence being narrated is lit and followed; a click on a sentence plays from there ──
+const _readAlong = { jobId: null, segments: [], rendered: false, current: -1, bound: false };
+
+async function loadReadAlong(jobId) {
+  const btn = document.getElementById('ab-readalong-btn');
+  const panel = document.getElementById('ab-readalong');
+  Object.assign(_readAlong, { jobId, segments: [], rendered: false, current: -1 });
+  if (btn) btn.style.display = 'none';
+  if (panel) panel.style.display = 'none';
+  try {
+    const res = await fetch(`${API}/jobs/${jobId}/read-along`);
+    if (!res.ok) return;
+    const segments = (await res.json()).segments || [];
+    if (_readAlong.jobId !== jobId || !segments.length) return;
+    _readAlong.segments = segments;
+    if (btn) {
+      btn.style.display = '';
+      btn.setAttribute('aria-expanded', 'false');
+    }
+    bindReadAlong();
+  } catch (_) {}
+}
+
+function bindReadAlong() {
+  if (_readAlong.bound) return;
+  const audio = document.getElementById('ab-audio-element');
+  const text = document.getElementById('ab-readalong-text');
+  if (!audio || !text) return;
+  audio.addEventListener('timeupdate', () => readAlongAt(audio.currentTime * 1000));
+  audio.addEventListener('seeked', () => readAlongAt(audio.currentTime * 1000, true));
+  text.addEventListener('click', (e) => {
+    const span = e.target.closest ? e.target.closest('[data-i]') : null;
+    if (!span) return;
+    const seg = _readAlong.segments[Number(span.dataset.i)];
+    if (!seg) return;
+    audio.currentTime = seg.s / 1000;
+    if (audio.paused && typeof audio.play === 'function') audio.play().catch(() => {});
+  });
+  _readAlong.bound = true;
+}
+
+function renderReadAlong() {
+  const box = document.getElementById('ab-readalong-text');
+  if (!box) return;
+  let html = '';
+  let open = false;
+  _readAlong.segments.forEach((seg, i) => {
+    if (seg.p || !open) {
+      html += `${open ? '</p>' : ''}<p>`;
+      open = true;
+    }
+    html += `<span class="ra-s" data-i="${i}">${escHtml(seg.t)}</span> `;
+  });
+  box.innerHTML = html + (open ? '</p>' : '');
+  _readAlong.rendered = true;
+  _readAlong.current = -1;
+}
+
+function toggleReadAlong() {
+  const panel = document.getElementById('ab-readalong');
+  const btn = document.getElementById('ab-readalong-btn');
+  if (!panel) return;
+  const show = panel.style.display === 'none';
+  if (show && !_readAlong.rendered) renderReadAlong();
+  panel.style.display = show ? '' : 'none';
+  if (btn) btn.setAttribute('aria-expanded', String(show));
+  if (show) {
+    const audio = document.getElementById('ab-audio-element');
+    readAlongAt((audio?.currentTime || 0) * 1000, true);
+  }
+}
+
+// The sentence playing at `ms` (binary search over the start times)
+function readAlongIndex(ms) {
+  const segs = _readAlong.segments;
+  let lo = 0;
+  let hi = segs.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (segs[mid].s <= ms) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
+function readAlongAt(ms, jump = false) {
+  if (!_readAlong.rendered) return;
+  const i = readAlongIndex(ms);
+  if (i === _readAlong.current) return;
+  const box = document.getElementById('ab-readalong-text');
+  if (!box) return;
+  const prev = box.querySelector?.(`[data-i="${_readAlong.current}"]`);
+  if (prev) prev.classList.remove('ra-current');
+  _readAlong.current = i;
+  const span = i >= 0 ? box.querySelector?.(`[data-i="${i}"]`) : null;
+  if (!span) return;
+  span.classList.add('ra-current');
+  const follow = document.getElementById('ab-readalong-follow');
+  if (follow && !follow.checked) return;
+  // keep the sentence in the middle of the panel (the page itself does not move)
+  const target = span.offsetTop - box.clientHeight / 2 + span.offsetHeight / 2;  // the box is the span's offsetParent
+  if (typeof box.scrollTo === 'function') box.scrollTo({ top: Math.max(0, target), behavior: jump ? 'auto' : 'smooth' });
+  else box.scrollTop = Math.max(0, target);
 }
 
 function onAudioChapterSelect(val) {
@@ -2537,6 +2873,11 @@ async function loadHistoryJob(jobId, mode) {
         const layoutBtn = document.getElementById(`layout-${savedLayout}`);
         if (layoutBtn) selectLayout(savedLayout, layoutBtn);
       }
+      // A scanned PDF: read as a book or translated as a comic; a sample that stopped resumes as that sample
+      showScanChoice(data.scanned ? (data.read_scanned_text && !isComic ? 'book' : 'comic') : '', false);
+      state.tr.estimatedPages = Number(data.total_pages || 0);
+      state.tr.sampleRun = data.status !== 'done' && Array.isArray(data.sample_range) ? data.sample_range : null;
+      updateSampleRow(true);
 
       // Restore original output format (pdf / epub / docx / txt / cbz / cbr)
       if (data.output_format) {
@@ -2642,6 +2983,8 @@ async function loadHistoryJob(jobId, mode) {
     }
     if (prefix === 'tr') {
       checkCoverImage(jobId);
+      updateSampleRow();
+      scheduleTranslationEstimate();
     }
     return true;
   } catch (e) {
@@ -3987,6 +4330,160 @@ function closeHelpModal() {
   if (modal) modal.style.display = 'none';
 }
 
+// ── 📲 Devices: phone notifications (ntfy) and the e-reader catalogue (OPDS) ──
+let _opdsLinkExists = false;
+
+function setDevicesStatus(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+async function openDevicesModal() {
+  const modal = document.getElementById('devices-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  setDevicesStatus('ntfy-status', '');
+  setDevicesStatus('opds-status', '');
+  const linkBox = document.getElementById('opds-link-box');
+  if (linkBox) linkBox.style.display = 'none';
+  const host = (window.location && window.location.hostname) || '';
+  const localNote = document.getElementById('opds-localhost-note');
+  if (localNote) localNote.style.display = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host) ? '' : 'none';
+  try {
+    const res = await fetch(`${API}/connections`);
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load the devices settings'));
+    const data = await res.json();
+    document.getElementById('ntfy-topic').value = data.ntfy?.topic || '';
+    document.getElementById('ntfy-server').value = data.ntfy?.server || 'https://ntfy.sh';
+    showNtfyState(Boolean(data.ntfy?.enabled));
+    showOpdsState(data.opds || {});
+  } catch (e) {
+    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
+  }
+}
+
+function closeDevicesModal() {
+  const modal = document.getElementById('devices-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function showNtfyState(enabled) {
+  const off = document.getElementById('ntfy-off-btn');
+  if (off) off.style.display = enabled ? '' : 'none';
+  setDevicesStatus('ntfy-status', enabled ? '✅ Οι ειδοποιήσεις είναι ενεργές.' : '');
+}
+
+function showOpdsState(opds) {
+  _opdsLinkExists = Boolean(opds.exists);
+  const remove = document.getElementById('opds-remove-btn');
+  if (remove) remove.style.display = _opdsLinkExists ? '' : 'none';
+  if (_opdsLinkExists && opds.created) {
+    const day = new Date(opds.created * 1000).toLocaleDateString('el-GR');
+    setDevicesStatus('opds-status', `Υπάρχει σύνδεσμος από ${day}. Για να τον ξαναδείτε, φτιάξτε νέο.`);
+  } else {
+    setDevicesStatus('opds-status', 'Δεν υπάρχει σύνδεσμος ακόμη.');
+  }
+}
+
+function suggestNtfyTopic() {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = new Uint8Array(12);
+  (window.crypto || crypto).getRandomValues(bytes);
+  document.getElementById('ntfy-topic').value = 'bookapp-' + Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+function ntfyRequestBody(topic) {
+  return JSON.stringify({
+    server: (document.getElementById('ntfy-server')?.value || '').trim(),
+    topic: topic !== undefined ? topic : (document.getElementById('ntfy-topic')?.value || '').trim(),
+    app_url: (window.location && window.location.origin) || '',
+    lang: document.documentElement.lang === 'en' ? 'en' : 'el',
+  });
+}
+
+async function saveNtfy() {
+  const topic = (document.getElementById('ntfy-topic')?.value || '').trim();
+  if (!topic) {
+    setDevicesStatus('ntfy-status', '❌ Γράψτε ένα όνομα θέματος (ή πατήστε 🎲).');
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/connections/ntfy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody() });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to save'));
+    showNtfyState(true);
+    toast('🔔 Οι ειδοποιήσεις αποθηκεύτηκαν.', 'success');
+  } catch (e) {
+    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
+  }
+}
+
+async function testNtfy() {
+  setDevicesStatus('ntfy-status', '📨 Αποστολή…');
+  try {
+    const res = await fetch(`${API}/connections/ntfy/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody() });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to send'));
+    setDevicesStatus('ntfy-status', '📨 Στάλθηκε. Αν δεν φάνηκε στο κινητό, ελέγξτε ότι η εφαρμογή ntfy έχει το ίδιο όνομα θέματος.');
+  } catch (e) {
+    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
+  }
+}
+
+async function disableNtfy() {
+  try {
+    const res = await fetch(`${API}/connections/ntfy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody('') });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to save'));
+    document.getElementById('ntfy-topic').value = '';
+    showNtfyState(false);
+    setDevicesStatus('ntfy-status', '🔕 Οι ειδοποιήσεις απενεργοποιήθηκαν.');
+  } catch (e) {
+    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
+  }
+}
+
+async function newOpdsLink() {
+  if (_opdsLinkExists && !window.confirm('Ο τωρινός σύνδεσμος θα σταματήσει να λειτουργεί. Να φτιαχτεί νέος;')) return;
+  try {
+    const res = await fetch(`${API}/connections/opds`, { method: 'POST' });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to make a link'));
+    const data = await res.json();
+    const input = document.getElementById('opds-link');
+    input.value = `${window.location.origin}${data.path}`;
+    document.getElementById('opds-link-box').style.display = '';
+    input.focus?.();
+    input.select?.();
+    _opdsLinkExists = true;
+    const remove = document.getElementById('opds-remove-btn');
+    if (remove) remove.style.display = '';
+    setDevicesStatus('opds-status', '✅ Νέος σύνδεσμος. Αντιγράψτε τον τώρα: δεν θα ξαναφανεί.');
+  } catch (e) {
+    setDevicesStatus('opds-status', `❌ ${e.message}`);
+  }
+}
+
+async function copyOpdsLink() {
+  const input = document.getElementById('opds-link');
+  if (!input || !input.value) return;
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch (_) {  // plain http on a LAN address: no clipboard API
+    input.select();
+    document.execCommand('copy');
+  }
+  toast('📋 Ο σύνδεσμος αντιγράφηκε.', 'success');
+}
+
+async function removeOpdsLink() {
+  if (!window.confirm('Να καταργηθεί ο σύνδεσμος; Οι εφαρμογές ανάγνωσης δεν θα βλέπουν πια τα βιβλία σας.')) return;
+  try {
+    const res = await fetch(`${API}/connections/opds`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to remove the link'));
+    document.getElementById('opds-link-box').style.display = 'none';
+    showOpdsState({ exists: false });
+  } catch (e) {
+    setDevicesStatus('opds-status', `❌ ${e.message}`);
+  }
+}
+
 async function loadGlossary() {
   const tbody = document.getElementById('glossary-tbody');
   tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px">Φόρτωση όρων γλωσσαρίου...</td></tr>';
@@ -4565,9 +5062,12 @@ function adoptQueueSettings(q) {
 
 function watchTranslationSettings() {
   const controls = '#tr-format-selector button, .lang-swap-btn, [data-layout], #tr-ai-polish, input[name="tr-reading-dir"], input[name="tr-quota-behavior"]';
+  // what changes the number of Gemini requests (the estimate waits a moment, until the click has taken effect)
+  const estimated = '#tr-format-selector button, [data-layout], #tr-ai-polish, #tr-max-quality, .mode-toggle-btn';
   for (const type of ['click', 'change']) {
     document.addEventListener(type, (e) => {
       if (e.target.closest?.(controls)) _keepQueuedSettings = false;
+      if (e.target.closest?.(estimated)) scheduleTranslationEstimate();
     }, true);
   }
 }
@@ -4895,6 +5395,9 @@ async function returnLoneQueuedFileToCard(q) {
 
   restoreQueueForm(item);
   setGraphicNovelLock(Boolean(item.is_comic), '', Boolean(item.is_scanned));
+  showScanChoice(info.scanned ? (info.read_scanned_text && !item.is_comic ? 'book' : 'comic') : '', false);
+  updateSampleRow(true);
+  scheduleTranslationEstimate();
   const startBtn = document.getElementById('tr-start-btn');
   if (startBtn) {
     startBtn.disabled = false;
@@ -4998,6 +5501,12 @@ async function init() {
       if (e.target === helpModal) closeHelpModal();
     });
   }
+  const devicesModal = document.getElementById('devices-modal');
+  if (devicesModal) {
+    devicesModal.addEventListener('click', (e) => {
+      if (e.target === devicesModal) closeDevicesModal();
+    });
+  }
 
   // Global keyboard shortcuts (Ctrl+S, Ctrl+F in editor; Esc to close modals)
   document.addEventListener('keydown', (e) => {
@@ -5013,6 +5522,10 @@ async function init() {
       const helpModal = document.getElementById('help-modal');
       if (helpModal && helpModal.style.display !== 'none') {
         closeHelpModal();
+      }
+      const devicesModal = document.getElementById('devices-modal');
+      if (devicesModal && devicesModal.style.display !== 'none') {
+        closeDevicesModal();
       }
       const readerModal = document.getElementById('reader-modal');
       if (readerModal && readerModal.style.display !== 'none') {

@@ -265,6 +265,59 @@ async def synthesize_voice_preview(
     return str(out_file)
 
 
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?…;»\"”])\s+")
+_PAGE_MARKER_LINE_RE = re.compile(r"^\s*(?:={3,}\s*PAGE\s+\d+\s*={3,}|={6,}|PAGE\s+\d+)\s*$", re.IGNORECASE)
+_PAUSE_WEIGHT = 12  # characters' worth of time for the pause at the end of a sentence
+
+
+def _part_duration_ms(path: str) -> float:
+    try:
+        from mutagen.mp3 import MP3
+        dur_ms = float(MP3(path).info.length or 0.0) * 1000.0
+    except Exception:
+        dur_ms = 0.0
+    if dur_ms <= 0:  # an unreadable header: from the size at edge-tts' 48 kbit/s, so later times do not shift
+        try:
+            dur_ms = Path(path).stat().st_size * 8 / 48.0
+        except OSError:
+            dur_ms = 0.0
+    return dur_ms
+
+
+def compute_read_along(parts: list[tuple[str, str]]) -> list[dict]:
+    """
+    The book's sentences with their times, for reading along: [{"s": start_ms, "e": end_ms, "t": text, "p": 1 when the
+    sentence opens a paragraph}], from the synthesised parts [(part_text, part_mp3_path), ...] in playback order.
+    Each part's real duration is measured; inside a part, a sentence's share follows its length plus a short pause.
+    """
+    segments: list[dict] = []
+    t_ms = 0.0
+    for text, path in parts:
+        dur_ms = _part_duration_ms(path)
+        if dur_ms <= 0:
+            continue
+        sentences: list[tuple[str, bool]] = []
+        for para in re.split(r"\n\s*\n|\n", text or ""):
+            if not para.strip() or _PAGE_MARKER_LINE_RE.match(para) or not any(ch.isalpha() for ch in para):
+                continue
+            pieces: list[str] = []
+            for piece in _SENTENCE_END_RE.split(para.strip()):
+                if pieces and piece[:1].islower():  # «Πού πάμε;» ρώτησε: the sentence goes on
+                    pieces[-1] += " " + piece
+                elif piece.strip():
+                    pieces.append(piece.strip())
+            sentences += [(s, k == 0) for k, s in enumerate(pieces)]
+        weights = [len(s) + _PAUSE_WEIGHT for s, _ in sentences]
+        total = sum(weights)
+        start = t_ms
+        for (sentence, opens), weight in zip(sentences, weights):
+            end = start + dur_ms * weight / total
+            segments.append({"s": round(start), "e": round(end), "t": sentence, "p": 1 if opens else 0})
+            start = end
+        t_ms += dur_ms
+    return segments
+
+
 def compute_chapter_marks(parts: list[tuple[str, str]]) -> list[dict]:
     """
     Chapter start times from the synthesised parts: [(part_text, part_mp3_path), ...] in playback order.
@@ -275,17 +328,7 @@ def compute_chapter_marks(parts: list[tuple[str, str]]) -> list[dict]:
     marks: list[dict] = []
     t_ms = 0.0
     for text, path in parts:
-        try:
-            from mutagen.mp3 import MP3
-            dur_ms = float(MP3(path).info.length or 0.0) * 1000.0
-        except Exception:
-            dur_ms = 0.0
-        if dur_ms <= 0:
-            # Unreadable header: estimate from size at edge-tts' 48 kbit/s so later chapter marks don't shift
-            try:
-                dur_ms = Path(path).stat().st_size * 8 / 48.0
-            except OSError:
-                dur_ms = 0.0
+        dur_ms = _part_duration_ms(path)
         if dur_ms <= 0:
             continue
         offset = 0
@@ -848,6 +891,20 @@ async def generate_audiobook(
             error = _not_narrated(silent, total_chunks)
             update_job(job_id, status="error", error=error)
             raise NarrationError(error)
+
+        # Reading along: every sentence's time in the finished recording (after any re-narrated parts)
+        sync_file = Path(output_path).with_suffix(".sync.json")
+        try:
+            final_parts = [(voice_segments[i][0], str(temp_dir / f"chunk_{i:06d}.mp3")) for i in range(total_chunks)
+                           if _has_bytes(temp_dir / f"chunk_{i:06d}.mp3")]
+            segments = await asyncio.to_thread(compute_read_along, final_parts)
+            if segments:
+                sync_file.write_text(json.dumps({"version": 1, "segments": segments}, ensure_ascii=False,
+                                                separators=(",", ":")), encoding="utf-8")
+            else:
+                sync_file.unlink(missing_ok=True)
+        except Exception as sync_err:
+            logger.warning(f"[{job_id}] Read-along times not saved: {sync_err}")
     finally:
         # Always clean up temp directory (even on concatenation/M4B/disk errors); finished parts stay for Resume
         shutil.rmtree(temp_dir, ignore_errors=True)

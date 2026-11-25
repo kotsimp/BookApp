@@ -284,6 +284,9 @@ class TranslateRequest(BaseModel):
     quota_behavior: str = "wait"  # 'wait' (pause at checkpoint for quota reset) or 'fallback' (auto-fallback to free engine)
     final_refinement: Optional[bool] = None
     max_quality: bool = False  # Advanced Mode: 2nd Gemini pass revising the AI translation against the original
+    read_scanned_text: Optional[bool] = None  # scanned PDF: True = a book (read its text first), False = a comic
+    page_from: Optional[int] = None  # a sample: translate only pages page_from..page_to
+    page_to: Optional[int] = None
 
 
 class AudiobookRequest(BaseModel):
@@ -569,13 +572,23 @@ async def upload_file(file: UploadFile = File(...)):
 
     from backend.parsers import detect_is_graphic_novel
     comic_info = await asyncio.to_thread(detect_is_graphic_novel, str(final_path), file_type, file.filename)
+    # A scanned PDF is a comic (translated on its page images) or a book (its text is read first, then translated as
+    # text). The upload card offers both; the guess preselects one.
+    scanned_pdf = file_type == "pdf" and bool(comic_info["is_scanned"])
+    scanned_book = False
+    if scanned_pdf:
+        from backend.scan_reader import guess_scanned_book
+        scanned_book = await asyncio.to_thread(guess_scanned_book, str(final_path), file.filename)
+    is_comic = bool(comic_info["is_comic"]) and not scanned_book
 
     # Persist page count and auto-detected comic layout in SQLite metadata
     update_job(
         job.job_id,
         total_pages=page_count,
-        layout_mode="comic" if comic_info["is_comic"] else "standard",
+        layout_mode="comic" if is_comic else "standard",
         ai_polish=bool(comic_info["is_scanned"]),
+        scanned=scanned_pdf,
+        read_scanned_text=scanned_book,
     )
 
     logger.info(
@@ -588,8 +601,9 @@ async def upload_file(file: UploadFile = File(...)):
         "file_type": file_type,
         "estimated_pages": page_count,
         "detected_language": detected_language,
-        "is_comic": comic_info["is_comic"],
+        "is_comic": is_comic,
         "is_scanned": comic_info["is_scanned"],
+        "scan_kind": ("book" if scanned_book else "comic") if scanned_pdf else "",
         "comic_reason": comic_info["reason"],
     }
 
@@ -644,6 +658,12 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     if quota_behavior not in ("wait", "fallback"):
         quota_behavior = "fallback" if not resolved_key else "wait"
 
+    read_scanned = (bool(req.read_scanned_text) if req.read_scanned_text is not None
+                    else bool(getattr(job, "read_scanned_text", False)))
+    if layout_mode == "comic":
+        read_scanned = False
+    sample_range = _requested_sample(job, req.page_from, req.page_to)
+
     clear_job_cancellation(req.job_id)
     update_job(
         req.job_id,
@@ -661,6 +681,8 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
         refinement_report=None,
         max_quality=bool(req.max_quality),
         revision_report=None,
+        read_scanned_text=read_scanned,
+        sample_range=sample_range,
     )
 
     background_tasks.add_task(
@@ -677,6 +699,180 @@ async def start_translation(req: TranslateRequest, background_tasks: BackgroundT
     )
 
     return {"job_id": req.job_id, "status": "started", "output_path": output_path}
+
+
+def _requested_sample(job, page_from: Optional[int], page_to: Optional[int]) -> Optional[list]:
+    """[first, last] page of a sample translation (ending at the document's last page), or None for the whole book."""
+    if page_from is None and page_to is None:
+        return None
+    first = int(page_from or 1)
+    last = int(page_to if page_to is not None else first)
+    if first < 1 or last < first:
+        raise HTTPException(400, "Choose pages from 1 upwards, the first no later than the last.")
+    total = int(getattr(job, "total_pages", 0) or 0)
+    if not total and job.file_path and Path(job.file_path).exists():
+        total = count_pages(job.file_path, job.file_type)
+    if total:
+        if first > total:
+            raise HTTPException(400, f"The document has {total} pages: page {first} is past its end.")
+        last = min(last, total)
+    return [first, last]
+
+
+_ESTIMATE_PAGES: dict[str, tuple] = {}   # job_id -> (file version, [(page, characters), ...])
+SCANNED_PAGE_CHARS = 1800                # a page of print not read yet: a typical book page
+
+
+def _page_lengths(job) -> list[tuple[int, int]]:
+    """(page number, characters) of every page with text, as the translation reads it (kept per file version)."""
+    from backend.scan_reader import sidecar_path
+    p = Path(job.file_path)
+    side = sidecar_path(job.file_path)
+    try:
+        st = p.stat()
+        version = (str(p), st.st_size, st.st_mtime_ns, side.stat().st_mtime_ns if side.exists() else 0)
+    except OSError:
+        return []
+    cached = _ESTIMATE_PAGES.get(job.job_id)
+    if cached and cached[0] == version:
+        return cached[1]
+    lengths = [(int(pg.get("page") or 0), len((pg.get("text") or "").strip()))
+               for pg in parse_document(job.file_path, job.file_type)]
+    if len(_ESTIMATE_PAGES) > 64:
+        _ESTIMATE_PAGES.clear()
+    _ESTIMATE_PAGES[job.job_id] = (version, lengths)
+    return lengths
+
+
+def _ai_batches(lengths: list[tuple[int, int]]) -> list[list[int]]:
+    """Pages grouped as the AI translation groups them: ~5,500 characters, at most 3 pages per request."""
+    batches: list[list[int]] = []
+    cur: list[int] = []
+    size = 0
+    for page, chars in lengths:
+        item = chars + 25
+        if cur and (size + item > 5500 or len(cur) >= 3):
+            batches.append(cur)
+            cur, size = [page], item
+        else:
+            cur.append(page)
+            size += item
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _estimate_requests(job, ai_polish: bool, max_quality: bool, layout_mode: str, output_format: str,
+                       read_scanned_text: Optional[bool], page_from: Optional[int], page_to: Optional[int]) -> dict:
+    """About how many Gemini requests a translation with these settings sends, and what the keys allow a day."""
+    import math
+    from backend.ai_polisher import PREFERRED_FLASH_MODELS
+    from backend.gemini_key_pool import GeminiKeyPool, model_daily_limit, resolve_gemini_api_key
+    from backend.scan_reader import LIGHT_MODELS_FIRST, is_scanned_pdf, load_scan_text
+
+    ft = (job.file_type or "").lower().lstrip(".")
+    fmt = (output_format or job.output_format or ft or "pdf").lower().lstrip(".")
+    layout = (layout_mode or "standard").lower()
+    has_key = bool(resolve_gemini_api_key(None))
+    keys = max(len(GeminiKeyPool.get_keys()), 1 if has_key else 0)
+    total_pages = int(job.total_pages or 0) or count_pages(job.file_path, ft)
+    sample = _requested_sample(job, page_from, page_to)
+    lo, hi = sample or (1, max(total_pages, 1))
+    scanned = ft == "pdf" and (bool(getattr(job, "scanned", False)) or is_scanned_pdf(job.file_path, ft, job.file_name))
+    if read_scanned_text is None:
+        read_scanned_text = bool(getattr(job, "read_scanned_text", False))
+    read_scanned = scanned and bool(read_scanned_text) and layout != "comic"
+    comic = layout == "comic" or ft in ("cbz", "cbr", "zip") or (scanned and not read_scanned)
+    requests = {"read": 0, "translate": 0, "revise": 0}
+    best_model = PREFERRED_FLASH_MODELS[0]
+
+    if comic:
+        from backend.comic_translator import VISION_MODELS_PRIORITY
+        best_model = VISION_MODELS_PRIORITY[0]
+        pages = max(0, min(hi, total_pages) - lo + 1)
+        if has_key and (scanned or ft in ("cbz", "cbr", "zip") or ai_polish):
+            requests["translate"] = pages  # one Vision (or balloon polish) request per page
+    else:
+        if read_scanned:
+            data = load_scan_text(job.file_path)
+            read = data["pages"]
+            wanted = range(lo, min(total_pages, hi + 2) + 1) if sample else range(1, total_pages + 1)
+            requests["read"] = 0 if data.get("complete") else sum(1 for n in wanted if str(n) not in read)
+            lengths = [(n, len(read[str(n)].strip()) if str(n) in read else SCANNED_PAGE_CHARS)
+                       for n in range(1, total_pages + 1)]
+            lengths = [(n, c) for n, c in lengths if c > 0]
+        else:
+            lengths = _page_lengths(job)
+        chosen = [(n, c) for n, c in lengths if lo <= n <= hi] if sample else lengths
+        pages = len(chosen)
+        if ai_polish and has_key:
+            chars = sum(c for _, c in chosen)
+            in_place = not sample and ((ft == "docx" and fmt in ("docx", "doc")) or (ft == "epub" and fmt == "epub"))
+            if in_place:
+                requests["translate"] = max(1, math.ceil(chars / 3800)) if chars else 0  # paragraphs in ~4,000 chars
+            else:
+                batches = _ai_batches(lengths)
+                if sample:
+                    batches = [b for b in batches if any(lo <= p <= hi for p in b)]
+                dossier = 1 if sum(c for _, c in lengths) > 18000 else 0  # names and terms of a long book: 1 request
+                requests["translate"] = len(batches) + dossier if batches else 0
+                if max_quality and batches:
+                    requests["revise"] = len(batches) + (1 if chars > 18000 else 0)
+
+    best_per_day = keys * (model_daily_limit(best_model) or 20)
+    light_per_day = keys * (model_daily_limit(LIGHT_MODELS_FIRST[0]) or 1500)
+    return {
+        "pages": pages,
+        "sample": sample,
+        "comic": comic,
+        "scanned": scanned,
+        "read_scanned_text": read_scanned,
+        "has_key": has_key,
+        "uses_ai": sum(requests.values()) > 0,
+        "keys": keys,
+        "requests": requests,
+        "total": sum(requests.values()),
+        "best_model": best_model,
+        "best_per_day": best_per_day,
+        "light_per_day": light_per_day,
+        "best_days": math.ceil((requests["translate"] + requests["revise"]) / best_per_day) if best_per_day else 0,
+    }
+
+
+@app.get("/api/translate/estimate/{job_id}")
+async def translation_estimate(job_id: str, ai_polish: bool = False, max_quality: bool = False,
+                               layout_mode: str = "standard", output_format: str = "",
+                               read_scanned_text: Optional[bool] = None, page_from: Optional[int] = None,
+                               page_to: Optional[int] = None):
+    """About how many Gemini requests a translation of this document with these settings needs (before starting)."""
+    _validate_job_id(job_id)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' not found.")
+    if not job.file_path or not Path(job.file_path).exists():
+        raise HTTPException(404, "The uploaded file is no longer on the server.")
+    return await asyncio.to_thread(_estimate_requests, job, ai_polish, max_quality, layout_mode, output_format,
+                                   read_scanned_text, page_from, page_to)
+
+
+async def _read_scanned_book(job_id: str, file_path: str, api_key: str, page_range=None) -> None:
+    """Reads the text of a scanned book's page images (Gemini Vision) unless it was read already: only the pages of
+    `page_range` for a sample."""
+    from backend.scan_reader import read_scanned_text, scan_text_complete
+    if scan_text_complete(file_path):
+        return
+    if not api_key:
+        raise ValueError("A scanned book needs a Gemini API key: Gemini Vision reads the text of its page images. "
+                         "Add a key with 🔑, or choose Comic to translate on the page images.")
+
+    def _prog(done: int, total: int) -> None:
+        update_job(job_id, current_step=f"📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision): σελίδα {done} από {total}...",
+                   done_chunks=done, total_chunks=total, progress=int(done / max(total, 1) * 100))
+
+    update_job(job_id, current_step="📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision)...", progress=0, done_chunks=0,
+               done_pages=0)  # the time left follows the pages read, not an earlier run's count
+    await read_scanned_text(file_path, api_key, progress=_prog, cancelled=lambda: is_job_cancelled(job_id),
+                            page_range=page_range)
 
 
 def _revision_time_left(elapsed: float, done: int, total: int, start_done: int = 0) -> str:
@@ -754,10 +950,13 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
     from backend.ai_polisher import track_gemini_usage
     usage_cm = track_gemini_usage()
     usage = usage_cm.__enter__()          # counts every Gemini call of this job (incl. child tasks)
+    doc_pages = 0                         # the document's page count: a sample shows its own while it runs
+    page_range = None
     try:
         job = get_job(job_id)
         if not job:
             return
+        doc_pages = int(getattr(job, "total_pages", 0) or 0)
         update_job(job_id, error=None)
         fmt = getattr(job, "output_format", "txt") or "txt"
         fmt = fmt.lower()
@@ -779,11 +978,21 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
 
         # Check if uploaded PDF is a scanned/image-only document or graphic novel
         comic_probe = detect_is_graphic_novel(file_path, file_type, job.file_name or "")
+        scanned_pdf = file_type == "pdf" and bool(comic_probe.get("is_scanned", False))
+        read_scanned = scanned_pdf and bool(getattr(job, "read_scanned_text", False))
         is_comic_flow = (
             layout in ("comic", "graphic_novel")
             or file_type in ("cbz", "cbr")
-            or (file_type == "pdf" and comic_probe.get("is_scanned", False))
+            or (scanned_pdf and not read_scanned)
         )
+        sample = getattr(job, "sample_range", None)
+        page_range = (int(sample[0]), int(sample[1])) if sample else None
+
+        # A scanned book: Gemini Vision reads the text of its page images first, then it is translated as text
+        if read_scanned and not is_comic_flow:
+            await _read_scanned_book(job_id, file_path, resolved_key, page_range)
+            if is_job_cancelled(job_id):
+                return
 
         # Whether the final document is regenerated from the plain-text translation by export_text().
         # Format-preserving outputs (comics, in-place DOCX/EPUB) must never be re-exported by the refiner.
@@ -791,7 +1000,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
 
         # Format-preserving AI translation: DOCX->DOCX / EPUB->EPUB keep fonts, styles, tables, images and HTML/CSS
         # (AI translates the document's own paragraphs/runs/text nodes in context-preserving batches).
-        ai_in_place = bool(ai_polish and resolved_key) and (
+        # (a sample takes the page-based path: its pages are those of the whole book's translation)
+        ai_in_place = bool(ai_polish and resolved_key) and not page_range and (
             (file_type == "docx" and fmt in ("docx", "doc")) or (file_type == "epub" and fmt == "epub")
         )
         ai_segment_translator = None
@@ -824,6 +1034,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 reading_direction=reading_dir,
                 quota_behavior=quota_behavior,
                 notes=warnings,
+                page_range=page_range,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
             if fmt == "cbz":
@@ -869,6 +1080,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 api_key=resolved_key,
                 style=style_for_layout,
                 quota_behavior=quota_behavior,
+                page_range=page_range,
             )
             if is_job_cancelled(job_id):
                 return
@@ -884,7 +1096,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             final_path = await asyncio.to_thread(export_text, txt_content, out_dir, fmt, base_name, layout=layout)
 
         # 2. DOCX In-Place Format Preservation (styles, fonts, sizes, tables, bold/italic)
-        elif file_type == "docx" and fmt in ("docx", "doc"):
+        elif file_type == "docx" and fmt in ("docx", "doc") and not page_range:
             refine_reexportable = False
             final_docx_path = out_dir / f"{base_name}.docx"
 
@@ -910,7 +1122,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             final_path = final_docx_path
 
         # 3. EPUB In-Place Format Preservation (HTML tags, CSS, headings, styles, images)
-        elif file_type == "epub" and fmt == "epub":
+        elif file_type == "epub" and fmt == "epub" and not page_range:
             refine_reexportable = False
             final_epub_path = out_dir / f"{base_name}.epub"
 
@@ -945,6 +1157,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 target_lang=target_lang,
                 output_path=output_path,
                 style="literature" if layout == "literature" else None,
+                page_range=page_range,
             )
             if is_job_cancelled(job_id):
                 return
@@ -1006,11 +1219,14 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         if "mymemory" in engines:
             warnings.append("Some text was translated by MyMemory, a simpler free service, because Google refused: please check it.")
         final_total = max(int(getattr(job, "total_chunks", 0) or 0), 1)
+        done_sample = getattr(get_job(job_id) or job, "sample_range", None) if page_range else None
+        sample_note = f" · 🧪 Sample: pages {done_sample[0]}–{done_sample[1]}" if done_sample else ""
         update_job(job_id,
             status="done",
             progress=100,
             current_step=(f"⚠️ {' '.join(warnings)}" if warnings
-                          else f"Exported {fmt.upper()}" + ("" if refine_reexportable else " (Formatting Preserved)")),
+                          else f"Exported {fmt.upper()}" + ("" if refine_reexportable else " (Formatting Preserved)"))
+                         + sample_note,
             output_path=str(final_path),
             output_format=fmt,
             done_chunks=final_total,
@@ -1036,6 +1252,8 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
     finally:
         usage_cm.__exit__(None, None, None)
         update_job(job_id, gemini_usage=dict(usage))
+        if page_range and doc_pages:
+            update_job(job_id, total_pages=doc_pages)  # the next sample and the estimate see the whole document
         unregister_task(job_id)
 
 
@@ -1130,6 +1348,14 @@ async def _run_audiobook(
     try:
         if is_job_cancelled(job_id):
             return
+        if not translated_path:
+            from backend.scan_reader import needs_reading
+            if await asyncio.to_thread(needs_reading, file_path, file_type):
+                # a scanned book: Gemini Vision reads the text of its page images first
+                from backend.gemini_key_pool import resolve_gemini_api_key
+                await _read_scanned_book(job_id, file_path, resolve_gemini_api_key(api_key))
+                if is_job_cancelled(job_id):
+                    return
         await generate_audiobook(
             job_id=job_id,
             file_path=file_path,
@@ -1203,6 +1429,8 @@ async def progress_stream(job_id: str):
                 "revision_report": getattr(job, "revision_report", None),
                 "gemini_usage": getattr(job, "gemini_usage", None),
                 "max_quality": bool(getattr(job, "max_quality", False)),
+                "read_scanned_text": bool(getattr(job, "read_scanned_text", False)),
+                "sample_range": getattr(job, "sample_range", None),
             }
             yield f"data: {json.dumps(state)}\n\n"
 
@@ -1292,6 +1520,9 @@ async def job_status(job_id: str):
         "max_quality": bool(getattr(job, "max_quality", False)),
         "audiobook_options": getattr(job, "audiobook_options", None),
         "revision_report": getattr(job, "revision_report", None),
+        "scanned": bool(getattr(job, "scanned", False)),
+        "read_scanned_text": bool(getattr(job, "read_scanned_text", False)),
+        "sample_range": getattr(job, "sample_range", None),
         "gemini_quota_exhausted": quota_info["exhausted"],
         "gemini_quota_message": quota_info["message"],
         "gemini_quota_reset_timestamp": quota_info.get("reset_timestamp", 0.0),
@@ -1550,11 +1781,89 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
         raise HTTPException(404, f"Output file for job '{job_id}' not found.")
 
     media_type = MIME_MAP.get(out_path.suffix.lower(), "application/octet-stream")
+    download_name = out_path.name
+    sample = getattr(job, "sample_range", None) if job else None
+    if sample and job.mode == "translate" and out_path.suffix.lower() not in (".mp3", ".m4b"):
+        download_name = f"{out_path.stem}_sample_p{sample[0]}-{sample[1]}{out_path.suffix}"  # not the whole book
     return FileResponse(
         path=str(out_path),
         media_type=media_type,
-        filename=out_path.name,
+        filename=download_name,
     )
+
+
+_LANGUAGE_NAMES = {"english": ("English", "Αγγλικά"), "greek": ("Greek", "Ελληνικά")}
+
+
+def _bilingual_subtitle(source_lang: str, target_lang: str) -> str:
+    """'Αγγλικά → Ελληνικά · δίγλωσση έκδοση', in the translation's language."""
+    greek = (target_lang or "").lower() in ("greek", "el")
+
+    def name(lang: str) -> str:
+        return _LANGUAGE_NAMES.get((lang or "").lower(), ((lang or "").title(),) * 2)[1 if greek else 0]
+
+    edition = "δίγλωσση έκδοση" if greek else "bilingual edition"
+    return f"{name(source_lang)} → {name(target_lang)} · {edition}"
+
+
+def _build_bilingual(job, out_dir: Path, translated_file: Path, fmt: str, target: Path) -> Path:
+    from backend import bilingual
+    translated = translated_file.read_text(encoding="utf-8")
+    originals = sorted(out_dir.glob("*_original.txt"), key=lambda f: f.stat().st_mtime, reverse=True)
+    original = originals[0].read_text(encoding="utf-8") if originals else ""
+    if not original.strip() and job.file_path and Path(job.file_path).exists():
+        src_type = Path(job.file_path).suffix.lstrip(".").lower() or job.file_type
+        original = "\n\n".join(f"=== PAGE {p['page']} ===\n{p['text']}" for p in parse_document(job.file_path, src_type))
+    if not original.strip():
+        raise HTTPException(422, "The original text is not available, so there is no bilingual edition.")
+    passages = bilingual.bilingual_passages(original, translated)
+    if not passages:
+        raise HTTPException(422, "The translation has no text for a bilingual edition.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    title = Path(job.file_name or "Book").stem
+    subtitle = _bilingual_subtitle(job.source_lang, job.target_lang)
+    tmp = target.with_name(f".{target.stem}.{uuid.uuid4().hex[:8]}{target.suffix}")
+    try:
+        if fmt == "epub":
+            cover = next((c.read_bytes() for c in (out_dir / n for n in ("cover_image.jpg", "cover_image.png",
+                                                                          "cover.jpg", "cover.png")) if c.is_file()), None)
+            bilingual.export_bilingual_epub(passages, tmp, title, subtitle, job.source_lang, job.target_lang, cover)
+        else:
+            bilingual.EXPORTERS[fmt](passages, tmp, title, subtitle, job.source_lang, job.target_lang)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return target
+
+
+@app.get("/api/download/{job_id}/bilingual")
+async def download_bilingual(job_id: str, format: str = "pdf"):
+    """The translation with its original: each passage of the original, smaller and grey, then its translation."""
+    from backend.bilingual import EXPORTERS
+    _validate_job_id(job_id)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' not found.")
+    fmt = (format or "pdf").strip().lower().lstrip(".")
+    fmt = "docx" if fmt == "doc" else fmt
+    if fmt not in EXPORTERS:
+        raise HTTPException(400, "The bilingual edition comes as PDF, DOCX or EPUB.")
+    if (job.layout_mode or "") == "comic" or (job.file_type or "") in ("cbz", "cbr", "zip"):
+        raise HTTPException(400, "A graphic novel has no bilingual edition: its text is part of the pictures.")
+    if job.status == "running":
+        raise HTTPException(409, "Wait until the translation finishes.")
+    out_dir = OUTPUT_DIR / job_id
+    texts = _translated_texts(job, out_dir) if out_dir.exists() else []
+    if not texts:
+        raise HTTPException(404, "Translate the document first: the bilingual edition needs its translation.")
+    stem = Path(job.file_name or "Book").stem
+    target = out_dir / "bilingual" / f"{stem}_bilingual.{fmt}"  # apart: never taken for the translation itself
+    sources = [texts[0], *out_dir.glob("*_original.txt")]
+    if not target.is_file() or target.stat().st_mtime < max(f.stat().st_mtime for f in sources):
+        await asyncio.to_thread(_build_bilingual, job, out_dir, texts[0], fmt, target)
+    sample = getattr(job, "sample_range", None)
+    name = f"{stem}_bilingual" + (f"_sample_p{sample[0]}-{sample[1]}" if sample else "") + f".{fmt}"
+    return FileResponse(path=str(target), media_type=MIME_MAP.get(f".{fmt}", "application/octet-stream"), filename=name)
 
 
 @app.api_route("/api/cover/{job_id}", methods=["GET", "HEAD"])
@@ -1860,6 +2169,30 @@ async def get_audiobook_chapters(job_id: str):
         except (OSError, ValueError, KeyError, TypeError):
             chapters = []
     return {"job_id": job_id, "chapters": chapters}
+
+
+@app.get("/api/jobs/{job_id}/read-along")
+async def get_audiobook_read_along(job_id: str):
+    """The sentences of the job's newest audiobook with their times, for following the text while it plays."""
+    _validate_job_id(job_id)
+    out_dir = OUTPUT_DIR / job_id
+    if not get_job(job_id) and not out_dir.is_dir():
+        raise HTTPException(404, f"Job '{job_id}' not found.")
+    def newest(pattern: str):
+        return max(out_dir.glob(pattern), key=lambda f: f.stat().st_mtime, default=None)
+
+    # the MP3 the player plays (an M4B made from it later for a download is newer, but the same recording)
+    audio = (newest("*.mp3") or newest("*.m4b")) if out_dir.is_dir() else None
+    segments = []
+    if audio:
+        sync = audio.with_suffix(".sync.json")
+        # times of an earlier recording would be wrong for this one (made before this one finished)
+        if sync.is_file() and sync.stat().st_mtime >= audio.stat().st_mtime - 5:
+            try:
+                segments = json.loads(sync.read_text(encoding="utf-8")).get("segments") or []
+            except (OSError, ValueError, AttributeError):
+                segments = []
+    return {"job_id": job_id, "segments": segments}
 
 
 @app.get("/api/jobs/{job_id}/text")
@@ -2386,12 +2719,13 @@ async def polish_translation(req: PolishRequest):
 # Self-contained endpoint groups (backend/api/*): refinement, Book Insights, device pairing
 # ---------------------------------------------------------------------------
 from backend.api import refine as _refine_api, insights as _insights_api, pairing as _pairing_api  # noqa: E402
-from backend.api import auth as _auth_api  # noqa: E402
+from backend.api import auth as _auth_api, connections as _connections_api  # noqa: E402
 
 # Register the routers' routes directly on the app (no prefix/dependencies), so they appear as plain APIRoute
 # entries in app.routes exactly like routes declared here (FastAPI >= 0.16x nests include_router() routers,
 # which hides them from code that inspects app.routes, e.g. the API contract and coverage tests).
-for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router, _auth_api.router):
+for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router, _auth_api.router,
+                    _connections_api.router):
     app.router.routes.extend(_api_router.routes)
 
 
@@ -2537,6 +2871,8 @@ async def _execute_queue_item(q_item):
         refinement_report=None,
         max_quality=False,      # the token-intensive revision pass is never applied implicitly to batches
         revision_report=None,
+        read_scanned_text=bool(q_item.is_scanned and not q_item.is_comic),  # a scanned book: its text is read first
+        sample_range=None,
     )
     await _run_translation(
         q_item.job_id,
