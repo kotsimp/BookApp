@@ -7,6 +7,8 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 
 ## 📑 Table of Contents
 1. [Accessing the Application](#1-accessing-the-application)
+   - [Help: Guide & FAQ](#-help-guide--faq)
+   - [Light by Day, Dark at Night](#--light-by-day-dark-at-night)
    - [Signing In & Your Account](#-signing-in--your-account)
    - [Managing Users (Administrators)](#-managing-users-administrators)
 2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
@@ -61,6 +63,12 @@ You will see the main user interface with two primary tabs at the top:
 The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the sign-in page) shows the whole interface in Greek or in English: menus, tabs, buttons, settings, tooltips, notifications, a job's progress steps, its final notes and error messages. The choice is remembered in your browser. The first time, BookApp follows your browser's language. Each person sees their own choice, also on a shared server.
 * Your books, file names, glossary terms and the reader's text are never translated by the switch.
 * Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
+
+### ❓ Help: Guide & FAQ
+The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, scanned PDFs, names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
+
+### ☀️ / 🌙 Light by Day, Dark at Night
+The interface is light from sunrise to sunset and dark at night, by itself (the times follow the date; on Greek time they are those of Athens). The **Theme** button at the top right still switches it whenever you like: your choice holds until the next sunrise or sunset, and then the automatic theme takes over again. Hover over the button to see until when your choice lasts.
 
 ### 🔐 Signing In & Your Account
 

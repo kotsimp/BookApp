@@ -3973,6 +3973,20 @@ function closeGlossaryModal() {
   document.getElementById('glossary-modal').style.display = 'none';
 }
 
+// Help: a short guide and the frequently asked questions (index.html holds both languages)
+function openHelpModal() {
+  const modal = document.getElementById('help-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  const body = modal.querySelector('.modal-body');
+  if (body) body.scrollTop = 0;
+}
+
+function closeHelpModal() {
+  const modal = document.getElementById('help-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 async function loadGlossary() {
   const tbody = document.getElementById('glossary-tbody');
   tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px">Φόρτωση όρων γλωσσαρίου...</td></tr>';
@@ -4148,32 +4162,31 @@ function refreshPageApp() {
   }, 350);
 }
 
-// ── Theme Management (Dark / Light Mode) ──────────────────
+// ── Theme (Dark / Light) ──────────────────────────────────
+// theme.js picks it: light by day, dark at night; the button switches until the next sunrise or sunset.
 function initTheme() {
-  const saved = localStorage.getItem('bookapp_theme') || 'dark';
-  document.documentElement.setAttribute('data-theme', saved);
-  updateThemeButton(saved);
+  if (typeof BookAppTheme === 'undefined') return;
+  BookAppTheme.onChange(updateThemeButton);
+  updateThemeButton(BookAppTheme.apply());
 }
 
 function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  const next = current === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('bookapp_theme', next);
-  updateThemeButton(next);
+  if (typeof BookAppTheme === 'undefined') return;
+  updateThemeButton(BookAppTheme.toggle());
 }
 
 function updateThemeButton(theme) {
   const icon = document.getElementById('theme-icon');
   const label = document.getElementById('theme-label');
   if (icon && label) {
-    if (theme === 'light') {
-      icon.textContent = '☀️';
-      label.textContent = 'Light';
-    } else {
-      icon.textContent = '🌓';
-      label.textContent = 'Dark';
-    }
+    icon.textContent = theme === 'light' ? '☀️' : '🌙';
+    label.textContent = theme === 'light' ? 'Light' : 'Dark';
+  }
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn && typeof BookAppTheme !== 'undefined') {
+    btn.title = BookAppTheme.isManual()
+      ? `Δική σας επιλογή έως τις ${localClock(BookAppTheme.nextChange() / 1000)}, μετά αυτόματα`
+      : 'Αυτόματο θέμα: φωτεινό τη μέρα, σκοτεινό τη νύχτα · πατήστε για αλλαγή';
   }
 }
 
@@ -4979,6 +4992,12 @@ async function init() {
       if (e.target === readerModal) closeReaderModal();
     });
   }
+  const helpModal = document.getElementById('help-modal');
+  if (helpModal) {
+    helpModal.addEventListener('click', (e) => {
+      if (e.target === helpModal) closeHelpModal();
+    });
+  }
 
   // Global keyboard shortcuts (Ctrl+S, Ctrl+F in editor; Esc to close modals)
   document.addEventListener('keydown', (e) => {
@@ -4990,6 +5009,10 @@ async function init() {
       const glossaryModal = document.getElementById('glossary-modal');
       if (glossaryModal && glossaryModal.style.display !== 'none') {
         closeGlossaryModal();
+      }
+      const helpModal = document.getElementById('help-modal');
+      if (helpModal && helpModal.style.display !== 'none') {
+        closeHelpModal();
       }
       const readerModal = document.getElementById('reader-modal');
       if (readerModal && readerModal.style.display !== 'none') {

@@ -23,6 +23,7 @@ except ImportError:
     from tests import _sandbox_guard  # noqa: F401
 
 import json
+import os
 import sys
 sys.path.insert(0, ".")
 import re
@@ -1117,6 +1118,123 @@ process.stdout.write('OK');
         res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Time left from the recent pace: OK")
+
+    def test_14_help_window_in_both_languages(self):
+        """The ❓ help window holds a short guide and the FAQ twice, in Greek and in English, with the same
+        questions; only the block of the interface language shows, and neither is switched word by word."""
+        print("-> 14. Testing the help window (guide & FAQ)...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        css = Path("frontend/style.css").read_text(encoding="utf-8")
+        self.assertIn('id="btn-help" onclick="openHelpModal()"', html)
+        self.assertIn('id="help-modal"', html)
+        modal = html.split('id="help-modal"', 1)[1].split("MODAL: DISTRACTION-FREE READER", 1)[0]
+        el = modal.split('<section class="help-lang" lang="el" translate="no">', 1)[1].split("</section>", 1)[0]
+        en = modal.split('<section class="help-lang" lang="en" translate="no">', 1)[1].split("</section>", 1)[0]
+        self.assertGreaterEqual(el.count("<details>"), 10, "a useful number of questions")
+        self.assertEqual(el.count("<details>"), en.count("<details>"), "the same questions in both languages")
+        self.assertEqual(el.count("<h4>"), en.count("<h4>"), "the same guide sections in both languages")
+        self.assertIsNone(re.search(r"[A-Za-z]{4,} [a-z]{4,} [a-z]{4,}", re.sub(r"<[^>]+>", " ", el).replace("Graphic Novel", "")),
+                          "the Greek block is in Greek")
+        self.assertIsNone(re.search(r"[Ͱ-Ͽ]{3,}", re.sub(r"<[^>]+>", " ", en).replace("ΕΛ", "")), "the English block is in English")
+        self.assertIn('html[lang="en"] .help-lang[lang="el"]', css)
+        self.assertIn('html:not([lang="en"]) .help-lang[lang="en"]', css)
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  return { id, value: '', textContent: '', innerHTML: '', style: { display: 'none' }, dataset: {}, scrollTop: 0,
+    setAttribute() {}, getAttribute() {}, removeAttribute() {}, classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector() { return body; }, querySelectorAll: () => [] };
+}
+const body = makeEl('help-body');
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+body.scrollTop = 300;
+ctx.openHelpModal();
+assert.strictEqual(getEl('help-modal').style.display, 'flex');
+assert.strictEqual(body.scrollTop, 0, 'opens at the top');
+ctx.closeHelpModal();
+assert.strictEqual(getEl('help-modal').style.display, 'none');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Help window in Greek and English: OK")
+
+    def test_15_theme_follows_daylight(self):
+        """Light by day and dark at night by default (sunrise and sunset at Athens); the button switches by hand
+        until the next sunrise or sunset, and then the automatic theme comes back."""
+        print("-> 15. Testing the automatic light / dark theme...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        from backend import auth
+        self.assertTrue(auth.is_open_path("/theme.js"), "the sign-in page loads it before signing in")
+        for page in ("index.html", "login.html"):
+            html = Path("frontend", page).read_text(encoding="utf-8")
+            self.assertIn("theme.js", html.split("</head>")[0], f"{page}: theme.js in <head>, so no flash of the other theme")
+            self.assertNotIn("localStorage.getItem('bookapp_theme')", html, f"{page}: no lasting theme choice any more")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const store = new Map([['bookapp_theme', 'dark']]);  // a choice saved by the former button
+const attrs = {};
+const ctx = vm.createContext({ console, setInterval: () => 1, Intl,
+  localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k) },
+  document: { hidden: false, addEventListener() {},
+    documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, getAttribute: (k) => attrs[k] ?? null } } });
+vm.runInContext(fs.readFileSync('frontend/theme.js', 'utf8') + ';globalThis.T = BookAppTheme;', ctx);
+const T = ctx.T;
+assert.ok(!store.has('bookapp_theme'), 'the former lasting choice is dropped');
+T._setPlace(37.98, 23.73);  // Athens
+const close = (ms, iso, label) => assert.ok(Math.abs(ms - Date.parse(iso)) < 6 * 60000, `${label}: ${new Date(ms).toISOString()} vs ${iso}`);
+let sun = T._sunTimes(Date.parse('2026-06-21T10:00:00Z'), 37.98, 23.73);
+close(sun.rise, '2026-06-21T03:02:00Z', 'summer sunrise 06:02');
+close(sun.set, '2026-06-21T17:51:00Z', 'summer sunset 20:51');
+sun = T._sunTimes(Date.parse('2026-12-21T10:00:00Z'), 37.98, 23.73);
+close(sun.rise, '2026-12-21T05:38:00Z', 'winter sunrise 07:38');
+close(sun.set, '2026-12-21T15:10:00Z', 'winter sunset 17:10');
+assert.ok(T._sunTimes(Date.parse('2026-12-21T10:00:00Z'), 78, 15).always === 'night', 'polar night');
+
+const day = Date.parse('2026-12-21T11:00:00Z');      // 13:00 in Athens
+const night = Date.parse('2026-12-21T19:00:00Z');    // 21:00
+const nextMorning = Date.parse('2026-12-22T07:00:00Z');
+assert.strictEqual(T.current(day), 'light');
+assert.strictEqual(T.current(night), 'dark');
+assert.strictEqual(T.apply(day), 'light');
+assert.strictEqual(attrs['data-theme'], 'light');
+// switched by hand at midday: dark until sunset, then the automatic (dark) theme, then light next morning
+assert.strictEqual(T.toggle(day), 'dark');
+assert.ok(T.isManual(day));
+close(JSON.parse(store.get('bookapp_theme_choice')).until, '2026-12-21T15:10:00Z', 'the choice lasts until sunset');
+assert.strictEqual(T.current(day + 3600000), 'dark', 'the choice holds');
+assert.strictEqual(T.current(night), 'dark');
+assert.ok(!T.isManual(night), 'after sunset the theme is automatic again');
+assert.strictEqual(T.current(nextMorning), 'light');
+// switched by hand at night: light until sunrise
+assert.strictEqual(T.toggle(night), 'light');
+assert.strictEqual(T.current(night + 3600000), 'light');
+assert.strictEqual(T.current(nextMorning), 'light');
+assert.strictEqual(T.current(Date.parse('2026-12-22T19:00:00Z')), 'dark', 'next evening: dark again');
+// switching back to the automatic theme leaves no choice behind
+T.toggle(night + 3600000);
+assert.ok(!store.has('bookapp_theme_choice'));
+process.stdout.write('OK');
+"""
+        env = dict(os.environ, TZ="Europe/Athens")
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30, env=env)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Light by day, dark at night, manual switch until the next change: OK")
 
 
 if __name__ == "__main__":

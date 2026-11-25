@@ -1217,6 +1217,22 @@ select option:disabled {
   overflow-y: auto;
 }
 
+/* ---- Help: guide & FAQ (one block per interface language) ---- */
+html[lang="en"] .help-lang[lang="el"],
+html:not([lang="en"]) .help-lang[lang="en"] { display: none; }
+.help-body { font-size: 0.9rem; line-height: 1.55; color: var(--text-secondary); }
+.help-body h3 { font-size: 1rem; color: var(--text-primary); margin: 20px 0 8px; }
+.help-body h4 { font-size: 0.92rem; color: var(--text-primary); margin: 14px 0 4px; }
+.help-body p { margin: 0 0 8px; }
+.help-body ol, .help-body ul { margin: 0 0 8px; padding-left: 22px; }
+.help-body li { margin-bottom: 5px; }
+.help-body strong { color: var(--text-primary); }
+.help-lead { padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.help-faq details { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--bg-input); }
+.help-faq summary { cursor: pointer; padding: 10px 14px; font-weight: 600; color: var(--text-primary); }
+.help-faq details[open] summary { border-bottom: 1px solid var(--border); }
+.help-faq details p { padding: 10px 14px; margin: 0; }
+
 /* ---- Glossary Table & Form ---- */
 .glossary-add-form {
   display: flex;

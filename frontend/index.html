@@ -8,8 +8,9 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.10.4" />
-  <script src="i18n.js?v=1.2.1"></script>
+  <link rel="stylesheet" href="style.css?v=2.10.5" />
+  <script src="i18n.js?v=1.2.2"></script>
+  <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -44,7 +45,7 @@
         <span id="refresh-icon">🔄</span> <span id="refresh-label">Refresh</span>
       </button>
       <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Εναλλαγή Dark / Light Mode" aria-label="Toggle Theme">
-        <span id="theme-icon">🌓</span> <span id="theme-label">Theme</span>
+        <span id="theme-icon">🌙</span> <span id="theme-label">Theme</span>
       </button>
     </div>
     <div class="hero-badge">
@@ -84,6 +85,10 @@
     <button class="tab-btn tab-btn-tool" id="btn-glossary" onclick="openGlossaryModal()" title="Γλωσσάρι (Glossary)" style="margin-left:auto">
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
+    </button>
+    <button class="tab-btn tab-btn-tool" id="btn-help" onclick="openHelpModal()" title="Οδηγός &amp; συχνές ερωτήσεις">
+      <span class="tab-icon">❓</span>
+      <span class="tab-label">Βοήθεια</span>
     </button>
     <button class="tab-btn tab-btn-tool auth-admin-only" id="btn-settings" onclick="openApiKeyModal()" title="Ρυθμίσεις & Gemini API Key">
       <span class="tab-icon">🔑</span>
@@ -248,7 +253,7 @@
         </div>
         <div style="color:var(--text-secondary); font-size:0.84rem">
           • <strong>Αυτόματη Ανίχνευση:</strong> Αγγλικά ⇄ Ελληνικά, αυτόματο ταίριασμα μορφής (PDF, DOCX, EPUB, Comic).<br/>
-          • <strong>Ενεργό AI:</strong> Αυτόματη λογοτεχνική επιμέλεια ροής &amp; διαλόγων με το Multi-Key Pool (έως 4 κλειδιά).<br/>
+          • <strong>Ενεργό AI:</strong> Αυτόματη λογοτεχνική επιμέλεια ροής &amp; διαλόγων με το Multi-Key Pool (έως 8 κλειδιά).<br/>
           • <strong>1-Click Έναρξη:</strong> Απλά ανεβάστε το αρχείο σας και πατήστε το κουμπί!
         </div>
       </div>
@@ -1418,6 +1423,188 @@
 </div>
 
 <!-- ════════════════════════════════════
+     MODAL: HELP (short guide & FAQ). Written twice, in Greek and in English: the block of the interface language
+     shows (html[lang]); both are translate="no", so the word-by-word switch leaves them alone.
+     ════════════════════════════════════ -->
+<div class="modal-overlay" id="help-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="help-modal-title">❓ Οδηγός &amp; συχνές ερωτήσεις</div>
+      <button class="modal-close" onclick="closeHelpModal()" aria-label="Κλείσιμο">✕</button>
+    </div>
+    <div class="modal-body help-body">
+
+      <section class="help-lang" lang="el" translate="no">
+        <p class="help-lead">Η εφαρμογή μεταφράζει βιβλία και έγγραφα (Αγγλικά ⇄ Ελληνικά), φτιάχνει ηχητικά βιβλία και γράφει περιλήψεις. Οι εργασίες τρέχουν στον διακομιστή: μπορείτε να κλείσετε τη σελίδα και να επιστρέψετε αργότερα.</p>
+
+        <h3>📖 Σύντομος οδηγός</h3>
+        <h4>🌐 Μετάφραση</h4>
+        <ol>
+          <li>Ανεβάστε ένα αρχείο <strong>PDF, DOCX, EPUB</strong> ή κόμικ <strong>CBZ / CBR</strong>. Αν ανεβάσετε πολλά μαζί, μπαίνουν σε ουρά και μεταφράζονται το ένα μετά το άλλο.</li>
+          <li><strong>⚡ Απλή λειτουργία:</strong> πατήστε <strong>🌐 Έναρξη μετάφρασης</strong> και η εφαρμογή διαλέγει μόνη της γλώσσα, μορφή και διάταξη.<br/>
+            <strong>⚙️ Προχωρημένη λειτουργία:</strong> ορίζετε εσείς την κατεύθυνση, τη μορφή του αρχείου, τη διάταξη (Έγγραφο, Λογοτεχνικό, Graphic Novel), το εξώφυλλο, το AI Polish και τη Μέγιστη ποιότητα.</li>
+          <li>Η κάρτα προόδου δείχνει το βήμα, το ποσοστό και τον χρόνο που απομένει.</li>
+          <li>Στο τέλος, το πράσινο κουμπί κατεβάζει το αρχείο και τα μικρά κουμπιά δίνουν τις άλλες μορφές (PDF, DOCX, EPUB, TXT). Με <strong>📖 Ανάγνωση τώρα</strong> το διαβάζετε στον browser και με <strong>✏️ Έλεγχος &amp; διόρθωση</strong> διορθώνετε τη μετάφραση δίπλα στο πρωτότυπο.</li>
+        </ol>
+        <h4>🎧 Ηχητικό βιβλίο</h4>
+        <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια.</p>
+        <h4>💡 Book Insights</h4>
+        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου, στην οθόνη ή ως PDF, DOCX ή TXT. Χρειάζεται κλειδί Gemini.</p>
+        <h4>🔑 Κλειδιά Gemini</h4>
+        <p>Η μετάφραση με AI γίνεται με το Google Gemini. Ένα δωρεάν κλειδί φτιάχνεται στο <strong>aistudio.google.com/apikey</strong> και το προσθέτει ο διαχειριστής στο <strong>🔑 Gemini API Key</strong>. Χωράνε έως 8 κλειδιά, που δουλεύουν εκ περιτροπής.</p>
+        <h4>🧰 Επίσης</h4>
+        <ul>
+          <li><strong>ΕΛ | EN</strong>: η γλώσσα της εφαρμογής. Το κείμενο των βιβλίων δεν αλλάζει.</li>
+          <li><strong>☀️ / 🌙</strong>: φωτεινό θέμα τη μέρα, σκοτεινό τη νύχτα· πατήστε το για να το αλλάξετε.</li>
+          <li><strong>📚 Γλωσσάρι</strong>: σταθερή μετάφραση για ονόματα και όρους σε όλο το βιβλίο.</li>
+          <li><strong>🕑 Ιστορικό εργασιών</strong>: κατεβάζετε ξανά ή συνεχίζετε παλαιότερες εργασίες.</li>
+        </ul>
+
+        <h3>💬 Συχνές ερωτήσεις</h3>
+        <div class="help-faq">
+          <details>
+            <summary>Χρειάζομαι κλειδί Gemini;</summary>
+            <p>Όχι απαραίτητα. Χωρίς κλειδί η εφαρμογή χρησιμοποιεί τη δωρεάν μετάφραση της Google και μετά το MyMemory, με χαμηλότερη ποιότητα και μικρά όρια (η Google συχνά αρνείται μεγάλα κείμενα). Με ένα δωρεάν κλειδί Gemini η μετάφραση γίνεται με AI και είναι πολύ καλύτερη. Τα Book Insights χρειάζονται κλειδί.</p>
+          </details>
+          <details>
+            <summary>Γιατί μια μετάφραση κρατά ώρες;</summary>
+            <p>Σχεδόν πάντα λόγω των ορίων του δωρεάν Gemini (αιτήματα ανά λεπτό και ανά ημέρα), όχι λόγω του υπολογιστή ή του διακομιστή. Η Μέγιστη ποιότητα προσθέτει ένα 2ο πέρασμα, περίπου 3–8 δευτερόλεπτα ανά σελίδα. Περισσότερα κλειδιά από διαφορετικούς λογαριασμούς Google επιταχύνουν τη δουλειά.</p>
+          </details>
+          <details>
+            <summary>Τι γίνεται όταν εξαντληθεί το ημερήσιο όριο του Gemini;</summary>
+            <p>Με <strong>⏳ Αναμονή για επαναφορά</strong> (η προεπιλογή) η εργασία σταματά με ασφάλεια εκεί που έφτασε. Το όριο ανανεώνεται κάθε μέρα τα μεσάνυχτα ώρας Καλιφόρνιας (περίπου 10:00 ώρα Ελλάδας). Τότε οι εργασίες της ουράς συνεχίζουν μόνες τους, και μια μεμονωμένη εργασία επίσης, αν η σελίδα της είναι ανοιχτή· αλλιώς πατήστε <strong>▶️ Συνέχιση</strong>. Με <strong>🔄 Αυτόματη μετάβαση σε δωρεάν μοντέλο</strong> η εργασία συνεχίζει αμέσως με τη δωρεάν μηχανή, σε χαμηλότερη ποιότητα. Το παράθυρο των κλειδιών δείχνει τι περιμένει και μέχρι πότε.</p>
+          </details>
+          <details>
+            <summary>Βοηθούν πολλά κλειδιά από τον ίδιο λογαριασμό Google;</summary>
+            <p>Λίγο ή καθόλου. Η Google μετρά τα όρια ανά έργο (project), οπότε τα κλειδιά του ίδιου έργου μοιράζονται το ίδιο όριο. Για περισσότερο όριο προσθέστε κλειδιά από διαφορετικούς λογαριασμούς Google.</p>
+          </details>
+          <details>
+            <summary>Θα χαθεί η μετάφραση αν κλείσω τη σελίδα ή γίνει επανεκκίνηση του διακομιστή;</summary>
+            <p>Όχι. Η εργασία τρέχει στον διακομιστή και η πρόοδος αποθηκεύεται συνεχώς. Μετά από επανεκκίνηση εμφανίζεται η ειδοποίηση <strong>📌 Ημιτελής εργασία σε checkpoint</strong>: πατήστε <strong>▶️ Συνέχιση ΤΩΡΑ</strong> και η εργασία συνεχίζει από εκεί που σταμάτησε.</p>
+          </details>
+          <details>
+            <summary>Πόσο ακριβής είναι ο χρόνος που απομένει;</summary>
+            <p>Υπολογίζεται από τον ρυθμό των τελευταίων λεπτών, οπότε σταθεροποιείται περίπου ένα λεπτό αφού ανοίξει η σελίδα. Κρύβεται όσο η εργασία περιμένει το όριο του Gemini. Με τη Μέγιστη ποιότητα ακολουθεί το 2ο πέρασμα, που δείχνει τον δικό του χρόνο.</p>
+          </details>
+          <details>
+            <summary>Τι κάνει η «Μέγιστη ποιότητα»;</summary>
+            <p>Ένα 2ο πέρασμα AI συγκρίνει κάθε σελίδα της μετάφρασης με το πρωτότυπο και διορθώνει λάθη νοήματος, παραλείψεις και λεξιλόγιο, όπως ένας δεύτερος επιμελητής. Είναι αργό και χρησιμοποιεί περισσότερο από το ημερήσιο όριο. Αν δεν ολοκληρωθεί, κρατιέται η μετάφραση του 1ου περάσματος.</p>
+          </details>
+          <details>
+            <summary>Το PDF μου δεν μεταφράζεται (σκαναρισμένο ή μόνο εικόνες).</summary>
+            <p>Ένα σκαναρισμένο PDF έχει μόνο εικόνες σελίδων, χωρίς κείμενο. Περάστε το πρώτα από ένα πρόγραμμα OCR ώστε να αποκτήσει κείμενο. Για κόμικ διαλέξτε τη διάταξη <strong>Graphic Novel</strong>.</p>
+          </details>
+          <details>
+            <summary>Ένα όνομα μεταφράζεται κάθε φορά διαφορετικά.</summary>
+            <p>Προσθέστε το στο <strong>📚 Γλωσσάρι</strong> με τη μετάφραση που θέλετε· τηρείται σε όλο το βιβλίο.</p>
+          </details>
+          <details>
+            <summary>Πού πηγαίνουν τα αρχεία μου;</summary>
+            <p>Τα αρχεία και οι μεταφράσεις μένουν στον διακομιστή όπου τρέχει η εφαρμογή, μέχρι να τα σβήσετε από το Ιστορικό. Για τη μετάφραση το κείμενο στέλνεται στην Google (Gemini ή Google Translate) ή στο MyMemory, και για το ηχητικό βιβλίο στην υπηρεσία φωνής της Microsoft (Edge TTS). Με λογαριασμούς χρηστών, ο καθένας βλέπει μόνο τις δικές του εργασίες και οι διαχειριστές όλες.</p>
+          </details>
+          <details>
+            <summary>Ξέχασα τον κωδικό μου.</summary>
+            <p>Ένας διαχειριστής πατά <strong>🔑 Επαναφορά κωδικού</strong> στο <strong>👥 Χρήστες</strong> και σας δίνει έναν προσωρινό κωδικό. Τον κωδικό σας τον αλλάζετε από το <strong>👤</strong> πάνω δεξιά.</p>
+          </details>
+          <details>
+            <summary>Πώς βάζω την εφαρμογή στην οθόνη του iPhone;</summary>
+            <p>Στο Safari πατήστε <strong>Κοινοποίηση</strong> → <strong>Προσθήκη στην οθόνη Αφετηρίας</strong>. Εμφανίζεται με το εικονίδιο της εφαρμογής.</p>
+          </details>
+          <details>
+            <summary>Μετά από ενημέρωση βλέπω ακόμη την παλιά εμφάνιση.</summary>
+            <p>Πατήστε <strong>🔄</strong> στη γραμμή των καρτελών. Αν δεν αρκεί, ανανεώστε με <strong>Ctrl+F5</strong> (στο κινητό κλείστε και ανοίξτε ξανά την καρτέλα).</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="help-lang" lang="en" translate="no">
+        <p class="help-lead">The app translates books and documents (English ⇄ Greek), makes audiobooks and writes summaries. Jobs run on the server: you can close the page and come back later.</p>
+
+        <h3>📖 Quick guide</h3>
+        <h4>🌐 Translation</h4>
+        <ol>
+          <li>Upload a <strong>PDF, DOCX, EPUB</strong> file or a <strong>CBZ / CBR</strong> comic. Several files at once go into a queue and are translated one after another.</li>
+          <li><strong>⚡ Basic Mode:</strong> press <strong>🌐 Start Translation</strong> and the app picks the language, format and layout itself.<br/>
+            <strong>⚙️ Advanced Mode:</strong> you choose the direction, the file format, the layout (Document, Literature, Graphic Novel), the cover, AI Polish and Maximum quality.</li>
+          <li>The progress card shows the step, the percentage and the time left.</li>
+          <li>When it is done, the green button downloads the file and the small buttons give the other formats (PDF, DOCX, EPUB, TXT). <strong>📖 Read now</strong> opens it in the browser, and <strong>✏️ Review &amp; Edit</strong> lets you correct the translation next to the original.</li>
+        </ol>
+        <h4>🎧 Audiobook</h4>
+        <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters.</p>
+        <h4>💡 Book Insights</h4>
+        <p>A short summary or a full synopsis of a book, on screen or as PDF, DOCX or TXT. It needs a Gemini key.</p>
+        <h4>🔑 Gemini keys</h4>
+        <p>AI translation uses Google Gemini. A free key is made at <strong>aistudio.google.com/apikey</strong>, and the administrator adds it under <strong>🔑 Gemini API Key</strong>. Up to 8 keys fit, and they take turns.</p>
+        <h4>🧰 Also</h4>
+        <ul>
+          <li><strong>ΕΛ | EN</strong>: the app's language. The text of your books does not change.</li>
+          <li><strong>☀️ / 🌙</strong>: the light theme by day, the dark one at night; press it to switch.</li>
+          <li><strong>📚 Glossary</strong>: a fixed translation for names and terms across the whole book.</li>
+          <li><strong>🕑 Session History</strong>: download again or continue earlier jobs.</li>
+        </ul>
+
+        <h3>💬 Frequently asked questions</h3>
+        <div class="help-faq">
+          <details>
+            <summary>Do I need a Gemini key?</summary>
+            <p>Not necessarily. Without a key the app uses Google's free translation and then MyMemory, with lower quality and small limits (Google often refuses long texts). With a free Gemini key the translation is done by AI and is much better. Book Insights need a key.</p>
+          </details>
+          <details>
+            <summary>Why does a translation take hours?</summary>
+            <p>Almost always because of the free Gemini limits (requests per minute and per day), not because of your computer or server. Maximum quality adds a second pass of about 3–8 seconds per page. More keys from different Google accounts speed it up.</p>
+          </details>
+          <details>
+            <summary>What happens when the Gemini daily limit runs out?</summary>
+            <p>With <strong>⏳ Wait for the reset</strong> (the default) the job stops safely where it got to. The limit renews every day at midnight California time (around 10:00 in Greece). Queued jobs then continue by themselves, and so does a single job if its page is open; otherwise press <strong>▶️ Resume</strong>. With <strong>🔄 Switch to the free model automatically</strong> the job carries on at once with the free engine, at lower quality. The keys window shows what is waiting and until when.</p>
+          </details>
+          <details>
+            <summary>Do several keys from the same Google account help?</summary>
+            <p>Little or not at all. Google counts the limits per project, so keys of the same project share one limit. For more capacity, add keys from different Google accounts.</p>
+          </details>
+          <details>
+            <summary>Is the translation lost if I close the page or the server restarts?</summary>
+            <p>No. The job runs on the server and its progress is saved all the time. After a restart the <strong>📌 Unfinished job at a checkpoint</strong> notice appears: press <strong>▶️ Resume NOW</strong> and it continues from where it stopped.</p>
+          </details>
+          <details>
+            <summary>How accurate is the time left?</summary>
+            <p>It comes from the pace over the last few minutes, so it settles about a minute after the page opens. It hides while the job waits for the Gemini limit. With Maximum quality the second pass follows and shows its own time.</p>
+          </details>
+          <details>
+            <summary>What does “Maximum quality” do?</summary>
+            <p>A second AI pass compares every page of the translation with the original and corrects errors of meaning, omissions and vocabulary, like a second editor. It is slow and uses more of the daily limit. If it does not complete, the first-pass translation is kept.</p>
+          </details>
+          <details>
+            <summary>My PDF does not translate (scanned or images only).</summary>
+            <p>A scanned PDF holds only pictures of pages, with no text. Run it through an OCR program first so that it gets text. For comics, choose the <strong>Graphic Novel</strong> layout.</p>
+          </details>
+          <details>
+            <summary>A name is translated differently each time.</summary>
+            <p>Add it to the <strong>📚 Glossary</strong> with the translation you want; it is kept across the whole book.</p>
+          </details>
+          <details>
+            <summary>Where do my files go?</summary>
+            <p>Files and translations stay on the server where the app runs until you delete them from the History. For translation the text is sent to Google (Gemini or Google Translate) or to MyMemory, and for audiobooks to Microsoft's voice service (Edge TTS). With user accounts, everyone sees only their own jobs, and administrators see all of them.</p>
+          </details>
+          <details>
+            <summary>I forgot my password.</summary>
+            <p>An administrator presses <strong>🔑 Reset password</strong> under <strong>👥 Users</strong> and gives you a temporary password. You change your password from the <strong>👤</strong> button at the top right.</p>
+          </details>
+          <details>
+            <summary>How do I put the app on my iPhone home screen?</summary>
+            <p>In Safari press <strong>Share</strong> → <strong>Add to Home Screen</strong>. It appears with the app's icon.</p>
+          </details>
+          <details>
+            <summary>After an update I still see the old look.</summary>
+            <p>Press <strong>🔄</strong> in the tab bar. If that is not enough, reload with <strong>Ctrl+F5</strong> (on a phone, close the tab and open it again).</p>
+          </details>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════
      MODAL: DISTRACTION-FREE READER
      ════════════════════════════════════ -->
 <div class="modal-overlay" id="reader-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="reader-book-title">
@@ -1468,7 +1655,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.16.0"></script>
+<script src="app.js?v=2.17.0"></script>
 <script src="insights.js?v=2.9.1"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
