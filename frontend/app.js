@@ -2921,16 +2921,19 @@ async function clearAllHistory() {
 // A Session History click loads the job into the tab the user is looking at. Book Insights keeps
 // its own document slot; Smart Resume calls loadHistoryJob directly because it must translate/narrate.
 function openHistoryJob(jobId, mode, fileName) {
-  const onInsightsTab = document.getElementById('tab-insights')?.classList.contains('active');
-  if (onInsightsTab && typeof loadHistoryJobIntoInsights === 'function') {
+  const isActive = (id) => Boolean(document.getElementById(id)?.classList.contains('active'));
+  if (isActive('tab-insights') && typeof loadHistoryJobIntoInsights === 'function') {
     return loadHistoryJobIntoInsights(jobId, fileName);
   }
-  return loadHistoryJob(jobId, mode);
+  // A translated book narrated later is an "audiobook" job: from the Translation tab it still opens there
+  const tab = isActive('tab-audiobook') ? 'audiobook' : (isActive('tab-translate') ? 'translate' : null);
+  return loadHistoryJob(jobId, mode, tab);
 }
 
-async function loadHistoryJob(jobId, mode) {
+// `tab`: the tab to load into (a History click: the one in view); without it, the job's own mode decides
+async function loadHistoryJob(jobId, mode, tab = null) {
   const onAudiobookTab = document.getElementById('tab-audiobook')?.classList.contains('active');
-  const targetTab = (mode === 'audiobook' || mode === 'translate') ? mode : (onAudiobookTab ? 'audiobook' : 'translate');
+  const targetTab = tab || ((mode === 'audiobook' || mode === 'translate') ? mode : (onAudiobookTab ? 'audiobook' : 'translate'));
   const prefix = targetTab === 'audiobook' ? 'ab' : 'tr';
 
   try {
@@ -2984,8 +2987,8 @@ async function loadHistoryJob(jobId, mode) {
       state.tr.sampleRun = data.status !== 'done' && Array.isArray(data.sample_range) ? data.sample_range : null;
       updateSampleRow(true);
 
-      // Restore original output format (pdf / epub / docx / txt / cbz / cbr)
-      if (data.output_format) {
+      // Restore original output format (pdf / epub / docx / txt / cbz / cbr): an audiobook's MP3 is not the translation's
+      if (data.output_format && !['mp3', 'm4b'].includes(data.output_format.toLowerCase())) {
         const savedFmt = data.output_format.toLowerCase();
         const fmtBtn = document.getElementById(`fmt-${savedFmt}`);
         if (fmtBtn && !fmtBtn.disabled) {
@@ -3068,7 +3071,10 @@ async function loadHistoryJob(jobId, mode) {
       setStatusBadge(prefix, 'running');
       updateProgress(prefix, data);
       connectSSE(prefix, jobId);
-    } else if (data.has_output && data.status === 'done' && (prefix === 'tr' || mode === 'audiobook')) {
+    } else if (data.has_output && data.status === 'done'
+               && ((prefix === 'tr' && data.has_translation !== false) || (prefix === 'ab' && mode === 'audiobook'))) {
+      // done: its translation in the Translation tab, its audiobook in the Audiobook tab. A book only narrated,
+      // loaded into the Translation tab, or a translation loaded into the Audiobook tab, is ready instead (below).
       resetProgress(prefix, true);
       state[prefix].status = 'done';
       setActionButtonsEnabled(prefix, true);
@@ -3081,7 +3087,7 @@ async function loadHistoryJob(jobId, mode) {
     } else {
       // Idle, queued, cancelled, or error job loaded from history -> reset progress FIRST, then enable buttons!
       resetProgress(prefix, true);
-      state[prefix].status = data.status || 'idle';
+      state[prefix].status = data.status === 'done' ? 'idle' : (data.status || 'idle');  // nothing of it here yet
       state[prefix].quotaStopped = data.status === 'error' && isQuotaMessage(data.error);
       setActionButtonsEnabled(prefix, true);
       toast(`📄 Φορτώθηκε "${data.file_name || 'έγγραφο'}" — έτοιμο για μετάφραση/συνέχιση!`, 'info');

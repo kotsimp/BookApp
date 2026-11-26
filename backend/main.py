@@ -1513,6 +1513,8 @@ async def job_status(job_id: str):
         "done_chunks": job.done_chunks,
         "error": job.error,
         "has_output": job.output_path is not None,
+        # a translation on disk, also when an audiobook was made from the same job later (then mode is "audiobook")
+        "has_translation": (OUTPUT_DIR / job_id).is_dir() and bool(_translated_texts(job, OUTPUT_DIR / job_id)),
         "quota_behavior": getattr(job, "quota_behavior", "wait") or "wait",
         "final_refinement": getattr(job, "final_refinement", None),
         "refinement_report": getattr(job, "refinement_report", None),

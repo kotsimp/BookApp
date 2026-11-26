@@ -1735,6 +1735,97 @@ const clickLink = (href, attrs = {}) => {
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Downloads in the iPhone Home Screen app: OK")
 
+    def test_20_the_reader_closes_on_a_phone(self):
+        """Live finding (iPhone): the reader was 90vh tall, taller than the visible screen there, and its ✕ came last
+        after the wrapped controls: the top row was out of sight and the reader could not be closed. On a phone it
+        fills the visible screen, ✕ on the first line next to the title; nowhere taller than the visible screen."""
+        print("-> 20. Testing that the reader can be closed on a phone...")
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        css = Path("frontend/style.css").read_text(encoding="utf-8")
+        header = html.split('<div class="reader-header">', 1)[1].split('<div class="reader-body', 1)[0]
+        controls = header.split('<div class="reader-controls">', 1)[1].split("<!-- Its own place", 1)[0]
+        self.assertNotIn("closeReaderModal()", controls, "✕ is not one of the controls that wrap")
+        self.assertRegex(header, r'class="btn-sm btn-icon reader-close" onclick="closeReaderModal\(\)"')
+        self.assertIn("height: 90dvh !important;", css, "the visible screen, not iOS's taller vh")
+        phone = css.split("/* Phones: the reader fills the visible screen", 1)[1].split("\n}\n", 1)[0]
+        for rule in ("#reader-modal { padding: 0;", "height: 100dvh !important;", "env(safe-area-inset-top",
+                     ".reader-close { order: 1; min-width: 44px; min-height: 44px;", "order: 2;", "overflow-x: auto;"):
+            self.assertIn(rule, phone, rule)
+        self.assertIn(".reader-close { order: 3; flex: none; }", css, "on a computer it stays at the end")
+        print("   The reader closes on a phone: OK")
+
+    def test_21_history_opens_in_the_tab_in_view(self):
+        """Live finding: a translated book narrated later is an "audiobook" job, and a History click on the
+        Translation tab opened it in the Audiobook tab. A History click loads into the tab in view; there a job shows
+        as done only with something of that tab (its translation, its audiobook). Smart Resume keeps the job's mode."""
+        print("-> 21. Testing that History opens a book in the tab in view...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+let activeTab = 'tab-translate';
+function makeEl(id) {
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, dataset: {}, style: { display: '' },
+    setAttribute() {}, getAttribute() {}, removeAttribute() {}, appendChild() {}, click() {}, remove() {},
+    classList: { add() {}, remove() {}, contains: (c) => c === 'active' && id === activeTab, toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+let status = {};
+const ctx = vm.createContext({ console, setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  EventSource: class { close() {} }, FormData: class { append() {} }, Audio: class {}, URLSearchParams,
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, navigator: {},
+  fetch: async (url) => ({ ok: true, status: 200, json: async () => (url.includes('/status/') ? status : {}) }),
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+const calls = [];
+for (const name of ['switchTab', 'stopJobTracking', 'setLangs', 'setGraphicNovelLock', 'selectLayout', 'showScanChoice',
+  'updateSampleRow', 'selectFormat', 'onQuotaBehaviorChange', 'onMaxQualityToggle', 'resetProgress',
+  'setActionButtonsEnabled', 'showResult', 'setStatusBadge', 'checkCoverImage', 'scheduleTranslationEstimate', 'toast',
+  'restoreAudiobookOptions', 'restrictAudiobookLanguage', 'updateVoices', 'connectSSE', 'updateProgress']) {
+  ctx[name] = (...args) => { calls.push([name, ...args]); };
+}
+const narrated = (extra) => ({ job_id: 'J1', file_name: 'Blindsight.pdf', file_type: 'pdf', status: 'done', mode: 'audiobook',
+  has_output: true, output_format: 'mp3', layout_mode: 'literature', source_lang: 'english', target_lang: 'greek', ...extra });
+(async () => {
+  // a translation narrated later, clicked on the Translation tab: opens there, done, its format not MP3
+  status = narrated({ has_translation: true });
+  await ctx.openHistoryJob('J1', 'audiobook', 'Blindsight.pdf');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'switchTab').pop(), ['switchTab', 'translate']);
+  assert.strictEqual(vm.runInContext('state.tr.jobId', ctx), 'J1');
+  assert.strictEqual(vm.runInContext('state.tr.status', ctx), 'done');
+  assert.ok(calls.some((c) => c[0] === 'showResult' && c[1] === 'tr'));
+  assert.notStrictEqual(getEl('tr-output-format').value, 'mp3', 'an audiobook is not the translation format');
+  // a book only narrated, clicked on the Translation tab: ready to translate, not done
+  calls.length = 0;
+  status = narrated({ has_translation: false });
+  await ctx.openHistoryJob('J1', 'audiobook', 'Blindsight.pdf');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'switchTab').pop(), ['switchTab', 'translate']);
+  assert.ok(!calls.some((c) => c[0] === 'showResult'), 'nothing translated to show');
+  assert.strictEqual(vm.runInContext('state.tr.status', ctx), 'idle');
+  // on the Audiobook tab the same job opens there, with its audiobook
+  calls.length = 0;
+  activeTab = 'tab-audiobook';
+  await ctx.openHistoryJob('J1', 'audiobook', 'Blindsight.pdf');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'switchTab').pop(), ['switchTab', 'audiobook']);
+  assert.ok(calls.some((c) => c[0] === 'showResult' && c[1] === 'ab'));
+  // Smart Resume (no tab): the job's mode decides, as before
+  calls.length = 0;
+  activeTab = 'tab-translate';
+  status = narrated({ status: 'error', has_translation: true });
+  await ctx.loadHistoryJob('J1', 'audiobook');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'switchTab').pop(), ['switchTab', 'audiobook']);
+  process.stdout.write('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   History opens a book in the tab in view: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

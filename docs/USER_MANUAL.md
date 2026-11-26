@@ -329,6 +329,7 @@ Read your translated book directly inside the application:
    * **3 Themes:** **📄 Paper**, **📜 Sepia**, **🌙 Dark Night**.
    * **Font Size Zoom (A- / A+):** Easily adjustable text scaling.
    * **View Modes:** **📄 Single Column** (for distraction-free reading) or **↔️ Side-by-Side** (for bilingual English ↔ Greek sentence comparison).
+3. Close it with **✕** (top right), Esc or a click outside. On a phone the reader fills the screen: the title and **✕** are on the first line, the controls on the line below (swipe them sideways if they do not fit).
 
 ### 📌 Smart Resume Banner
 If a translation or audiobook generation is interrupted (due to quota pause, computer restart, or accidental browser closure):
@@ -611,6 +612,7 @@ Generating the same text twice reuses the saved result (no extra API usage). Pre
 
 The **Session History** panel at the bottom of the page tracks all jobs (with user accounts: your own jobs; administrators can choose whose jobs to see):
 * **Reload & Full Settings Restoration:** Clicking any history entry restores the document, output format, layout style, language direction, and page metrics.
+* **It opens in the tab you are on:** on the Translation tab a book opens there, also a translation you later made into an audiobook (showing its translation); on the Audiobook tab it opens there, with its audiobook if it has one, else ready to narrate. A book that was only narrated opens in the Translation tab ready to translate. On the Book Insights tab it becomes the document for the insights.
 * **Interrupted Job Resumption:** If an AI translation was paused, clicking **Start Translation** continues from the saved checkpoint (`.direct_ai_checkpoint.json`).
 * **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
 * **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete all jobs, books and results while preserving the translation cache. This can't be undone.

@@ -411,6 +411,9 @@ class ApiTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             _request(f"{API}/download/{fresh}/bilingual?format=pdf")
         self.assertEqual(ctx.exception.code, 404)
+        # the status says whether a translation exists (History opens a narrated translation in the Translation tab)
+        self.assertTrue(json.loads(_request(f"{API}/status/{self.job_id}")[2])["has_translation"])
+        self.assertFalse(json.loads(_request(f"{API}/status/{fresh}")[2])["has_translation"])
 
     def test_opds_catalogue(self):
         _, _, raw = _request(f"{API}/connections/opds", {})
