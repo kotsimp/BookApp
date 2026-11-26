@@ -2142,9 +2142,10 @@ async def translate_comic_document(
 
     # Pre-generate CBZ archive as well for seamless instant download
     try:
-        from backend.exporter import export_comic_archive
+        from backend.comic_build import build_in_child
         final_comic_cbz = out_dir / f"{stem}_translated_{target_lang}.cbz"
-        export_comic_archive(final_comic_pdf, final_comic_cbz, format="cbz")
+        # in a child process: drawing the pages here would stop the whole server meanwhile
+        await asyncio.to_thread(build_in_child, "cbz", final_comic_pdf, final_comic_cbz)
     except Exception as cbz_err:
         logger.warning(f"Could not pre-generate CBZ comic archive: {cbz_err}")
 

@@ -204,6 +204,7 @@ BookApp/
 │   ├── format_preserver.py  # In-place DOCX/EPUB formatting & styling preservation
 │   ├── exporter.py          # Exporter for DOCX, PDF, EPUB, TXT, CBZ, CBR
 │   ├── comic_archive.py     # Reads CBR uploads (7-Zip / bsdtar) and writes CBR exports (RAR)
+│   ├── comic_build.py       # Makes a comic's EPUB / CBZ / CBR in a child process (the server keeps answering)
 │   ├── pdf_text_names.py    # Makes text copied or searched from exported PDFs match the book
 │   ├── glossary.py          # Categorized custom terminology mapping & regex replacement
 │   ├── settings_manager.py  # Thread-safe persistent application settings

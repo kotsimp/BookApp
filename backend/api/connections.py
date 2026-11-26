@@ -179,17 +179,17 @@ async def _prepare_comics(todo) -> None:
     """A comic's EPUB and CBZ are made from every page (seconds to a minute on a small server), more than an
     e-reader waits for a download to start: made now, one at a time, they are ready when the book is tapped."""
     from backend import main
-    from backend.exporter import export_comic_archive, export_comic_epub
+    from backend.comic_build import build_in_child
     for job, src, target in todo:
         if str(target) in _PREPARING:
             continue
         _PREPARING.add(str(target))
-        try:
+        try:  # in a child process: drawing the pages in the server would stall every request, downloads too
             if target.suffix == ".epub":
-                await main.build_once(target, export_comic_epub, src, target, title=job.file_name or "Graphic Novel",
+                await main.build_once(target, build_in_child, "epub", src, target, title=job.file_name or "Graphic Novel",
                                       reading_direction=getattr(job, "reading_direction", None) or "ltr")
             else:
-                await main.build_once(target, export_comic_archive, src, target, format="cbz")
+                await main.build_once(target, build_in_child, "cbz", src, target)
         except Exception as e:
             logger.warning(f"E-reader catalogue: {target.name} could not be made in advance: {e}")
         finally:

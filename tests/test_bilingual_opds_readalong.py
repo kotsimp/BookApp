@@ -218,8 +218,9 @@ class CatalogueContentTests(unittest.TestCase):
 
 class ComicDownloadTests(unittest.TestCase):
     """A comic's CBZ renders every page (seconds to a minute on a small server): longer than an e-reader waits for a
-    download to start. It is made off the server's main loop, once per file, and in advance when the catalogue is
-    opened; a reader checking the file first (HEAD) waits for the one being made."""
+    download to start. It is made in a child process (drawing a page holds Python's lock: in a thread of the server
+    it stalled every request, downloads too, and KOReader stayed on "Downloading…"), once per file, and in advance
+    when the catalogue is opened; a reader checking the file first (HEAD) waits for the one being made."""
 
     def setUp(self):
         import asyncio
@@ -251,18 +252,17 @@ class ComicDownloadTests(unittest.TestCase):
                 mock.patch.object(main, "update_job"), mock.patch.object(main, "_validate_job_id"))
 
     def test_a_cbz_is_made_once_off_the_main_loop(self):
-        from backend import main, exporter
+        from backend import main, comic_build
         from fastapi import HTTPException
-        real, calls = exporter.export_comic_archive, []
+        real, calls = comic_build.build_in_child, []
 
-        def slow(*args, **kwargs):  # a worker thread: the server keeps answering meanwhile
-            calls.append(args[1])
-            time.sleep(0.3)
+        def counted(*args, **kwargs):  # the real child process
+            calls.append(args[2])
             return real(*args, **kwargs)
 
         async def scenario():
             out_dir, job, update, valid = self.patches()
-            with out_dir, job, update, valid, mock.patch.object(exporter, "export_comic_archive", slow):
+            with out_dir, job, update, valid, mock.patch.object(comic_build, "build_in_child", counted):
                 with self.assertRaises(HTTPException) as nothing:  # nothing made nor being made: as before
                     await main.download_output(self.request("HEAD"), "comic1", format="cbz")
                 self.assertEqual(nothing.exception.status_code, 404)
@@ -309,6 +309,28 @@ class ComicDownloadTests(unittest.TestCase):
             self.assertEqual(len(api._comics_to_prepare([self.job])), 2, "a newer translation: both made again")
         self.assertEqual(main._FILE_BUILDS, {}, "no build left behind")
 
+    def test_the_server_keeps_answering_while_a_comic_is_made(self):
+        """In a thread, each page drawn stopped the main loop for its whole time (0.28 s here, more on a small
+        server); in a child process the loop keeps its pace."""
+        from backend import main
+        d = self.out / "comic1"
+        ComicPageSizeTests.make_pdf(d / "Nebraska_translated_greek.pdf", [(2000, 3000, 72)] * 4, detail=True)
+
+        async def scenario():
+            out_dir, job, update, valid = self.patches()
+            with out_dir, job, update, valid:
+                build = self.asyncio.ensure_future(main.download_output(self.request("GET"), "comic1", format="epub"))
+                worst = 0.0
+                while not build.done():
+                    t = time.perf_counter()
+                    await self.asyncio.sleep(0.01)
+                    worst = max(worst, time.perf_counter() - t - 0.01)
+                return await build, worst
+
+        served, worst = self.asyncio.run(scenario())
+        self.assertEqual(Path(served.path).name, "Nebraska_translated_greek.epub")
+        self.assertLess(worst, 0.12, f"the main loop stalled {worst:.2f} s while the pages were drawn")
+
     def test_a_file_made_too_large_before_is_made_again(self):
         """Pages used to be rendered at 150 dpi of a page sized by the scan's pixels: 3107x4775 px or more, an EPUB
         of 600 MB or more that an e-reader never finished downloading (live). Such a file is made again."""
@@ -348,13 +370,19 @@ class ComicPageSizeTests(unittest.TestCase):
     """A comic's CBZ / EPUB pages keep their scan's own resolution (1600-2560 px on the long side), whatever
     resolution the scan says it has; a page with no picture is rendered at 150 dpi as before."""
 
-    def make_pdf(self, path, scans):
+    @staticmethod
+    def make_pdf(path, scans, detail=False):
         import io
-        from PIL import Image
+        from PIL import Image, ImageDraw
         doc = fitz.open()
         for w, h, dpi in scans:  # as the comic translator builds a PDF from a CBZ's images
             buf = io.BytesIO()
-            Image.new("RGB", (w, h), (200, 180, 160)).save(buf, "JPEG", **({"dpi": (dpi, dpi)} if dpi else {}))
+            img = Image.new("RGB", (w, h), (200, 180, 160))
+            if detail:  # line art, as slow to draw and to compress as a real page
+                draw = ImageDraw.Draw(img)
+                for k in range(0, w, 23):
+                    draw.line([(k, 0), (w - k, h)], fill=((k * 7) % 255, (k * 3) % 255, (k * 5) % 255), width=3)
+            img.save(buf, "JPEG", **({"dpi": (dpi, dpi)} if dpi else {}))
             with fitz.open("jpg", buf.getvalue()) as img_doc:
                 pdf_bytes = img_doc.convert_to_pdf()
             with fitz.open("pdf", pdf_bytes) as page_pdf:

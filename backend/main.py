@@ -43,6 +43,7 @@ from backend.tts_engine import (
     M4BExportError, M4BUnavailableError,
 )
 from backend.exporter import export_text
+from backend import comic_build
 from backend import format_sync
 from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
 from backend.ai_polisher import POLISH_STATUS
@@ -1037,25 +1038,24 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
                 page_range=page_range,
             )
             # Export to the user's requested comic format (PDF, CBZ, CBR, EPUB)
+            # (made in a child process: drawing the pages here would stop the whole server meanwhile)
             if fmt == "cbz":
                 cbz_path = out_dir / f"{base_name}.cbz"
                 if not cbz_path.exists():
-                    from backend.exporter import export_comic_archive
-                    export_comic_archive(final_comic_pdf, cbz_path, format="cbz")
+                    await build_once(cbz_path, comic_build.build_in_child, "cbz", final_comic_pdf, cbz_path)
                 final_path = cbz_path
                 job.output_path = str(cbz_path)
                 job.output_format = "cbz"
             elif fmt == "cbr":
                 cbr_path = out_dir / f"{base_name}.cbr"
-                from backend.exporter import export_comic_archive
-                export_comic_archive(final_comic_pdf, cbr_path, format="cbr")
+                await build_once(cbr_path, comic_build.build_in_child, "cbr", final_comic_pdf, cbr_path)
                 final_path = cbr_path
                 job.output_path = str(cbr_path)
                 job.output_format = "cbr"
             elif fmt == "epub":
                 epub_path = out_dir / f"{base_name}.epub"
-                from backend.exporter import export_comic_epub
-                export_comic_epub(final_comic_pdf, epub_path, title=job.file_name or "Graphic Novel", reading_direction=reading_dir)
+                await build_once(epub_path, comic_build.build_in_child, "epub", final_comic_pdf, epub_path,
+                                 title=job.file_name or "Graphic Novel", reading_direction=reading_dir)
                 final_path = epub_path
                 job.output_path = str(epub_path)
                 job.output_format = "epub"
@@ -1588,9 +1588,10 @@ _FILE_BUILDS: dict = {}  # file path -> the build of that file now running (asyn
 
 
 async def build_once(target: Path, build, *args, **kwargs) -> Path:
-    """A slow file build (a comic's CBZ renders every page as an image) in a worker thread, so the server keeps
-    answering, and once per file: a second request for the same file waits for the build already running. A
-    request that goes away does not stop it."""
+    """A slow file build (a comic's CBZ renders every page as an image) in a worker thread, once per file: a second
+    request for the same file waits for the build already running. A request that goes away does not stop it.
+    Comic builds pass comic_build.build_in_child, which only waits for a child process: drawing the pages in a
+    thread of the server holds Python's lock and stalled every request, downloads too."""
     key = str(target)
     running = _FILE_BUILDS.get(key)
     if running is None:
@@ -1719,16 +1720,14 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                     base_name = src_pdf.stem
                     reading_dir = getattr(job, "reading_direction", "ltr") if job else "ltr"
                     if fmt in ("cbz", "cbr"):
-                        from backend.exporter import export_comic_archive
                         target = out_dir / f"{base_name}.{fmt}"
-                        out_path = await build_once(target, export_comic_archive, src_pdf, target, format=fmt)
+                        out_path = await build_once(target, comic_build.build_in_child, fmt, src_pdf, target)
                         if job:
                             update_job(job_id, output_path=str(out_path), output_format=fmt, layout_mode="comic")
                     elif fmt == "epub":
-                        from backend.exporter import export_comic_epub
                         target = out_dir / f"{base_name}.epub"
                         out_path = await build_once(
-                            target, export_comic_epub, src_pdf, target,
+                            target, comic_build.build_in_child, "epub", src_pdf, target,
                             title=job.file_name if job else "Graphic Novel",
                             reading_direction=reading_dir or "ltr",
                         )
