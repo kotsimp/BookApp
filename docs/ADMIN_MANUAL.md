@@ -338,7 +338,7 @@ sudo rm -rf /opt/BookApp       # deletes every book, user and setting: back up f
 | `docker compose ps` shows `Restarting` or `unhealthy` | `docker logs --tail 100 bookapp` shows the reason. |
 | A comic job says `page(s) left untranslated` | `docker logs bookapp 2>&1 \| grep "left untranslated"` shows each page with its Vision error. A rate limit, an overloaded model or a timeout passes: translate the file again, and only those pages are sent again. |
 | A book job says `page(s) still contain text in the original language` | `docker logs bookapp 2>&1 \| grep -E "untranslated\(copied_words\|batch .* failed"` shows the pages the model handed back unchanged and how they were split. Translate the file again: refused answers are never cached, so those pages are really asked again. |
-| The app stops answering after an update, a restart or (with `run.py`) a code change | Older versions waited without limit for open pages' progress streams (SSE) to close before stopping. `run.py`, `start_bookapp.bat` and the Docker image now pass `--timeout-graceful-shutdown 5`: after 5 s the streams are closed, running jobs are marked interrupted (resume them), and the pages reconnect. On an older install restart it (`docker compose restart`, or stop and start `run.py`). |
+| The app stops answering after an update, a restart or (with `run.py`) a code change | Older versions waited without limit for open pages' progress streams (SSE) to close before stopping. `run.py`, `start_bookapp.bat`, the Docker image and the systemd service in [Ubuntu Server without Docker](#33-ubuntu-server-without-docker-python--systemd) now pass `--timeout-graceful-shutdown 5`: after 5 s the streams are closed, running jobs are marked interrupted (resume them), and the pages reconnect. On an older install restart it (`docker compose restart`, or stop and start `run.py`). A systemd service set up earlier waits 90 s at each restart until systemd stops it: add `--timeout-graceful-shutdown 5` to its `ExecStart` line (`sudo nano /etc/systemd/system/bookapp.service`), then `sudo systemctl daemon-reload && sudo systemctl restart bookapp`. |
 | Some files of a multi-file upload don't upload | The line above the queue lists each one with its reason. `Δεν ήταν δυνατή η αποθήκευση…` names the disk error (`docker logs bookapp 2>&1 \| grep "could not be stored"`): free space under `./temp`, or the folder's permissions. A `413` comes from a file over 250 MB, or from a reverse proxy's body limit (`client_max_body_size 250M;` in nginx). |
 | A Maximum-quality job says `The second AI pass … did not complete` | The reason is in brackets (`quota_exhausted`, `revision_unusable`, …) and in `revision_report`; `docker logs bookapp 2>&1 \| grep -i revision` shows it. The exported book is the first-pass translation. |
 | `failed to solve: DeadlineExceeded … load metadata for docker.io/library/python:3.11-slim` | Docker Hub didn't answer in time, so the build stopped and the old container keeps running unchanged. Run the command again later. A changed `.env` (port, sign-in) needs no build: `docker compose up -d` applies it with the image you already have. |
@@ -493,7 +493,7 @@ Group=bookapp
 WorkingDirectory=/opt/BookApp
 Environment=PYTHONUNBUFFERED=1
 Environment=BOOKAPP_AUTH=1
-ExecStart=/opt/BookApp/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --log-level info
+ExecStart=/opt/BookApp/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5 --log-level info
 Restart=always
 RestartSec=5
 
