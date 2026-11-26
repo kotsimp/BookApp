@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.14.0" />
-  <script src="i18n.js?v=1.6.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.15.0" />
+  <script src="i18n.js?v=1.7.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -1110,6 +1110,12 @@
         <button type="button" class="btn-sm btn-outline" id="ins-more-recap" onclick="runExtraInsight('recap')" disabled>🧭 Ανακεφαλαίωση</button>
         <span class="sample-hint">Γράφεται μόνο από όσα έχετε διαβάσει ως εκεί: τίποτα από τη συνέχεια.</span>
       </div>
+      <div class="ins-recap-row" id="ins-chapter-row">
+        <span class="ins-recap-title">📖 Ένα κεφάλαιο</span>
+        <select class="form-select ins-chapter-select" id="ins-chapter-select" aria-label="Κεφάλαιο" translate="no"></select>
+        <button type="button" class="btn-sm btn-outline" id="ins-more-chapter" onclick="runExtraInsight('chapter')" disabled>📖 Αναλυτικά</button>
+        <span class="sample-hint">Μόνο το κεφάλαιο που διαλέγετε, αναλυτικά: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει.</span>
+      </div>
       <div class="ins-ask">
         <label class="form-label" for="ins-ask-input">💬 Ρωτήστε το βιβλίο</label>
         <div class="ins-ask-row">
@@ -1569,8 +1575,8 @@
         <h4>💡 Book Insights</h4>
         <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου. Στο <strong>🔎 Περισσότερα για το βιβλίο</strong> διαλέγετε τη <strong>Γλώσσα κειμένου</strong> και ένα από τα παρακάτω:</p>
         <ul>
-          <li><strong>👥 Πρόσωπα &amp; όροι</strong>: ποιος είναι ποιος και οι βασικοί όροι, με τη σελίδα όπου πρωτοεμφανίζονται. Ονόματα που δεν υπάρχουν στο βιβλίο αφαιρούνται. Με <strong>➕ Ονόματα στο Γλωσσάρι</strong> η ελληνική τους γραφή περνά στο Γλωσσάρι, ώστε η μετάφραση να τα γράφει παντού ίδια.</li>
-          <li><strong>📑 Ανά κεφάλαιο</strong>: λίγες γραμμές για κάθε κεφάλαιο ή μέρος του βιβλίου, με τις σελίδες του. Ένα πολύ μεγάλο μέρος χωρίζεται σε κομμάτια, π.χ. «(2/4)».</li>
+          <li><strong>👥 Πρόσωπα &amp; όροι</strong>: ποιος είναι ποιος και οι βασικοί όροι, με τη σελίδα όπου πρωτοεμφανίζονται. Ονόματα που δεν υπάρχουν στο βιβλίο αφαιρούνται, όπως και ο συγγραφέας και όσοι μόνο παρατίθενται (π.χ. σε μότο). Με <strong>➕ Ονόματα στο Γλωσσάρι</strong> η ελληνική τους γραφή περνά στο Γλωσσάρι, ώστε η μετάφραση να τα γράφει παντού ίδια.</li>
+          <li><strong>📑 Ανά κεφάλαιο</strong>: λίγες γραμμές για κάθε κεφάλαιο ή μέρος του βιβλίου, με τις σελίδες του. Ένα πολύ μεγάλο μέρος χωρίζεται σε κομμάτια, π.χ. «(2/4)». Με <strong>📖 Ένα κεφάλαιο</strong> διαλέγετε ένα μόνο κεφάλαιο και πατάτε <strong>📖 Αναλυτικά</strong>: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει.</li>
           <li><strong>🧭 Η ιστορία ως τώρα</strong>: γράψτε ως ποια σελίδα (ή κεφάλαιο) έχετε διαβάσει και πατήστε <strong>🧭 Ανακεφαλαίωση</strong>. Γράφεται μόνο από αυτές τις σελίδες.</li>
           <li><strong>📣 Οπισθόφυλλο</strong>: κείμενο που δεν αποκαλύπτει το τέλος. Γίνεται και η περιγραφή του βιβλίου στον κατάλογο του <strong>📲 Συσκευές</strong>.</li>
           <li><strong>❝ Αποσπάσματα</strong>: σημαντικά αποσπάσματα με τη σελίδα τους. Όποιο δεν βρίσκεται λέξη προς λέξη στο βιβλίο αφαιρείται.</li>
@@ -1626,7 +1632,7 @@
           </details>
           <details>
             <summary>Μπορώ να κάνω ερωτήσεις για ένα βιβλίο;</summary>
-            <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο. Κάθε ερώτηση στέλνει όλο το βιβλίο (ή, σε πολύ μεγάλο, τα σχετικά μέρη του) σε ένα μεγάλο αίτημα Gemini.</p>
+            <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο. Κάθε ερώτηση στέλνει όλο το βιβλίο σε ένα μεγάλο αίτημα Gemini. Από ένα πολύ μεγάλο βιβλίο στέλνονται τα σχετικά μέρη του: η ερώτηση γίνεται πρώτα λέξεις αναζήτησης στη γλώσσα του βιβλίου, οπότε μπορείτε να ρωτάτε στα ελληνικά για ένα αγγλικό βιβλίο. Αν έχετε φτιάξει το «Ανά κεφάλαιο», στέλνεται κι αυτό ως επισκόπηση.</p>
           </details>
           <details>
             <summary>Πώς βρίσκει τα κεφάλαια το «Ανά κεφάλαιο»;</summary>
@@ -1638,7 +1644,7 @@
           </details>
           <details>
             <summary>Πόσα αιτήματα Gemini χρειάζονται τα Book Insights;</summary>
-            <p>Ένα σύντομο βιβλίο θέλει λίγα. Ένα μεγάλο μυθιστόρημα διαβάζεται ενότητα προς ενότητα, οπότε θέλει περισσότερα: π.χ. περίπου 6 για το «Ανά κεφάλαιο» ενός βιβλίου 300 σελίδων. Κάθε ερώτηση στο βιβλίο είναι ένα μεγάλο αίτημα. Τα αποτελέσματα κρατιούνται με το βιβλίο, οπότε όταν τα ξανανοίγετε δεν ξοδεύεται κανένα αίτημα.</p>
+            <p>Ένα σύντομο βιβλίο θέλει λίγα. Ένα μεγάλο μυθιστόρημα διαβάζεται ενότητα προς ενότητα, οπότε θέλει περισσότερα: π.χ. περίπου 6 για το «Ανά κεφάλαιο» ενός βιβλίου 300 σελίδων. Κάθε ερώτηση στο βιβλίο είναι ένα μεγάλο αίτημα. Με πολλά κλειδιά Gemini οι ενότητες διαβάζονται ταυτόχρονα, δύο ανά κλειδί: ίδια αιτήματα, πολύ λιγότερος χρόνος. Τα αποτελέσματα κρατιούνται με το βιβλίο, οπότε όταν τα ξανανοίγετε δεν ξοδεύεται κανένα αίτημα.</p>
           </details>
           <details>
             <summary>Μπορώ να διαβάζω τα βιβλία σε e-reader ή tablet;</summary>
@@ -1692,8 +1698,8 @@
         <h4>💡 Book Insights</h4>
         <p>A short summary or a full synopsis of a book. Under <strong>🔎 More about the book</strong> you choose the <strong>Text language</strong> and one of these:</p>
         <ul>
-          <li><strong>👥 Characters &amp; terms</strong>: who is who and the key terms, with the page where each first appears. Names the book does not contain are dropped. <strong>➕ Names to the Glossary</strong> puts their Greek spelling in the Glossary, so a translation writes them the same everywhere.</li>
-          <li><strong>📑 Chapter by chapter</strong>: a few lines for each chapter or part of the book, with its pages. A very long part comes in pieces, e.g. “(2/4)”.</li>
+          <li><strong>👥 Characters &amp; terms</strong>: who is who and the key terms, with the page where each first appears. Names the book does not contain are dropped, as are the author and people only quoted (e.g. in epigraphs). <strong>➕ Names to the Glossary</strong> puts their Greek spelling in the Glossary, so a translation writes them the same everywhere.</li>
+          <li><strong>📑 Chapter by chapter</strong>: a few lines for each chapter or part of the book, with its pages. A very long part comes in pieces, e.g. “(2/4)”. With <strong>📖 One chapter</strong> you choose just one chapter and press <strong>📖 In detail</strong>: what happens, who appears, how it ends.</li>
           <li><strong>🧭 The story so far</strong>: write the page (or chapter) you have read up to and press <strong>🧭 Recap</strong>. It is written from those pages only.</li>
           <li><strong>📣 Back-cover blurb</strong>: a text that keeps the ending secret. It is also the book's description in the <strong>📲 Devices</strong> catalogue.</li>
           <li><strong>❝ Quotes</strong>: memorable passages with their page. Any that is not in the book word for word is dropped.</li>
@@ -1749,7 +1755,7 @@
           </details>
           <details>
             <summary>Can I ask questions about a book?</summary>
-            <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book. Each question sends the whole book (or, for a very long one, its related parts) in one large Gemini request.</p>
+            <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book. Each question sends the whole book in one large Gemini request. A very long book sends its related parts: the question first becomes search words in the book's language, so you can ask in Greek about an English book. If you made “Chapter by chapter”, it goes along as an overview.</p>
           </details>
           <details>
             <summary>How does “Chapter by chapter” find the chapters?</summary>
@@ -1761,7 +1767,7 @@
           </details>
           <details>
             <summary>How many Gemini requests do Book Insights need?</summary>
-            <p>A short book needs a few. A long novel is read section by section, so it needs more: e.g. about 6 for “Chapter by chapter” on a 300-page book. Each question to the book is one large request. Results are kept with the book, so opening them again costs no requests.</p>
+            <p>A short book needs a few. A long novel is read section by section, so it needs more: e.g. about 6 for “Chapter by chapter” on a 300-page book. Each question to the book is one large request. With several Gemini keys the sections are read at the same time, two per key: the same requests in much less time. Results are kept with the book, so opening them again costs no requests.</p>
           </details>
           <details>
             <summary>Can I read the books on an e-reader or tablet?</summary>
@@ -1858,7 +1864,7 @@
 </div>
 
 <script src="app.js?v=2.20.0"></script>
-<script src="insights.js?v=2.12.0"></script>
+<script src="insights.js?v=2.13.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

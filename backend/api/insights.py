@@ -33,6 +33,7 @@ class InsightsGenerateRequest(BaseModel):
     language: Optional[str] = None        # 'greek' | 'english' | None/'auto' (= document language)
     api_key: Optional[str] = None
     until: Optional[int] = None           # recap: the story so far up to this page (chapter, for an EPUB)
+    chapter: Optional[int] = None         # chapter: the one chapter, its number in the analysis' "chapters"
 
 
 class InsightsAskRequest(BaseModel):
@@ -146,12 +147,16 @@ async def insights_analysis(job_id: str):
     info["has_api_key"] = bool(resolve_gemini_api_key(None))
     info["file_name"] = job.file_name
     info["existing"] = list_insights(_job_output_dir(job_id))
-    try:  # the page range for "the story so far" (chapters, for an EPUB)
-        from backend.insights_more import extract_pages
+    try:  # the page range for "the story so far" (chapters, for an EPUB) and the chapters to choose one from
+        from backend.insights_more import extract_pages, detect_chapters, pdf_outline
         pages, unit = await asyncio.to_thread(extract_pages, job.file_path, job.file_type)
         info.update(first_page=pages[0][0] if pages else None, last_page=pages[-1][0] if pages else None, unit=unit)
+        found = await asyncio.to_thread(
+            lambda: detect_chapters(pages, unit, pdf_outline(job.file_path, job.file_type)) if pages else [])
+        info["chapters"] = [{"n": c["n"], "title": c["title"], "first": c["first"], "last": c["last"],
+                             "piece": list(c["piece"]) if c.get("piece") else None} for c in found]
     except Exception:
-        info.update(first_page=None, last_page=None, unit="page")
+        info.update(first_page=None, last_page=None, unit="page", chapters=[])
     if await asyncio.to_thread(needs_reading, job.file_path, job.file_type, job.file_name or ""):
         # a scanned book: its text is read from the page images first (Gemini Vision), when a summary is asked for
         info["needs_scan_reading"] = True
@@ -256,6 +261,8 @@ async def _insights_generate_extra(req: InsightsGenerateRequest):
         raise _insights_http_error(InsightsError("invalid_request"))
     if insight_type == "recap" and (req.until is None or req.until < 1):
         raise HTTPException(400, "Choose the page (or chapter) the story so far reaches.")
+    if insight_type == "chapter" and (req.chapter is None or req.chapter < 1):
+        raise HTTPException(400, "Choose a chapter.")
     api_key = resolve_gemini_api_key(req.api_key)
     if not api_key:
         raise _insights_http_error(InsightsError("no_api_key", http_status=401))
@@ -268,9 +275,10 @@ async def _insights_generate_extra(req: InsightsGenerateRequest):
             task.progress, task.step = int(pct), step
         await _scanned_book_read(job, api_key, _prog)
         return await generate_extra(job.file_path, job.file_type, insight_type, None if lang == "auto" else lang,
-                                    api_key, title=title, job_output_dir=out_dir, progress=_prog, until=req.until)
+                                    api_key, title=title, job_output_dir=out_dir, progress=_prog, until=req.until,
+                                    chapter=req.chapter)
 
-    task_lang = lang if insight_type != "recap" else f"{lang}@{req.until}"
+    task_lang = {"recap": f"{lang}@{req.until}", "chapter": f"{lang}#{req.chapter}"}.get(insight_type, lang)
     task, duplicate = start_task(req.job_id, "generate", insight_type, task_lang, _run)
     return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate, "insight_type": insight_type}
 

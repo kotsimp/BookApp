@@ -496,6 +496,27 @@ class TestGeminiDiagnosticsAndRotation(unittest.TestCase):
                                              bypass_cache=True))
         self.assertEqual([k for k, _ in calls], keys, "three requests, three keys")
 
+    def test_13_more_requests_at_once_with_more_keys(self):
+        """Two requests in flight per usable pool key, never fewer than a task's usual number nor more than its cap;
+        a key from outside the pool (not rotated) and a task held to one request keep theirs."""
+        from backend.gemini_key_pool import parallel_requests
+        GeminiKeyPool.set_keys(["AQ.Par1"])
+        self.assertEqual(parallel_requests(5, 10), 5, "one key: as before")
+        self.assertEqual(parallel_requests(2, 6), 2)
+        keys = [f"AQ.Par{i}" for i in range(1, 7)]
+        GeminiKeyPool.set_keys(keys)
+        self.assertEqual(parallel_requests(5, 10), 10)
+        self.assertEqual(parallel_requests(2, 6), 6)
+        self.assertEqual(parallel_requests(3, 6, "AQ.Par2"), 6, "a pool key: the requests rotate")
+        self.assertEqual(parallel_requests(5, 10, "AQ.Outside"), 5, "a key from outside the pool is not rotated")
+        self.assertEqual(parallel_requests(1, 6), 1, "one at a time stays so")
+        for k in keys[:4]:
+            GeminiKeyPool.mark_key_exhausted(k, 3600)
+        self.assertEqual(parallel_requests(5, 10), 5, "two usable keys")
+        self.assertEqual(parallel_requests(2, 6), 4)
+        GeminiKeyPool.set_keys([])
+        self.assertEqual(parallel_requests(5, 10), 5, "no pool")
+
     def test_12_best_model_on_every_key_before_a_weaker_one(self):
         """Key 1 used up the best model's daily allowance: the request uses the best model on key 2, not a weaker
         model on key 1. Only when no key has it left does a weaker model take over."""

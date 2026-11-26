@@ -1505,6 +1505,7 @@ ctx.toast = () => {};
             self.skipTest("Node.js not available in PATH")
         index = Path("frontend/index.html").read_text(encoding="utf-8")
         for el_id in ("ins-more-card", "ins-more-lang", "ins-more-characters", "ins-more-chapter_summaries",
+                      "ins-chapter-select", "ins-more-chapter",
                       "ins-more-blurb", "ins-more-quotes", "ins-more-study_guide", "ins-more-timeline", "ins-more-recap",
                       "ins-recap-until", "ins-ask-input", "ins-ask-btn", "ins-answers", "ins-glossary-btn"):
             self.assertIn(f'id="{el_id}"', index)
@@ -1538,11 +1539,36 @@ vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8'), ctx);
 ctx.toast = () => {};
 (async () => {
   // readiness
-  vm.runInContext("insState.jobId = 'B1'; insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true };", ctx);
+  vm.runInContext("insState.jobId = 'B1'; insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true, chapters: [] };", ctx);
   ctx.updateInsightsButtons();
   for (const t of ['characters', 'chapter_summaries', 'blurb', 'quotes', 'study_guide', 'timeline', 'recap']) {
     assert.strictEqual(getEl(`ins-more-${t}`).disabled, false, t);
   }
+  assert.strictEqual(getEl('ins-more-chapter').disabled, true, 'no chapters found yet: nothing to choose');
+
+  // one chapter: the list as "Chapter by chapter" finds it, and the chosen one is asked
+  const chapters = [{ n: 1, title: 'Prologue', first: 6, last: 10, piece: null },
+    { n: 2, title: 'Theseus', first: 11, last: 36, piece: [1, 4] }, { n: 3, title: null, first: 37, last: 37, piece: null }];
+  vm.runInContext(`insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true, chapters: ${JSON.stringify(chapters)} };`, ctx);
+  ctx.setupChapterSelect(vm.runInContext('insState.analysis', ctx));
+  ctx.updateInsightsButtons();
+  assert.strictEqual(getEl('ins-more-chapter').disabled, false);
+  const opts = getEl('ins-chapter-select').innerHTML;
+  assert.ok(opts.includes('<option value="2">2. Theseus (1/4) (11–36)</option>'), opts);
+  assert.ok(opts.includes('<option value="3">3. #3 (37)</option>'), opts);
+  responses['/insights/generate'] = { task_id: 'C1' };
+  responses['/insights/tasks/C1'] = { status: 'done', progress: 100,
+    result: { insight_type: 'chapter', language: 'greek', label: 'Κεφάλαιο 2: Θησέας (1/4)', title: 'Book', text: '## 2. Θησέας (1/4)\nΚείμενο.', word_count: 1 } };
+  getEl('ins-chapter-select').value = '2';
+  await ctx.runExtraInsight('chapter');
+  const chosen = JSON.parse(calls.filter((c) => c.url.endsWith('/insights/generate')).pop().opts.body);
+  assert.deepStrictEqual([chosen.insight_type, chosen.chapter], ['chapter', 2]);
+  getEl('ins-chapter-select').value = '';
+  const generated = () => calls.filter((c) => c.url.endsWith('/insights/generate')).length;
+  const sent = generated();
+  await ctx.runExtraInsight('chapter');
+  assert.strictEqual(generated(), sent, 'no request without a chapter');
+  vm.runInContext("insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true };", ctx);
   assert.strictEqual(getEl('ins-ask-btn').disabled, false);
   vm.runInContext("insState.analysis = { has_api_key: false, can_summary: true };", ctx);
   ctx.updateInsightsButtons();

@@ -93,22 +93,34 @@ class FakeGemini:
         self.mode = "ok"
         self.dropped_chapter = False
         self.wrong_order = False
+        self.delay = None  # content -> seconds: later sections may answer first
+        self.in_flight = 0
+        self.most_in_flight = 0
 
     def lines(self, greek: bool, n: int) -> str:
         pool = GR_LINES if greek else EN_LINES
         return " ".join(pool[i % len(pool)] for i in range(n))
 
     async def __call__(self, content, api_key, system_prompt, session=None, temperature=0.25, exclude_models=None,
-                       bypass_cache=False, meta_out=None, cache_gate=None):
+                       bypass_cache=False, meta_out=None, cache_gate=None, prefer_models=None):
         from backend.ai_polisher import DailyQuotaExhaustedError
         assert cache_gate is not None and cache_gate("x") and not cache_gate("  ")
         sp = system_prompt
         self.calls.append((sp, content))
+        if self.delay:
+            self.in_flight += 1
+            self.most_in_flight = max(self.most_in_flight, self.in_flight)
+            await asyncio.sleep(self.delay(content))
+            self.in_flight -= 1
         if self.mode == "quota":
             raise DailyQuotaExhaustedError("⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier).")
         greek = "Modern Greek" in sp
         if self.mode == "wrong_lang":
             greek = not greek
+        if "List the words to look for" in sp:
+            self.searched = (sp, content)
+            hit = "ημερολόγιο" in content
+            return json.dumps({"terms": ["Elena", "logbook", "hid", "stairs"] if hit else []})
         if "research notes" in sp:
             return "- " + " ".join(content.split()[:200])
         if "proofreader" in sp:
@@ -124,6 +136,14 @@ class FakeGemini:
                        "role": "Ένας καπετάνιος." if greek else "A captain.", "relations": ""}]
             terms = [{"term": "harbour council", "term_out": "λιμενικό συμβούλιο" if greek else "harbour council",
                       "definition": "Η αρχή του λιμανιού." if greek else "The authority of the harbour."}]
+            english = "A harbour pilot from the city who works for the Coast Guard and the Port Authority of Avra."
+            if self.mode in ("latin_role", "latin_all"):  # a weaker model left names in Latin script (live finding)
+                people[1]["role"] = english
+            if self.mode == "latin_all":
+                people[0]["role"] = people[0]["relations"] = terms[0]["definition"] = english
+            if self.mode == "both_ways":  # named as a person and as a term
+                people.append({"name": "Harbour Council", "name_out": "Λιμενικό Συμβούλιο", "role": "Το συμβούλιο.",
+                               "relations": ""})
             return "```json\n" + json.dumps({"people": people, "terms": terms}, ensure_ascii=False) + "\n```"
         if "summarise EACH chapter" in sp:
             out = []
@@ -135,6 +155,9 @@ class FakeGemini:
                 out.append({"n": int(n), "title": (f"Chapter {n}" if english_title else f"Κεφάλαιο {n}"),
                             "summary": self.lines(greek, 2)})
             return json.dumps({"chapters": out}, ensure_ascii=False)
+        if "detailed account of the ONE chapter" in sp:
+            heading = "## Το λιμάνι" if greek else "## The harbour"
+            return heading + "\n\n" + self.lines(greek, 9) + "\n\n" + self.lines(greek, 6)
         if "THE STORY SO FAR" in sp or "BACK-COVER BLURB" in sp:
             return self.lines(greek, 4 if "BLURB" in sp else 6)
         if "memorable, meaningful passages" in sp:
@@ -290,6 +313,79 @@ class ModuleTests(unittest.TestCase):
         self.assertTrue(any("(2/" in sp_c for _, sp_c in FAKE.calls), "the model is told which piece it reads")
         self.assertNotIn("Acknowledgments", rec["text"])
 
+    def test_sections_at_once_give_the_same_result_as_one_by_one(self):
+        """A long book's sections (and chapter groups) are asked a few at a time when the key pool allows it; the
+        answers are merged in the book's order, so every kind comes out exactly as when asked one by one."""
+        self.book = write_book(book_text(chapters=8, paras_per_chapter=30), self.dir, "long.txt")
+        whole = im.page_sections
+
+        def first_scene(content):
+            m = re.search(r"\(Scene (\d+)\.", content)
+            return int(m.group(1)) if m else 0
+
+        def results(parallel):
+            FAKE.reset()
+            FAKE.delay = lambda content: max(0.0, 0.08 - 0.01 * first_scene(content))  # the book's start answers last
+            with mock.patch("backend.gemini_key_pool.parallel_requests", lambda *a, **k: parallel), \
+                    mock.patch.object(im, "page_sections", lambda pages, max_chars=None: whole(pages, 6000)), \
+                    mock.patch.object(im, "CHAPTER_BATCH_CHARS", 6000):
+                out = {kind: run(im.generate_extra(str(self.book), "txt", kind, "greek", "fake-key", title="lighthouse"))
+                       for kind in ("characters", "chapter_summaries", "quotes", "timeline")}
+            return out, FAKE.most_in_flight
+
+        one_by_one, most = results(1)
+        self.assertEqual(most, 1)
+        at_once, most = results(4)
+        self.assertGreater(most, 1, "requests in flight together")
+        self.assertLessEqual(most, 4)
+        for kind in one_by_one:
+            self.assertEqual(at_once[kind]["text"], one_by_one[kind]["text"], kind)
+            self.assertEqual(at_once[kind]["data"], one_by_one[kind]["data"], kind)
+            self.assertEqual(at_once[kind]["warnings"], one_by_one[kind]["warnings"], kind)
+        self.assertGreater(len(at_once["quotes"]["data"]["quotes"]), 1)
+
+    def test_each_keeps_the_order_and_stops_on_an_error(self):
+        ctx = im._Ctx(pages=[], unit="page", full="", lang="greek", src_lang="english", api_key="k", session=None,
+                      title="t", words=0)
+        steps, finished = [], []
+        ctx.progress = lambda pct, text: steps.append((pct, text))
+        mode = {"now": "ok"}
+        flight = {"now": 0, "most": 0}
+
+        async def ask(i):
+            if mode["now"] == "quota" and i == 0:
+                raise bi.InsightsError("quota_exhausted")
+            flight["now"] += 1
+            flight["most"] = max(flight["most"], flight["now"])
+            try:
+                await asyncio.sleep(0.01 * (5 - i))
+            finally:
+                flight["now"] -= 1
+            if mode["now"] == "rejected" and i == 2:
+                raise bi.InsightsError("ai_output_rejected", "unreadable", http_status=502)
+            finished.append(i)
+            return i * 10
+
+        def each(**kw):
+            finished.clear()
+            return run(im._each(ctx, list(range(5)), ask, "Τμήμα {}/{}…", 10, 80, **kw))
+
+        with mock.patch("backend.gemini_key_pool.parallel_requests", lambda *a, **k: 3):
+            self.assertEqual(each(), [0, 10, 20, 30, 40], "in the items' order")
+            self.assertNotEqual(finished, sorted(finished), "although they finished out of order")
+            self.assertEqual(flight["most"], 3, "no more than allowed at once")
+            self.assertEqual(steps[0], (10, "Τμήμα 0/5…"))
+            self.assertEqual(steps[-1], (90, "Τμήμα 5/5…"))
+            mode["now"] = "rejected"
+            self.assertEqual(each(skip_rejected=True), [0, 10, None, 30, 40], "an unreadable answer is skipped")
+            with self.assertRaises(bi.InsightsError):
+                each()
+            mode["now"] = "quota"
+            with self.assertRaises(bi.InsightsError) as err:
+                each(skip_rejected=True)
+            self.assertEqual(err.exception.code, "quota_exhausted", "any other error stops the run")
+            self.assertEqual(finished, [], "the requests still running are cancelled")
+
     def test_pdf_bookmarks_and_a_refrain_that_is_no_contents_list(self):
         import pymupdf
         doc = pymupdf.open()
@@ -335,6 +431,74 @@ class ModuleTests(unittest.TestCase):
         english = self.make("characters", "english")
         self.assertEqual(im.glossary_items(english), [], "no Greek spellings in an English list")
 
+    def test_characters_only_from_the_work_itself(self):
+        """Live finding (Blindsight): the title page, the contents and the epigraphs put the author and the quoted
+        writers among the people. Only the work's own pages are read now, without epigraph attributions."""
+        text = self.novel().read_text(encoding="utf-8")
+        text = text.replace("Prologue\n\n", "Prologue\n\n“The sea keeps every promise.”\n—Ernest Hemingway\n\n", 1)
+        text += ("\n=== PAGE 17 ===\nNotes and References\n\n"
+                 + "Professor Ada Lovelace described the lamps of the old lighthouses in a paper of 1843. " * 6)
+        self.book = write_book(text, self.dir, "epigraphs.txt")
+        rec = self.make("characters")
+        sent = "\n".join(c for sp, c in FAKE.calls if "list the PEOPLE" in sp)
+        self.assertIn("(Scene 0.)", sent)
+        self.assertIn("The sea keeps every promise", sent, "the epigraph's words stay")
+        for left_out in ("A. Writer", "Ernest Hemingway", "My thanks", "Ada Lovelace"):
+            self.assertNotIn(left_out, sent, left_out)
+        self.assertTrue(all("Leave out the book's author" in sp for sp, c in FAKE.calls if "list the PEOPLE" in sp))
+        self.assertTrue(all(p["first"] >= 3 for p in rec["data"]["people"]), "first pages within the work")
+        self.assertEqual(rec["version"], im.record_version("characters"))
+        self.assertNotEqual(im.record_version("characters"), im.EXTRA_VERSION, "only the characters are made again")
+        self.assertEqual(im.record_version("quotes"), im.EXTRA_VERSION)
+        pages, unit = im.extract_pages(str(self.book), "txt")
+        self.assertIn("Notes and References", [c["title"] for c in im.detect_chapters(pages, unit)],
+                      "chapter by chapter still summarises the notes")
+        for line in ("—Ted Bundy", "— Ian Anderson, Catfish Rising", "—1 Samuel 10:6", "—Emerson M. Pugh",
+                     "—Τεντ Μπάντι", "—Α΄ Βασιλέων 10:6", "—Jesus the Nazorean"):
+            self.assertTrue(im.is_attribution(line), line)
+        for line in ("— Ναι.", "— Πού πας; ρώτησε ο Νίκος.", "—and turned—", "—vampires—", "— Νίκο!",
+                     "Ted Bundy", "— Ελένη, άκουσέ με", "— Μα τι λες"):
+            self.assertFalse(im.is_attribution(line), line)
+
+    def test_characters_with_a_description_in_latin_script(self):
+        """A description left in English no longer rejects the whole list (its cached answers would reject it on
+        every try): that description is left out with a note, and the person stays."""
+        FAKE.mode = "latin_role"
+        rec = self.make("characters")
+        self.assertEqual([p["name"] for p in rec["data"]["people"]], ["Elena Markou", "Nikos"])
+        self.assertEqual(rec["data"]["people"][1]["role"], "")
+        self.assertIn("- **Νίκος** (Nikos) · σ. 1", rec["text"])
+        self.assertEqual(rec["warnings"], ["1 description(s) in another language or script left out"])
+        self.assertNotIn("Coast Guard", rec["text"])
+        self.assertIn("Η φύλακας του φάρου", rec["text"], "the others keep theirs")
+        FAKE.mode = "latin_all"
+        rec = run(im.generate_extra(str(self.book), "txt", "characters", "greek", "fake-key", title="lighthouse"))
+        self.assertEqual(rec["warnings"], ["3 description(s) in another language or script left out"])
+        self.assertEqual(im.glossary_items(rec)[:2], [("Elena Markou", "Ελένη Μάρκου"), ("Nikos", "Νίκος")],
+                         "the names still go to the Glossary")
+
+    def test_characters_short_forms_and_names_given_both_ways(self):
+        """Live finding (Blindsight): "Isaac Szpindel", "Szpindel" and "Isaac" were three people, and the ship
+        "Theseus" was a person and a term. Short forms go into the one fullest name; a name given both ways is a term."""
+        people = [("Isaac Szpindel", "Άιζακ Σπίντελ", "Βιολόγος."), ("Szpindel", "Σπίντελ", "Ο βιολόγος του πληρώματος."),
+                  ("Isaac", "Άιζακ", ""), ("Major Amanda Bates", "Ταγματάρχης Αμάντα Μπέιτς", ""),
+                  ("Amanda Bates", "Αμάντα Μπέιτς", "Στρατιωτικός."), ("Bates", "Μπέιτς", ""), ("Major", "Ταγματάρχης", ""),
+                  ("John Smith", "Τζον Σμιθ", ""), ("John Doe", "Τζον Ντο", ""), ("John", "Τζον", "")]
+        store = {n.casefold(): {"name": n, "name_out": o, "role": r, "relations": ""} for n, o, r in people}
+        im._fold_short_names(store, "name", "name_out", ("role", "relations"))
+        self.assertEqual(sorted(store), ["isaac szpindel", "john", "john doe", "john smith", "major amanda bates"],
+                         "'John' of two Johns stays")
+        self.assertEqual(store["isaac szpindel"]["role"], "Ο βιολόγος του πληρώματος.", "the fullest description")
+        self.assertEqual(sorted(store["isaac szpindel"]["aka"]), [("Isaac", "Άιζακ"), ("Szpindel", "Σπίντελ")])
+        self.assertEqual(len(store["major amanda bates"]["aka"]), 3)
+        pairs = im.glossary_items({"data": {"people": list(store.values()), "terms": []}})
+        self.assertIn(("Szpindel", "Σπίντελ"), pairs, "short forms go to the Glossary too")
+        self.assertIn(("Isaac Szpindel", "Άιζακ Σπίντελ"), pairs)
+        FAKE.mode = "both_ways"
+        rec = self.make("characters")
+        self.assertNotIn("harbour council", [p["name"].casefold() for p in rec["data"]["people"]])
+        self.assertIn("harbour council", [t["term"] for t in rec["data"]["terms"]])
+
     def test_chapter_summaries_and_a_missed_chapter(self):
         FAKE.mode = "drop_chapter"
         rec = self.make("chapter_summaries")
@@ -344,6 +508,30 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(bi._heading_count(rec["text"]), 4)
         self.assertRegex(rec["text"], r"## 1\. Κεφάλαιο 1\n.+ \(σ\. 1(–\d+)?\)")
         self.assertEqual(rec["warnings"], [])
+
+    def test_one_chapter_in_detail(self):
+        rec = self.make("chapter", chapter=2)
+        self.assertEqual(rec["chapter"], 2)
+        self.assertEqual(rec["data"]["chapter"]["title"], "Το λιμάνι")
+        self.assertTrue(rec["text"].startswith("## 2. Το λιμάνι\n"), rec["text"][:40])
+        self.assertRegex(rec["text"], r"\(σ\. \d+(–\d+)?\)$")
+        self.assertEqual(rec["label"], "Κεφάλαιο 2: Το λιμάνι")
+        given = [c for sp, c in FAKE.calls if "ONE chapter" in sp][0]
+        self.assertIn("(Scene 2.1.)", given, "the chapter's own text")
+        self.assertNotIn("(Scene 1.", given)
+        self.assertNotIn("(Scene 3.", given, "nothing from the chapters after it")
+        self.assertTrue(self.make("chapter", chapter=2).get("reused"), "kept: asked again, no request")
+        third = self.make("chapter", chapter=3)
+        self.assertFalse(third.get("reused"), "another chapter is made")
+        self.assertEqual(third["chapter"], 3)
+        for bad in (None, 0, 99):
+            with self.assertRaises(bi.InsightsError):
+                self.make("chapter", chapter=bad)
+        # a piece of a long part keeps its number
+        self.book = self.novel()
+        with mock.patch.object(im, "CHAPTER_MAX_CHARS", 6000), mock.patch.object(im, "PIECE_CHARS", 3500):
+            rec = self.make("chapter", chapter=2)
+        self.assertRegex(rec["data"]["chapter"]["title"], r"^Το λιμάνι \(1/\d\)$")
 
     def test_recap_reads_only_the_pages_read(self):
         pages, _ = im.extract_pages(str(self.book), "txt")
@@ -472,6 +660,41 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(numbers, sorted(numbers), "in book order")
         self.assertLessEqual(sum(len(t) for _, t in chosen), 6000)
         self.assertEqual(im.relevant_pages("anything", pages[:3], budget=10_000), pages[:3], "a short book goes whole")
+        spread = [n for n, _ in im.relevant_pages("Πού είναι το σημειωματάριο;", pages, budget=6000)]
+        self.assertTrue(spread and min(spread) < 15 and max(spread) > 45, f"no shared word: spread {spread}")
+        found = [n for n, _ in im.relevant_pages("Πού είναι το σημειωματάριο;", pages, budget=6000,
+                                                 terms=["logbook", "hide"])]
+        self.assertIn(31, found, "search words in the book's language")
+
+    def test_a_greek_question_about_a_long_english_book(self):
+        """Live finding (Blindsight): a Greek question shares no word with an English book, so only its last pages
+        (the licence) were sent and every answer was "the text does not say". Now search words in the book's own
+        language find the passage; without any, pages spread over the whole book go; a chapter overview goes along."""
+        weather = "Weather notes about clouds and rain over the northern cape of the island. " * 30
+        pages = [weather + f"(Day {n}.)" for n in range(1, 41)]
+        pages[24] = "The keeper Elena hid the logbook under the stairs of the lighthouse. " * 12
+        pages[-1] = "Licence. Permission is granted to copy, distribute and transmit this work. " * 12
+        book = write_book("\n".join(f"=== PAGE {n} ===\n{t}" for n, t in enumerate(pages, 1)), self.dir, "long.txt")
+        asked = lambda: [c for sp, c in FAKE.calls if "answer a reader's question" in sp][-1]  # noqa: E731
+        with mock.patch.object(im, "ASK_FULL_CHARS", 12000):
+            rec = run(im.ask_book(str(book), "txt", "Πού έκρυψε η Ελένη το ημερολόγιο;", "auto", "fake-key",
+                                  job_output_dir=self.out))
+            self.assertFalse(rec["whole_book"])
+            self.assertIn("written in English", FAKE.searched[0], "search words in the book's language")
+            self.assertIn("hid the logbook", asked(), "the passage is found")
+            self.assertLessEqual(len(asked()), 12000 + 2000)
+            run(im.ask_book(str(book), "txt", "Τι καιρό κάνει στο νησί;", "auto", "fake-key", job_output_dir=self.out))
+            sent = [int(n) for n in re.findall(r"\[\[(\d+)\]\]", asked())]
+            self.assertTrue(min(sent) <= 10 and max(sent) >= 30, f"spread over the whole book: {sent}")
+            self.assertNotEqual(sorted(sent), [39, 40], "not just the last pages")
+            self.assertNotIn("<OVERVIEW>", asked())
+            bi.save_insight(self.out, {"insight_type": "chapter_summaries", "language": "greek",
+                                       "text": "## 1. Ο φάρος\nΗ Ελένη κρατά το ημερολόγιο του φάρου. (σ. 1–40)"})
+            run(im.ask_book(str(book), "txt", "Τι γίνεται στο τέλος;", "auto", "fake-key", job_output_dir=self.out))
+            self.assertIn("<OVERVIEW>\n## 1. Ο φάρος", asked(), "the chapter overview made earlier goes along")
+        whole = run(im.ask_book(str(self.book), "txt", "Ποιος είναι ο Νίκος;", "auto", "fake-key"))
+        self.assertTrue(whole["whole_book"])
+        self.assertNotIn("<OVERVIEW>", asked(), "a short book goes whole, as before")
 
     def test_existing_types_are_unchanged(self):
         self.assertEqual(list(bi.INSIGHT_TYPES), ["one_sentence", "short_summary", "extended_summary",
@@ -618,6 +841,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertEqual((a["first_page"], a["unit"]), (1, "page"))
         self.assertGreater(a["last_page"], 3)
+        self.assertEqual([c["title"] for c in a["chapters"]], ["Chapter One", "Chapter Two", "Chapter Three", "Chapter Four"])
+        self.assertEqual([c["n"] for c in a["chapters"]], [1, 2, 3, 4])
+        self.assertTrue(all(c["first"] <= c["last"] and c["piece"] is None for c in a["chapters"]))
+
+    def test_one_chapter_through_the_api(self):
+        t = self.generate("chapter", chapter=3)
+        self.assertEqual(t["status"], "done", t.get("error"))
+        self.assertEqual((t["result"]["insight_type"], t["result"]["chapter"]), ("chapter", 3))
+        self.assertTrue(t["result"]["text"].startswith("## 3. "))
+        st, err = api("POST", "/insights/generate", {"job_id": self.job, "insight_type": "chapter", "language": "greek",
+                                                      "api_key": "fake-key"})
+        self.assertEqual(st, 400, err)
+        st, data = api("POST", "/insights/export", {"job_id": self.job, "insight_type": "chapter", "language": "greek",
+                                                     "format": "txt"})
+        self.assertEqual(st, 200, data)
 
     def test_existing_summaries_still_work(self):
         st, data = api("POST", "/insights/generate", {"job_id": self.job, "insight_type": "summary",

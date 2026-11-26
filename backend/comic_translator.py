@@ -1995,7 +1995,8 @@ async def translate_comic_document(
                         except Exception:
                             pass
 
-            vision_sem = asyncio.Semaphore(3)
+            from backend.gemini_key_pool import parallel_requests
+            vision_sem = asyncio.Semaphore(parallel_requests(3, 6, resolved_api_key))  # more keys, more pages at once
             connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
             vision_results: Dict[int, List[Dict[str, Any]]] = {}
             failed_vision_pages = 0

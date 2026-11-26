@@ -1336,7 +1336,8 @@ async def polish_text_with_gemini(
         raise ValueError("Missing Gemini API Key. Please provide a key in settings or select free models (fallback).")
 
     base_system_instruction = system_prompt_override or build_polish_prompt(style, target_lang)
-    sem = asyncio.Semaphore(5)
+    from backend.gemini_key_pool import parallel_requests
+    sem = asyncio.Semaphore(parallel_requests(5, 10, key))  # more batches at once when more keys share the work
     client_timeout = aiohttp.ClientTimeout(total=90)
 
     # Disk Checkpoint setup (with safe job_id validation and style/input fingerprint)
@@ -2623,7 +2624,8 @@ async def translate_and_polish_direct_with_gemini(
         current_step=init_step,
     )
 
-    sem = asyncio.Semaphore(5)
+    from backend.gemini_key_pool import parallel_requests
+    sem = asyncio.Semaphore(parallel_requests(5, 10, api_key))  # more batches at once when more keys share the work
     target_temp = STYLE_TEMPERATURES.get(style, 0.30)
     connector = aiohttp.TCPConnector(limit=12, ttl_dns_cache=300)
 

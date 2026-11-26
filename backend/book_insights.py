@@ -45,6 +45,8 @@ SINGLE_PASS_CHARS = 90_000                   # documents up to ~22k words are se
 SECTION_CHARS = 45_000                       # map step section size for longer documents
 MAX_NOTES_CHARS = 120_000                    # notes are condensed again above this
 MAX_CONCURRENT_GENERATIONS = 2
+SECTION_PARALLEL = 2       # a long book's sections read at once with one or two keys...
+SECTION_PARALLEL_MAX = 6   # ...and with more keys (two per key), up to this
 TTS_STYLE = "standard"
 
 INSIGHT_TYPES: Dict[str, Dict[str, Any]] = {
@@ -386,7 +388,8 @@ async def build_source_material(text: str, api_key: str, session,
         return text, False
     sections = split_sections(text)
     notes: List[Optional[str]] = [None] * len(sections)
-    sem = asyncio.Semaphore(2)
+    from backend.gemini_key_pool import parallel_requests
+    sem = asyncio.Semaphore(parallel_requests(SECTION_PARALLEL, SECTION_PARALLEL_MAX, api_key))
     done = 0
 
     async def _one(i: int, sec: str):

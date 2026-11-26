@@ -16,7 +16,7 @@ const insState = {
 
 const INS_LANG_LABELS = { greek: 'Ελληνικά', english: 'English', other: 'Γλώσσα εγγράφου' };
 // the insights of the "More about the book" card (backend/insights_more.py)
-const INS_EXTRA_TYPES = ['characters', 'chapter_summaries', 'blurb', 'quotes', 'study_guide', 'timeline', 'recap'];
+const INS_EXTRA_TYPES = ['characters', 'chapter_summaries', 'chapter', 'blurb', 'quotes', 'study_guide', 'timeline', 'recap'];
 
 function _insApiOrigin() {
   return API.replace(/\/api$/, '');
@@ -77,6 +77,7 @@ function updateInsightsButtons() {
   set('ins-adv-summary-btn', canSummary);
   set('ins-adv-synopsis-btn', canSynopsis);
   INS_EXTRA_TYPES.forEach((t) => set(`ins-more-${t}`, canSummary));
+  set('ins-more-chapter', canSummary && Boolean(a && Array.isArray(a.chapters) && a.chapters.length));
   set('ins-ask-btn', canSummary);
 
   const synReason = (a && !a.can_synopsis) ? (a.reasons?.synopsis || '') : '';
@@ -237,6 +238,7 @@ async function loadInsightsAnalysis() {
     insState.analysis = a;
     if (a.file_name && !insState.fileName) insState.fileName = a.file_name;
     setupRecapInput(a);
+    setupChapterSelect(a);
     loadInsightQuestions(jobId);
     const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
     if (a.needs_scan_reading) {
@@ -462,6 +464,20 @@ function setupRecapInput(a) {
   input.value = String(last ? Math.min(Math.max(current, first), last) : Math.max(current, first));
 }
 
+// "One chapter": the chapters of the book as "Chapter by chapter" finds them (a long part in pieces, e.g. "(2/4)")
+function setupChapterSelect(a) {
+  const select = document.getElementById('ins-chapter-select');
+  if (!select) return;
+  const chapters = (a && Array.isArray(a.chapters)) ? a.chapters : [];
+  select.innerHTML = chapters.map((c) => {  // the book's own titles, with their pages (chapters, in an EPUB)
+    const name = c.title || `#${c.n}`;
+    const piece = Array.isArray(c.piece) ? ` (${c.piece[0]}/${c.piece[1]})` : '';
+    const where = c.first === c.last ? `${c.first}` : `${c.first}–${c.last}`;
+    return `<option value="${Number(c.n)}">${escHtml(`${c.n}. ${name}${piece} (${where})`)}</option>`;
+  }).join('');
+  select.disabled = !chapters.length;
+}
+
 async function _insRunTask(path, body) {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
@@ -496,6 +512,14 @@ async function runExtraInsight(type) {
       return;
     }
     body.until = until;
+  }
+  if (type === 'chapter') {
+    const chapter = parseInt(document.getElementById('ins-chapter-select')?.value, 10);
+    if (!chapter || chapter < 1) {
+      showInsightsError('Διαλέξτε ένα κεφάλαιο.');
+      return;
+    }
+    body.chapter = chapter;
   }
   showInsightsError('');
   setInsightsBusy(true);

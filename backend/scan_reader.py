@@ -274,7 +274,8 @@ async def read_scanned_text(
                     await asyncio.to_thread(_save, file_path, json.loads(json.dumps(data)))
                     last_save.update(t=now, n=read_now)
 
-        sem = asyncio.Semaphore(READ_WORKERS)
+        from backend.gemini_key_pool import parallel_requests
+        sem = asyncio.Semaphore(parallel_requests(READ_WORKERS, 6, api_key))  # more keys, more pages at once
         connector = aiohttp.TCPConnector(limit=8, ttl_dns_cache=300)
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120), connector=connector) as session:

@@ -15,6 +15,7 @@ Built on book_insights: the same Gemini access (key pool, cache), notes for long
 the job's insights/ folder, PDF/DOCX/TXT export and narration.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -30,6 +31,12 @@ from backend.book_insights import InsightsError, OUTPUT_LANGUAGES
 logger = logging.getLogger(__name__)
 
 EXTRA_VERSION = "1.2"   # bump when prompts/checks change: stored results are made again
+# ...or one kind's own version, so only its stored results are made again (drop these when EXTRA_VERSION moves on)
+KIND_VERSIONS = {"characters": "1.2-c2"}  # c2: the work's own pages only, no authors or quoted writers
+
+
+def record_version(insight_type: str) -> str:
+    return KIND_VERSIONS.get(insight_type, EXTRA_VERSION)
 SECTION_CHARS = 45_000  # one request's share of a long book (as the notes of book_insights)
 CHAPTER_BATCH_CHARS = 120_000
 CHAPTER_MAX_CHARS = 110_000  # a longer chapter (a part of a novel)
@@ -44,6 +51,7 @@ QA_KEEP = 30
 EXTRA_TYPES: Dict[str, Dict[str, str]] = {
     "characters": {"kind": "characters"},
     "chapter_summaries": {"kind": "chapters"},
+    "chapter": {"kind": "chapter"},  # one chapter in detail (with `chapter`: its number in detect_chapters)
     "recap": {"kind": "recap"},
     "blurb": {"kind": "blurb"},
     "quotes": {"kind": "quotes"},
@@ -52,10 +60,10 @@ EXTRA_TYPES: Dict[str, Dict[str, str]] = {
 }
 
 LABELS = {
-    "greek": {"characters": "Πρόσωπα & όροι", "chapter_summaries": "Περίληψη ανά κεφάλαιο",
+    "greek": {"characters": "Πρόσωπα & όροι", "chapter_summaries": "Περίληψη ανά κεφάλαιο", "chapter": "Κεφάλαιο",
               "recap": "Η ιστορία ως τώρα", "blurb": "Οπισθόφυλλο", "quotes": "Αξιομνημόνευτα αποσπάσματα",
               "study_guide": "Οδηγός μελέτης", "timeline": "Χρονολόγιο"},
-    "english": {"characters": "Characters & terms", "chapter_summaries": "Chapter by chapter",
+    "english": {"characters": "Characters & terms", "chapter_summaries": "Chapter by chapter", "chapter": "Chapter",
                 "recap": "The story so far", "blurb": "Back-cover blurb", "quotes": "Memorable quotes",
                 "study_guide": "Study guide", "timeline": "Timeline"},
 }
@@ -256,6 +264,7 @@ class _Ctx:
     until: Optional[int] = None
     progress: Optional[Callable[[int, str], None]] = None
     outline: List[Tuple[str, int]] = field(default_factory=list)  # a PDF's bookmarks (chapter by chapter)
+    chapter: Optional[int] = None  # one chapter: its number in detect_chapters
     warnings: List[str] = field(default_factory=list)
 
     def step(self, pct: int, text: str) -> None:
@@ -323,6 +332,34 @@ async def _material(ctx: _Ctx, text: str, pct: int = 10) -> Tuple[str, bool]:
     return await bi.build_source_material(text, ctx.api_key, ctx.session, _prog)
 
 
+async def _each(ctx: _Ctx, items: List[Any], ask: Callable[[Any], Any], label: str, start: int, span: int,
+                skip_rejected: bool = False) -> List[Any]:
+    """`await ask(item)` for every item (the sections or chapter groups of a book), a few at a time as the key pool
+    allows (bi.SECTION_PARALLEL...): the answers in the items' order, so they are merged exactly as one by one.
+    skip_rejected: an item whose answer is unreadable gives None instead of stopping the run. Any other error stops
+    it, and the requests still running are cancelled. Progress counts the items done: label.format(done, total)."""
+    from backend.async_utils import gather_or_cancel
+    from backend.gemini_key_pool import parallel_requests
+    sem = asyncio.Semaphore(parallel_requests(bi.SECTION_PARALLEL, bi.SECTION_PARALLEL_MAX, ctx.api_key))
+    done = 0
+    ctx.step(start, label.format(0, len(items)))
+
+    async def one(item: Any) -> Any:
+        nonlocal done
+        async with sem:
+            try:
+                result = await ask(item)
+            except InsightsError as e:
+                if not (skip_rejected and e.code == "ai_output_rejected"):
+                    raise
+                result = None
+        done += 1
+        ctx.step(start + int(span * done / len(items)), label.format(done, len(items)))
+        return result
+
+    return await gather_or_cancel(one(item) for item in items)
+
+
 # ---- characters and terms ----
 
 _CHARACTERS_TASK = (
@@ -332,21 +369,77 @@ _CHARACTERS_TASK = (
     "\"name_out\": \"the name in the output language and script\", \"role\": \"who they are, one sentence\", "
     "\"relations\": \"their relations to other people, or empty\"}], \"terms\": [{\"term\": \"exactly as written\", "
     "\"term_out\": \"in the output language\", \"definition\": \"one sentence\"}]}. At most 25 people and 25 terms; "
-    "leave out passing mentions. No other text."
+    "leave out passing mentions. Leave out the book's author (unless they take part in it, as in a memoir) and people "
+    "who are only quoted or cited (epigraphs, sources). Ships, planets, places, objects and organisations are terms, "
+    "not people. No other text."
 )
+
+# Notes and references name the sources, not the people of the book
+_NOT_STORY_RE = re.compile(r"^(?:(?:end)?notes?\b.*|references?\b.*|bibliography|sources|further reading|appendix\b.*"
+                           r"|σημειωσεις\b.*|βιβλιογραφια|παραπομπες\b.*|παραρτημα\b.*)$")
+_CONNECTORS = {"of", "the", "de", "da", "di", "du", "la", "le", "von", "van", "der", "του", "της", "των"}
+
+
+def is_attribution(line: str) -> bool:
+    """An epigraph's attribution ("—Ted Bundy", "— Ian Anderson, Catfish Rising", "—1 Samuel 10:6"): a quoted
+    writer, not a person of the book. A line of dialogue ("— Ναι.", "— Πού πας; ρώτησε") is none."""
+    s = line.strip()
+    if len(s) < 3 or len(s) > 90 or s[0] not in "—–―" or re.search(r"[.!?;…—–]$", s):
+        return False
+    name, _, source = s[1:].strip().partition(",")
+    words, source = name.split(), source.strip()
+    if not 1 <= len(words) <= 6 or len(source) > 60:
+        return False
+    if source and not (source[0].isupper() or source[0].isdigit() or source[0] in "*_«\"“'‘"):
+        return False  # "— Ελένη, άκουσέ με": a name called in dialogue, not a work's title
+    return all(w[0].isupper() or w[0].isdigit() or w.casefold() in _CONNECTORS for w in words)
+
+
+def story_pages(pages: List[Tuple[int, str]], unit: str,
+                outline: Optional[List[Tuple[str, int]]] = None) -> List[Tuple[int, str]]:
+    """The pages of the work itself, for the people in it: those of the chapters detect_chapters finds (no title
+    page, contents, acknowledgments or licence) other than notes and references, without epigraph attributions.
+    The whole book when those hold less than half of its text."""
+    from backend.exporter import _toc_key
+    covered: set = set()
+    for c in detect_chapters(pages, unit, outline):
+        if not (c["title"] and _NOT_STORY_RE.match(_toc_key(c["title"]))):
+            covered.update(range(c["first"], c["last"] + 1))
+    kept = [(n, t) for n, t in pages if n in covered]
+    if sum(len(t) for _, t in kept) < 0.5 * sum(len(t) for _, t in pages):
+        kept = pages
+    return [(n, "\n".join(ln for ln in t.split("\n") if not is_attribution(ln))) for n, t in kept]
+
+
+def _fold_short_names(store: Dict[str, Dict[str, Any]], key: str, out_key: str, text_keys: Tuple[str, ...]) -> None:
+    """A short form ("Szpindel", "Isaac", "Major") goes into the one fullest name that holds all its words ("Isaac
+    Szpindel", "Major Amanda Bates"); with two such names ("John" of "John Smith" and "John Doe") it stays. The
+    short forms are kept as `aka` [(name, its spelling in the output language)], for the Glossary."""
+    words = {k: set(e[key].casefold().split()) for k, e in store.items()}
+    for k in sorted(store, key=lambda k: len(words[k])):
+        holders = [o for o in store if o != k and words[k] < words[o]]
+        fullest = [o for o in holders if not any(words[o] < words[h] for h in holders)]
+        if len(fullest) != 1:
+            continue
+        short, full = store.pop(k), store[fullest[0]]
+        full.setdefault("aka", []).append((short[key], short[out_key]))
+        full["aka"] += short.pop("aka", [])
+        full[out_key] = full[out_key] or ""
+        for t in text_keys:  # the fullest description wins
+            if len(short[t]) > len(full[t]):
+                full[t] = short[t]
+        words.pop(k)
 
 
 async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
-    sections = page_sections(ctx.pages)
+    pages = story_pages(ctx.pages, ctx.unit, ctx.outline)
+    sections = page_sections(pages)
     people: Dict[str, Dict[str, str]] = {}
     terms: Dict[str, Dict[str, str]] = {}
-    for i, sec in enumerate(sections):
-        ctx.step(10 + int(70 * i / len(sections)), f"Πρόσωπα και όροι: ενότητα {i + 1}/{len(sections)}…")
-        try:
-            found = await _json_call(ctx, marked(sec), ctx.head() + _CHARACTERS_TASK)
-        except InsightsError as e:
-            if e.code != "ai_output_rejected":
-                raise
+    answers = await _each(ctx, sections, lambda sec: _json_call(ctx, marked(sec), ctx.head() + _CHARACTERS_TASK),
+                          "Πρόσωπα και όροι: ενότητα {}/{}…", 10, 70, skip_rejected=True)
+    for i, found in enumerate(answers):  # merged in the book's order, as one by one
+        if found is None:
             ctx.warnings.append(f"section {i + 1} could not be read")
             continue
         for kind, store, key, out_key, text_keys in (("people", people, "name", "name_out", ("role", "relations")),
@@ -363,21 +456,49 @@ async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
                     value = str(item.get(k) or "").strip()
                     if len(value) > len(entry[k]):
                         entry[k] = value
-    folded = _fold(ctx.full)
+    for name in [k for k in people if k in terms]:  # a ship, a planet or a place named both ways: a term
+        del people[name]
+    for store, key, out_key, text_keys in ((people, "name", "name_out", ("role", "relations")),
+                                           (terms, "term", "term_out", ("definition",))):
+        _fold_short_names(store, key, out_key, text_keys)
+    folded = _fold("\n\n".join(t for _, t in pages))  # named in the work itself, not only in its front or back matter
     kept_people, kept_terms = [], []
     for store, kept, key, limit in ((people, kept_people, "name", MAX_PEOPLE), (terms, kept_terms, "term", MAX_TERMS)):
         for entry in store.values():
-            if not _occurs(entry[key], folded):  # never a name the book does not have
+            names = [entry[key]] + [a for a, _ in entry.get("aka", [])]
+            if not any(_occurs(n, folded) for n in names):  # never a name the book does not have
                 continue
-            entry["first"] = _first_page(entry[key], ctx.pages)
+            firsts = [p for p in (_first_page(n, pages) for n in names) if p is not None]
+            entry["first"] = min(firsts) if firsts else None
             kept.append(entry)
         kept.sort(key=lambda e: (e["first"] is None, e["first"] or 0))
         del kept[limit:]
     if not kept_people and not kept_terms:
         raise InsightsError("ai_output_rejected", "no people or terms found in the book", http_status=502)
-    own = " ".join(" ".join((item.get("role", ""), item.get("relations", ""), item.get("definition", "")))
-                   for item in kept_people + kept_terms)
-    problems = language_problems(own, ctx.lang)
+
+    def own(items: List[Dict[str, Any]]) -> str:
+        return " ".join(" ".join((i.get("role", ""), i.get("relations", ""), i.get("definition", ""))) for i in items)
+
+    def off_language(text: str) -> float:  # how far a description is from the output language
+        if ctx.lang == "greek":
+            return bi._latin_share_outside_quotes(text) + (1 - _greek_share(text))
+        return _greek_share(text)
+
+    entries = kept_people + kept_terms
+    if language_problems(own(entries), ctx.lang):
+        # Descriptions in the wrong language or with names in Latin script (a weaker model, at times) are left out,
+        # worst first, until the rest pass; the names stay. A list rejected as a whole would be rejected again on
+        # every new try, since the section answers are cached.
+        blanked = 0
+        for item in sorted(entries, key=lambda i: off_language(own([i])), reverse=True):
+            if not language_problems(own(entries), ctx.lang):
+                break
+            for k in ("role", "relations", "definition"):
+                if k in item:
+                    item[k] = ""
+            blanked += 1
+        ctx.warnings.append(f"{blanked} description(s) in another language or script left out")
+    problems = language_problems(own(entries), ctx.lang)
     if problems:
         raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)
     w = _words(ctx.lang)
@@ -589,11 +710,10 @@ async def _chapter_summaries(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
         else:
             batches.append([c])
             size = length
-    found: Dict[int, Dict[str, str]] = {}
-    for i, batch in enumerate(batches):
-        ctx.step(10 + int(75 * i / len(batches)), f"Κεφάλαια: {i + 1}/{len(batches)}…")
-        for attempt in range(2):
-            wanted = [c for c in batch if c["n"] not in found]
+    async def summarise(batch: List[Dict[str, Any]]) -> Dict[int, Dict[str, str]]:
+        got: Dict[int, Dict[str, str]] = {}
+        for attempt in range(2):  # a chapter the answer left out is asked once more
+            wanted = [c for c in batch if c["n"] not in got]
             if not wanted:
                 break
             data = await _json_call(ctx, "\n\n".join(_chapter_text(c) for c in wanted), ctx.head() + _CHAPTERS_TASK,
@@ -605,7 +725,12 @@ async def _chapter_summaries(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
                     continue
                 summary = str(item.get("summary") or "").strip()
                 if summary and any(c["n"] == n for c in wanted):
-                    found[n] = {"title": str(item.get("title") or "").strip(), "summary": summary}
+                    got[n] = {"title": str(item.get("title") or "").strip(), "summary": summary}
+        return got
+
+    found: Dict[int, Dict[str, str]] = {}
+    for got in await _each(ctx, batches, summarise, "Κεφάλαια: {}/{}…", 10, 75):  # merged in the book's order
+        found.update(got)
     missing = [c["n"] for c in chapters if c["n"] not in found]
     if len(missing) > len(chapters) // 2:
         raise InsightsError("ai_output_rejected", f"{len(missing)} of {len(chapters)} chapters were not summarised",
@@ -645,6 +770,39 @@ async def _chapter_summaries(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
         rows.append({"n": c["n"], "title": title, "first": c["first"], "last": c["last"],
                      "summary": got.get("summary", "")})
     return "\n\n".join(blocks), {"chapters": rows}
+
+
+# ---- one chapter in detail ----
+
+_CHAPTER_TASK = (
+    "TASK: write a detailed account of the ONE chapter below (opened by <<CH n>> and its title, if any): what happens "
+    "or what is argued in it, in order; who appears and what they do; its key moments, revelations or ideas; and how "
+    "it ends. 3-5 paragraphs, about 250-450 words (less for a short chapter). Use ONLY this chapter and never mention "
+    "what comes after it. Begin with one line: '## ' and the chapter's title in the output language (a short title of "
+    "your own when it has none), then the text. No other headings."
+)
+
+
+async def _chapter(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
+    """One chapter of the list that "Chapter by chapter" uses (its pieces included), in detail."""
+    chapters = detect_chapters(ctx.pages, ctx.unit, ctx.outline)
+    c = next((c for c in chapters if c["n"] == ctx.chapter), None)
+    if c is None:
+        raise InsightsError("invalid_request", f"chapter {ctx.chapter} of {len(chapters)}")
+    ctx.step(15, "Κεφάλαιο: ανάγνωση…")
+    least = max(20, min(80, bi.count_words(c["text"]) // 4))
+    text = await _text_call(ctx, _chapter_text(c), ctx.head() + _CHAPTER_TASK,
+                            lambda t: _common_checks(t, ctx, c["text"], min_words=least))
+    first, _, rest = text.strip().partition("\n")
+    own = re.sub(r"^#+\s*", "", first).strip() if first.lstrip().startswith("#") else ""
+    body = rest.strip() if own else text.strip()
+    w = _words(ctx.lang)
+    title = re.sub(r"\s*[(\[][^()\[\]]*[)\]]\s*$", "", own).strip() or c["title"] or f"{w['part']} {c['n']}"
+    if c.get("piece"):  # the part's number is ours
+        title = f"{title} ({c['piece'][0]}/{c['piece'][1]})"
+    ref = _ref(ctx.lang, ctx.unit, c["first"], c["last"])
+    return (f"## {c['n']}. {title}\n{body}\n\n({ref})",
+            {"chapter": {"n": c["n"], "title": title, "first": c["first"], "last": c["last"]}})
 
 
 # ---- the story so far ----
@@ -714,13 +872,10 @@ async def _quotes(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
     sections = page_sections(ctx.pages)
     verified: List[Dict[str, Any]] = []
     rejected = 0
-    for i, sec in enumerate(sections):
-        ctx.step(10 + int(75 * i / len(sections)), f"Αποσπάσματα: ενότητα {i + 1}/{len(sections)}…")
-        try:
-            data = await _json_call(ctx, marked(sec), ctx.head() + _QUOTES_TASK)
-        except InsightsError as e:
-            if e.code != "ai_output_rejected":
-                raise
+    answers = await _each(ctx, sections, lambda sec: _json_call(ctx, marked(sec), ctx.head() + _QUOTES_TASK),
+                          "Αποσπάσματα: ενότητα {}/{}…", 10, 75, skip_rejected=True)
+    for sec, data in zip(sections, answers):  # in the book's order
+        if data is None:
             continue
         for item in data.get("quotes") or []:
             if not isinstance(item, dict):
@@ -807,9 +962,9 @@ async def _timeline(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
     numbers = {n for n, _ in ctx.pages}
     sections = page_sections(ctx.pages)
     told: List[Dict[str, Any]] = []
-    for i, sec in enumerate(sections):
-        ctx.step(10 + int(65 * i / len(sections)), f"Γεγονότα: ενότητα {i + 1}/{len(sections)}…")
-        told += _events(await _json_call(ctx, marked(sec), ctx.head() + _EVENTS_TASK), numbers)
+    for data in await _each(ctx, sections, lambda sec: _json_call(ctx, marked(sec), ctx.head() + _EVENTS_TASK),
+                            "Γεγονότα: ενότητα {}/{}…", 10, 65):  # in the order the book tells them
+        told += _events(data, numbers)
     if not told:
         raise InsightsError("ai_output_rejected", "no events found", http_status=502)
     ctx.step(85, "Χρονολογική σειρά…")
@@ -836,8 +991,8 @@ async def _timeline(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
 
 
 _GENERATORS = {
-    "characters": _characters, "chapter_summaries": _chapter_summaries, "recap": _recap, "blurb": _blurb,
-    "quotes": _quotes, "study_guide": _study_guide, "timeline": _timeline,
+    "characters": _characters, "chapter_summaries": _chapter_summaries, "chapter": _chapter, "recap": _recap,
+    "blurb": _blurb, "quotes": _quotes, "study_guide": _study_guide, "timeline": _timeline,
 }
 
 
@@ -863,8 +1018,12 @@ async def generate_extra(
     progress: Optional[Callable[[int, str], None]] = None,
     until: Optional[int] = None,
     session=None,
+    chapter: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Makes, checks and stores one of the EXTRA_TYPES. Raises InsightsError."""
+    """Makes, checks and stores one of the EXTRA_TYPES. Raises InsightsError. `until`: the recap's last page;
+    `chapter`: the number of the one chapter (as listed by detect_chapters)."""
+    if insight_type == "chapter" and (chapter is None or chapter < 1):
+        raise InsightsError("invalid_request", "choose a chapter")
     if insight_type not in EXTRA_TYPES:
         raise InsightsError("invalid_request", f"unknown type {insight_type}")
     pages, unit = extract_pages(file_path, file_type)
@@ -881,11 +1040,11 @@ async def generate_extra(
     if not (api_key or "").strip():
         raise InsightsError("no_api_key", http_status=401)
 
-    source_hash = bi._text_hash(f"{insight_type}|{until}|{full}")
+    source_hash = bi._text_hash(f"{insight_type}|{until}|{full}" + (f"|{chapter}" if insight_type == "chapter" else ""))
     if job_output_dir is not None:
         existing = bi.load_insight(job_output_dir, insight_type, out_lang)
         if (existing and existing.get("source_hash") == source_hash and existing.get("text")
-                and existing.get("version") == EXTRA_VERSION):
+                and existing.get("version") == record_version(insight_type)):
             if progress:
                 progress(100, "Έτοιμο (αποθηκευμένο αποτέλεσμα)")
             existing["reused"] = True
@@ -897,7 +1056,9 @@ async def generate_extra(
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=240))
     ctx = _Ctx(pages=pages, unit=unit, full=full, lang=out_lang, src_lang=src_lang, api_key=api_key, session=session,
                title=title, words=info["meaningful_words"], until=until, progress=progress,
-               outline=pdf_outline(file_path, file_type) if insight_type == "chapter_summaries" else [])
+               outline=pdf_outline(file_path, file_type)
+               if insight_type in ("characters", "chapter_summaries", "chapter") else [],
+               chapter=chapter)
     try:
         ctx.step(5, "Προετοιμασία κειμένου…")
         text, data = await _GENERATORS[insight_type](ctx)
@@ -907,17 +1068,19 @@ async def generate_extra(
             await session.close()
 
     record = {
-        "version": EXTRA_VERSION,
+        "version": record_version(insight_type),
         "insight_type": insight_type,
         "kind": EXTRA_TYPES[insight_type]["kind"],
         "language": out_lang,
         "source_language": src_lang,
         "title": title,
-        "label": _label(insight_type, out_lang) + (f" ({_ref(out_lang, unit, until)})" if until else ""),
+        "label": _label(insight_type, out_lang) + (f" ({_ref(out_lang, unit, until)})" if until else "")
+                 + (f" {data['chapter']['n']}: {data['chapter']['title']}" if data.get("chapter") else ""),
         "text": text,
         "data": data,
         "unit": unit,
         "until": until,
+        "chapter": chapter,
         "word_count": bi._plain_words(text),
         "warnings": ctx.warnings,
         "source_words": info["meaningful_words"],
@@ -947,20 +1110,37 @@ def _strip_accents(s: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
 
 
-def relevant_pages(question: str, pages: List[Tuple[int, str]], budget: int = ASK_FULL_CHARS) -> List[Tuple[int, str]]:
-    """The whole book when it fits; else the pages that share the most words with the question (and their
-    neighbours), in book order, within the budget."""
+def _spread(pages: List[Tuple[int, str]], budget: int) -> List[Tuple[int, str]]:
+    """Pages evenly spread over the whole book, within the budget (never only its first or last pages)."""
+    share = budget / max(1, sum(len(t) for _, t in pages))
+    chosen, acc, size = [], 0.5, 0  # centred: the first pick half a step in
+    for n, t in pages:
+        acc += share
+        if acc >= 1 and size + len(t) <= budget:
+            chosen.append((n, t))
+            size += len(t)
+            acc -= 1
+    return chosen or pages[:1]
+
+
+def relevant_pages(question: str, pages: List[Tuple[int, str]], budget: int = ASK_FULL_CHARS,
+                   terms: Optional[List[str]] = None) -> List[Tuple[int, str]]:
+    """The whole book when it fits; else the pages that share the most words with the question and with `terms`
+    (search words in the book's own language, see search_terms), with their neighbours, in book order, within the
+    budget. When no page shares a word, pages spread over the whole book."""
     if sum(len(t) for _, t in pages) <= budget:
         return pages
-    keys = {_strip_accents(w.casefold())[:6] for w in re.findall(r"\w{3,}", question)
-            if w.casefold() not in _STOP}
+    words_asked = re.findall(r"\w{3,}", question) + [w for t in terms or [] for w in re.findall(r"\w{3,}", str(t))]
+    keys = {_strip_accents(w.casefold())[:6] for w in words_asked if w.casefold() not in _STOP}
     if not keys:
-        return pages[:max(1, len(pages) * budget // max(1, sum(len(t) for _, t in pages)))]
+        return _spread(pages, budget)
     scored = []
     for k, (n, t) in enumerate(pages):
         words = [_strip_accents(w.casefold())[:6] for w in re.findall(r"\w{3,}", t)]
         hits = sum(1 for w in words if w in keys)
         scored.append((hits / (1 + len(words) ** 0.5), k))
+    if max(score for score, _ in scored) <= 0:  # e.g. a Greek question about an English book, without search words
+        return _spread(pages, budget)
     chosen: set = set()
     size = 0
     for score, k in sorted(scored, reverse=True):
@@ -973,6 +1153,31 @@ def relevant_pages(question: str, pages: List[Tuple[int, str]], budget: int = AS
         if size >= budget * 0.95:
             break
     return [pages[j] for j in sorted(chosen)]
+
+
+_SEARCH_TASK = (
+    "TASK: a reader asks the QUESTION below about a book written in {book}. List the words to look for in the "
+    "book's text to find the passages that answer it: the question's names, nouns and verbs in {book} (translated "
+    "when the question is in another language), with likely synonyms and other forms. Return ONLY a JSON object: "
+    "{{\"terms\": [\"...\"]}}, at most 25 single words or names. No other text."
+)
+
+
+async def search_terms(question: str, book_language: str, api_key: str, session) -> List[str]:
+    """Words to look for in a long book, in its own language: a Greek question about an English book shares no word
+    with it. One small request to a light model; [] when it fails (then the question's own words are used)."""
+    from backend.ai_polisher import _call_gemini_api
+    from backend.scan_reader import LIGHT_MODELS_FIRST
+    book = {"english": "English", "greek": "Greek"}.get(book_language or "", (book_language or "its language").title())
+    try:
+        raw = await _call_gemini_api(f"QUESTION: {question}", api_key, _SEARCH_TASK.format(book=book), session=session,
+                                     temperature=0.0, prefer_models=LIGHT_MODELS_FIRST,
+                                     cache_gate=lambda o: bool(o and o.strip()))
+        terms = parse_json(raw).get("terms") or []
+    except Exception as e:
+        logger.info(f"Ask the book: no search words, the question's own are used ({e})")
+        return []
+    return [str(t).strip() for t in terms if isinstance(t, (str, int)) and str(t).strip()][:25]
 
 
 def _qa_path(job_output_dir: Path) -> Path:
@@ -1016,13 +1221,23 @@ async def ask_book(
     if not info["can_summary"]:
         raise InsightsError("insufficient_text", f"{info['meaningful_words']} words", http_status=422)
     lang = _question_language(question, language)
-    chosen = relevant_pages(question, pages)
-    whole = len(chosen) == len(pages)
+    whole = sum(len(t) for _, t in pages) <= ASK_FULL_CHARS
+    # A long book goes by its parts related to the question, with its chapter overview when one was made
+    overview = ""
+    if not whole and job_output_dir is not None:
+        for lg in dict.fromkeys((lang, "greek", "english")):
+            rec = bi.load_insight(job_output_dir, "chapter_summaries", lg)
+            if rec and rec.get("text"):
+                overview = rec["text"][:ASK_FULL_CHARS // 10]
+                break
     w = _words(lang)
     cite = f"({w[unit]} N)"
     prompt = (f"You answer a reader's question about the book \"{title}\" using ONLY the book text below. In the "
               f"text, [[N]] opens {'chapter (or section)' if unit == 'chapter' else 'page'} N"
               + ("" if whole else "; only the parts most related to the question are given")
+              + (". An overview of every chapter, written earlier from the whole book with its pages, comes first "
+                 "between <OVERVIEW> tags: use it to place the passages, and the book text for the details"
+                 if overview else "")
               + f". {_lang_rule(lang)}\nAnswer clearly in 1-3 short paragraphs and cite the pages you rely on as "
               f"{cite}. If the book does not answer the question, say so plainly in one sentence and do not guess. "
               f"Never use knowledge from outside the book. No headings.\n\nQUESTION: {question}")
@@ -1031,13 +1246,21 @@ async def ask_book(
         import aiohttp
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=240))
     try:
+        if whole:
+            chosen = pages
+        else:
+            if progress:
+                progress(10, "Αναζήτηση των σχετικών σελίδων…")
+            terms = await search_terms(question, info.get("detected_language") or "", api_key, session)
+            chosen = relevant_pages(question, pages, ASK_FULL_CHARS - len(overview), terms)
+        content = (f"<OVERVIEW>\n{overview}\n</OVERVIEW>\n\n" if overview else "") + marked(chosen)
         if progress:
             progress(20, "Αναζήτηση της απάντησης στο βιβλίο…")
-        raw = await bi._ai(marked(chosen), prompt, api_key, session, temperature=0.2)
+        raw = await bi._ai(content, prompt, api_key, session, temperature=0.2)
         answer = tidy(bi.normalize_output(raw, lang), lang, unit)
         problems = language_problems(answer, lang) + (["prompt text leaked"] if _leak(answer) else [])
         if problems:
-            raw = await bi._ai(marked(chosen), prompt + "\nYOUR PREVIOUS ANSWER WAS REJECTED BECAUSE: "
+            raw = await bi._ai(content, prompt + "\nYOUR PREVIOUS ANSWER WAS REJECTED BECAUSE: "
                                + "; ".join(problems) + ".", api_key, session, temperature=0.1, bypass_cache=True)
             answer = tidy(bi.normalize_output(raw, lang), lang, unit)
             if language_problems(answer, lang) or _leak(answer):
@@ -1046,7 +1269,9 @@ async def ask_book(
         if owns_session:
             await session.close()
     numbers = {n for n, _ in pages}
-    cited = sorted({int(n) for n in re.findall(rf"{re.escape(w[unit])}\s*(\d+)", answer) if int(n) in numbers})
+    # every page of a citation: "(σ. 179, 209, 223)", "(p. 11–36)", "(σ. 4 και 9)"
+    groups = re.findall(rf"{re.escape(w[unit])}\s*(\d+(?:\s*(?:,|–|-|και|and)\s*\d+)*)", answer)
+    cited = sorted({int(n) for g in groups for n in re.findall(r"\d+", g) if int(n) in numbers})
     record = {"question": question, "answer": answer, "language": lang, "unit": unit, "pages": cited,
               "whole_book": whole, "created_at": time.time()}
     if job_output_dir is not None:
@@ -1064,7 +1289,10 @@ def glossary_items(record: Dict[str, Any]) -> List[Tuple[str, str]]:
     for key, out_key, items in (("name", "name_out", data.get("people") or []),
                                 ("term", "term_out", data.get("terms") or [])):
         for item in items:
-            src, dst = str(item.get(key) or "").strip(), str(item.get(out_key) or "").strip()
-            if src and dst and src.casefold() != dst.casefold() and _greek_share(dst) >= 0.6:
-                pairs.append((src, dst))
+            forms = [(item.get(key), item.get(out_key))] + [tuple(a) for a in item.get("aka") or [] if len(a) == 2]
+            for src, dst in forms:  # the name, and its short forms ("Szpindel" of "Isaac Szpindel")
+                src, dst = str(src or "").strip(), str(dst or "").strip()
+                if (src and dst and src.casefold() != dst.casefold() and _greek_share(dst) >= 0.6
+                        and (src, dst) not in pairs):
+                    pairs.append((src, dst))
     return pairs

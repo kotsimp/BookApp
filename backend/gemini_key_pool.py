@@ -757,6 +757,28 @@ class GeminiKeyPool:
             }
 
 
+def parallel_requests(base: int, cap: int, api_key: Optional[str] = None) -> int:
+    """
+    How many Gemini requests one task may have in flight: two per usable pool key, never fewer than its usual `base`
+    and never more than `cap`. Requests take the pool's keys in turn and each key is paced to its own per-minute
+    limits (GeminiRateLimiter), so more keys carry more requests at once. What is sent stays the same (the same
+    requests, prompts and order of results); only the waiting between them is shorter. A key from outside the pool
+    (it is not rotated) or a task held to one request at a time keeps `base`.
+    """
+    if base <= 1:
+        return max(1, base)
+    try:
+        now = time.time()
+        with _pool_lock:
+            keys = GeminiKeyPool.get_keys()
+            if (api_key or "").strip() and api_key.strip() not in keys:
+                return base
+            usable = sum(1 for k in keys if now >= _KEY_COOLDOWNS.get(k, 0.0))
+    except Exception:
+        return base
+    return max(base, min(cap, 2 * usable))
+
+
 def resolve_gemini_api_key(explicit_key: Optional[str] = None) -> str:
     """
     Resolves an active Gemini API key from explicit argument, the key pool,

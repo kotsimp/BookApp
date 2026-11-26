@@ -570,8 +570,9 @@ The **🔎 Περισσότερα για το βιβλίο** card (in both modes
 
 | Button | What you get | How it is checked |
 |---|---|---|
-| **👥 Πρόσωπα & όροι** | The people (role, relations to others) and, for non-fiction or invented worlds, the key terms with a one-line definition, each with the page where it first appears. | A name or term the book does not contain is left out; the first page is found in the book itself. |
+| **👥 Πρόσωπα & όροι** | The people (role, relations to others) and, for non-fiction or invented worlds, the key terms with a one-line definition, each with the page where it first appears. | A name or term the book does not contain is left out; the first page is found in the book itself. Only the work's own pages are read: not the title page, contents, acknowledgments, notes or licence, and not the names under epigraphs, so the author and quoted writers are not listed. A short form (“Szpindel”) joins its full name (“Isaac Szpindel”) and still goes to the Glossary; a ship, planet or place is a term, not a person. A description written in the wrong language is left out (the notes say how many), the name stays. |
 | **📑 Ανά κεφάλαιο** | Two to four sentences for every chapter, under its title, with its pages. | Chapters come from the EPUB's chapters, or else from the PDF's bookmarks, the table of contents (even without page numbers) and chapter headings; a book without any is cut into equal parts. A very long part (a novel in a few long parts) comes in pieces of about 30 pages, shown as “(2/4)”, so its middle is summarised too. Acknowledgments, licences, contents and indexes are left out. A chapter the answer left out is asked again. |
+| **📖 Ένα κεφάλαιο → 📖 Αναλυτικά** | One chapter you choose from the list (the same chapters, and pieces of long parts, as **📑 Ανά κεφάλαιο**), in detail: what happens, who appears, its key moments and how it ends, about 250–450 words with its pages. | Only that chapter is sent, so nothing after it can leak in. One request (and the Greek proofreading); a chapter asked again is shown without a request. |
 | **🧭 Η ιστορία ως τώρα, έως σελίδα N** | A recap of everything up to the page (EPUB: chapter) you have reached, to pick a book up again. | Only the pages up to N are sent, so nothing later can leak in. |
 | **📣 Οπισθόφυλλο** | An 80–130-word back-cover text that sets up the premise and stops before the ending or the twists. | Length and language. It also becomes the book's description in the e-reader catalogue (📲 Συσκευές). |
 | **❝ Αποσπάσματα** | Up to 12 memorable passages, spread over the book, each with its page and a line on why it matters. | Every passage is searched for word for word in the book; one that is not found exactly is left out (the notes say how many), and a wrong page is corrected. Passages stay in the book's own language. |
@@ -580,13 +581,13 @@ The **🔎 Περισσότερα για το βιβλίο** card (in both modes
 
 **👥 → 📚 Glossary.** When the characters list is in Greek and the book is not, **➕ Ονόματα στο Γλωσσάρι** adds every name and term with its Greek spelling to the Glossary (General category), so a translation of the book writes them the same way everywhere.
 
-**Requests:** a short book is one request for each of these. A long book is read in parts of about 45,000 characters (about one request per part), plus one more for the chronological order of the timeline; the blurb, the recap and the study guide use the same section notes as the summaries.
+**Requests:** a short book is one request for each of these. A long book is read in parts of about 45,000 characters (about one request per part), plus one more for the chronological order of the timeline; the blurb, the recap and the study guide use the same section notes as the summaries. With several Gemini keys the parts are read at the same time, two per key (up to six): the same requests and the same result, in much less time (Blindsight's characters: 15 parts in 36 seconds with 6 keys).
 
 ### 💬 Ask the Book
 Type a question in **💬 Ρωτήστε το βιβλίο** and press Enter or **💬 Ερώτηση**.
 * The answer comes only from the book's text, with the pages it rests on, for example `(σ. 42)`. When the book does not answer the question, it says so instead of guessing.
 * It is written in the language of the question (or in the text language you chose).
-* A book of up to about 350,000 characters (about 200 pages) is sent whole. A longer one sends the pages that share the most words with the question, with the pages next to them.
+* A book of up to about 350,000 characters (about 200 pages) is sent whole. For a longer one, a small request to a light model first turns the question into search words in the book's own language (a Greek question about an English book shares no word with it), and the pages that hold them are sent, with the pages next to them. When none matches, pages spread over the whole book are sent. A **📑 Ανά κεφάλαιο** made earlier goes along as an overview, which helps questions about the whole story or its ending.
 * Each question is **one large Gemini request**. The same question asked again is answered from the cache.
 * The last 30 questions and answers are kept with the book and shown under the box.
 

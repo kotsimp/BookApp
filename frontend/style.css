@@ -1932,6 +1932,7 @@ html:not([lang="en"]) .help-lang[lang="en"] { display: none; }
 .ins-ask-row { display: flex; gap: 8px; align-items: center; }
 .ins-ask-row .form-input { flex: 1; min-width: 0; }
 .ins-ask-row .btn-primary { width: auto; flex: none; padding: 10px 16px; }
+.ins-chapter-select { flex: 1 1 220px; min-width: 0; max-width: 100%; width: auto; }
 .ins-answers { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 .ins-answer { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; font-size: 0.9rem; line-height: 1.55; }
 .ins-q { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
