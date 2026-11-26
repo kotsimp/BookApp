@@ -396,12 +396,7 @@ async function exportInsight(fmt) {
     });
     if (!res.ok) throw new Error(await parseApiError(res, 'Η εξαγωγή αρχείου απέτυχε'));
     const data = await res.json();
-    const a = document.createElement('a');
-    a.href = `${_insApiOrigin()}${data.url}`;
-    a.download = data.file_name || '';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    saveFile(`${_insApiOrigin()}${data.url}`, data.file_name || 'insight');  // the iPhone app keeps its page
   } catch (err) {
     showInsightsError(_insFriendlyNetworkError(err));
   }

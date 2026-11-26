@@ -2420,6 +2420,113 @@ function setStatusBadge(prefix, status) {
   badge.innerHTML = `<span class="status-dot"></span> ${escHtml(labels[status] || status)}`;
 }
 
+// ── Files in the iPhone / iPad Home Screen app ──
+// There a downloaded file opens in the app's own window, which has no back button, and the app is lost until it is
+// closed. A new window would not help: it does not share the app's sign-in. So the app fetches the file itself and
+// hands it to the Share sheet (Save to Files, Books, Mail…), staying where it was. Elsewhere files download as before.
+const DOWNLOAD_URL_RE = /\/api\/(?:download\/|insights\/[^/?#]+\/files\/)/;
+
+function filesTrapTheApp() {
+  try {
+    const nav = typeof navigator !== 'undefined' ? navigator : {};
+    const ios = /iPhone|iPad|iPod/.test(nav.userAgent || '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
+    const standalone = nav.standalone === true
+      || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+    return ios && standalone;
+  } catch (_) {
+    return false;
+  }
+}
+
+function _downloadName(res, url) {
+  const cd = res.headers.get('Content-Disposition') || '';
+  const star = cd.match(/filename\*=UTF-8''([^;]+)/i);
+  if (star) {
+    try { return decodeURIComponent(star[1]); } catch (_) { /* the plain name below */ }
+  }
+  const plain = cd.match(/filename="?([^";]+)"?/i);
+  if (plain) return plain[1];
+  try { return decodeURIComponent(url.split('?')[0].split('/').pop()); } catch (_) { return 'file'; }
+}
+
+async function _shareFile(file) {
+  await navigator.share({ files: [file], title: file.name });
+}
+
+// The tap that asked for the file has expired while it was prepared: one more tap shares it
+let _readyFile = null;
+
+function showFileReady(file) {
+  _readyFile = file;
+  document.getElementById('file-ready-name').textContent = file.name;
+  document.getElementById('file-ready-bar').style.display = 'flex';
+}
+
+function hideFileReady() {
+  _readyFile = null;
+  const bar = document.getElementById('file-ready-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+async function shareReadyFile() {
+  if (!_readyFile) {
+    hideFileReady();
+    return;
+  }
+  try {
+    await _shareFile(_readyFile);
+    hideFileReady();
+  } catch (err) {
+    if (!err || err.name !== 'AbortError') toast(`❌ ${err?.message || err}`, 'error');
+  }
+}
+
+async function _shareFromApp(url, fallbackName) {
+  toast('⏳ Προετοιμασία αρχείου…', 'info');
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(await parseApiError(res, 'Η λήψη του αρχείου απέτυχε'));
+  const blob = await res.blob();
+  const name = _downloadName(res, url) || fallbackName || 'file';
+  const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+  if (!(navigator.canShare && navigator.canShare({ files: [file] }))) {
+    window.location.href = url;  // no Share sheet for files on this device: the old way
+    return;
+  }
+  try {
+    await _shareFile(file);
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;  // the user closed the Share sheet
+    showFileReady(file);
+  }
+}
+
+// Every download goes through here (buttons, Book Insights exports, the History's links)
+function saveFile(url, fileName = '') {
+  if (filesTrapTheApp()) {
+    _shareFromApp(url, fileName).catch((err) => toast(`❌ ${err?.message || err}`, 'error'));
+    return;
+  }
+  if (!fileName) {
+    window.location.href = url;
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// Plain download links (the History, the Book Insights MP3); buttons with their own onclick call saveFile themselves
+document.addEventListener('click', (event) => {
+  if (!filesTrapTheApp()) return;
+  const link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+  if (!link || link.hasAttribute('onclick') || !DOWNLOAD_URL_RE.test(link.getAttribute('href') || '')) return;
+  event.preventDefault();
+  saveFile(link.href, link.getAttribute('download') || '');
+}, true);
+
 async function downloadOutput(prefix, overrideFmt = null) {
   const jobId = state[prefix].jobId;
   if (!jobId) return;
@@ -2432,11 +2539,9 @@ async function downloadOutput(prefix, overrideFmt = null) {
     if (overrideFmt) chooseResultFormat(overrideFmt);  // the main button then names and fetches this format too
     const fmt = overrideFmt || document.getElementById('tr-output-format')?.value || 'txt';
     const layout = document.getElementById('tr-layout-mode')?.value || 'standard';
-    const targetUrl = `${API}/download/${jobId}?format=${fmt}&layout=${layout}`;
-    window.location.href = targetUrl;
+    saveFile(`${API}/download/${jobId}?format=${fmt}&layout=${layout}`);
   } else {
-    const targetUrl = `${API}/download/${jobId}?format=${overrideFmt || 'mp3'}`; // not "latest output": that may be a PDF
-    window.location.href = targetUrl;
+    saveFile(`${API}/download/${jobId}?format=${overrideFmt || 'mp3'}`); // not "latest output": that may be a PDF
   }
 }
 
@@ -2450,7 +2555,7 @@ function downloadBilingual() {
   }
   const chosen = (document.getElementById('tr-output-format')?.value || 'pdf').toLowerCase();
   const fmt = ['pdf', 'docx', 'epub'].includes(chosen) ? chosen : 'pdf';
-  window.location.href = `${API}/download/${encodeURIComponent(jobId)}/bilingual?format=${fmt}`;
+  saveFile(`${API}/download/${encodeURIComponent(jobId)}/bilingual?format=${fmt}`);
 }
 
 function downloadOutputM4b() {

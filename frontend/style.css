@@ -872,6 +872,27 @@ select option:disabled {
   font-size: 0.9rem;
 }
 
+/* A file ready for the Share sheet (iPhone / iPad Home Screen app) */
+.file-ready-bar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 10000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-option);
+  border: 1px solid rgba(16,185,129,0.45);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  font-size: 0.9rem;
+}
+.file-ready-text { flex: 1 1 100%; overflow-wrap: anywhere; }
+.file-ready-bar .btn-primary { width: auto; flex: 1 1 auto; }
+
 .toast-success { border-color: rgba(16,185,129,0.4); }
 .toast-error   { border-color: rgba(244,63,94,0.4); }
 .toast-info    { border-color: rgba(6,182,212,0.4); }

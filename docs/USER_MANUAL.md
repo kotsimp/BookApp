@@ -571,7 +571,7 @@ The **🔎 Περισσότερα για το βιβλίο** card (in both modes
 | Button | What you get | How it is checked |
 |---|---|---|
 | **👥 Πρόσωπα & όροι** | The people (role, relations to others) and, for non-fiction or invented worlds, the key terms with a one-line definition, each with the page where it first appears. | A name or term the book does not contain is left out; the first page is found in the book itself. |
-| **📑 Ανά κεφάλαιο** | Two to four sentences for every chapter, under its title, with its pages. | Chapters come from the EPUB's chapters or the book's chapter headings; a book without headings is cut into equal parts. A chapter the answer left out is asked again. |
+| **📑 Ανά κεφάλαιο** | Two to four sentences for every chapter, under its title, with its pages. | Chapters come from the EPUB's chapters, or else from the PDF's bookmarks, the table of contents (even without page numbers) and chapter headings; a book without any is cut into equal parts. A very long part (a novel in a few long parts) comes in pieces of about 30 pages, shown as “(2/4)”, so its middle is summarised too. Acknowledgments, licences, contents and indexes are left out. A chapter the answer left out is asked again. |
 | **🧭 Η ιστορία ως τώρα, έως σελίδα N** | A recap of everything up to the page (EPUB: chapter) you have reached, to pick a book up again. | Only the pages up to N are sent, so nothing later can leak in. |
 | **📣 Οπισθόφυλλο** | An 80–130-word back-cover text that sets up the premise and stops before the ending or the twists. | Length and language. It also becomes the book's description in the e-reader catalogue (📲 Συσκευές). |
 | **❝ Αποσπάσματα** | Up to 12 memorable passages, spread over the book, each with its page and a line on why it matters. | Every passage is searched for word for word in the book; one that is not found exactly is left out (the notes say how many), and a wrong page is corrected. Passages stay in the book's own language. |
@@ -660,6 +660,9 @@ Yes. On a server shared by several people, your administrator switches on **user
 
 #### ❓ How do I put BookApp on my iPhone or iPad home screen?
 Open BookApp in Safari, tap **Share** (the square with the arrow) and then **Add to Home Screen**. The shortcut shows BookApp's icon (a stack of books) and the name **BookApp**, and opens the app in Safari. The same icon shows in the tabs of Chrome, Firefox, Safari and Edge, and on Android's home screen. A shortcut or bookmark made before the icon existed keeps its old letter: delete it and add it again. A browser may also need a reload (or a restart) to update the tab icon.
+
+#### ❓ A downloaded file opened over the app on my iPhone and I could not go back.
+Since iOS 26 a Home Screen shortcut opens BookApp as an app of its own, without Safari's buttons. A file opened there used to cover the app with no way back. Now, in the Home Screen app, every download (a translation, an audiobook, the bilingual edition, a Book Insights PDF, DOCX, TXT or MP3, the History's links) opens the iPhone's **Share** sheet: choose **Save to Files**, **Books**, **Mail** and so on, and BookApp stays where it was. If the file took a while to prepare, a bar **✅ The file is ready** appears at the bottom: tap **📤 Save or share**. In Safari and on computers and Android, files download as before.
 
 #### ❓ Do I need to pay for an API key?
 * **No.** Microsoft Edge neural voices are free, and so is a Google Gemini API key from Google AI Studio. Translation without any key uses Google's free web service and MyMemory, but Google currently refuses most automated requests, so a long book without a key may stop with a message. A free Gemini key makes translation reliable; it is also needed for AI Polish and for scanned PDFs (books and comics).

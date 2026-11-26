@@ -29,10 +29,11 @@ from backend.book_insights import InsightsError, OUTPUT_LANGUAGES
 
 logger = logging.getLogger(__name__)
 
-EXTRA_VERSION = "1.1"   # bump when prompts/checks change: stored results are made again
+EXTRA_VERSION = "1.2"   # bump when prompts/checks change: stored results are made again
 SECTION_CHARS = 45_000  # one request's share of a long book (as the notes of book_insights)
-CHAPTER_BATCH_CHARS = 60_000
-CHAPTER_MAX_CHARS = 110_000  # a longer chapter is sent as its beginning and end
+CHAPTER_BATCH_CHARS = 120_000
+CHAPTER_MAX_CHARS = 110_000  # a longer chapter (a part of a novel)
+PIECE_CHARS = 60_000  # ... is summarised in pieces of about this size, cut where pages end
 ASK_FULL_CHARS = 350_000  # a book up to this size goes whole with a question; a longer one by its relevant parts
 MAX_PEOPLE = 40
 MAX_TERMS = 40
@@ -254,6 +255,7 @@ class _Ctx:
     words: int
     until: Optional[int] = None
     progress: Optional[Callable[[int, str], None]] = None
+    outline: List[Tuple[str, int]] = field(default_factory=list)  # a PDF's bookmarks (chapter by chapter)
     warnings: List[str] = field(default_factory=list)
 
     def step(self, pct: int, text: str) -> None:
@@ -399,31 +401,141 @@ async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
 
 # ---- chapter by chapter ----
 
-def detect_chapters(pages: List[Tuple[int, str]], unit: str) -> List[Dict[str, Any]]:
-    """[{n, title (None: an untitled part), first, last, text}] in order. EPUB: its chapters; else the chapter
-    headings; a book without headings is cut into equal parts."""
-    from backend.exporter import _is_chapter_heading
+def pdf_outline(file_path: str, file_type: str) -> List[Tuple[str, int]]:
+    """A PDF's bookmarks as [(title, page)], as deep as they go while they stay a chapter list (at most 80);
+    [] for other files or a PDF without bookmarks."""
+    if (file_type or "").lower().lstrip(".") != "pdf":
+        return []
+    try:
+        import pymupdf
+        with pymupdf.open(file_path) as doc:
+            toc = doc.get_toc(simple=True)
+    except Exception as e:
+        logger.debug(f"No PDF bookmarks: {e}")
+        return []
+    entries = [(int(level), str(title).strip(), int(page)) for level, title, page in toc
+               if str(title).strip() and int(page) > 0]
+    if not entries:
+        return []
+    depth = min(level for level, _, _ in entries)
+    while (any(level == depth + 1 for level, _, _ in entries)
+           and sum(1 for level, _, _ in entries if level <= depth + 1) <= 80):
+        depth += 1
+    return [(title, page) for level, title, page in entries if level <= depth]
+
+
+def _listed_titles(pages: List[Tuple[int, str]]) -> Tuple[Optional[int], List[Tuple[str, int]]]:
+    """A contents list near the start, with or without page numbers: (its page, [(title, page it opens)]) when at
+    least three of its short lines come back later as lines of their own, in order. Else (None, [])."""
+    from backend.exporter import _TOC_LINE_RE, _toc_key
+    keys = [{_toc_key(ln) for ln in t.split("\n") if 0 < len(ln.strip()) <= 90} for _, t in pages]
+    for idx, (n, t) in enumerate(pages[:max(10, len(pages) // 20)]):
+        lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
+        titles = []
+        for ln in lines:
+            m = _TOC_LINE_RE.match(ln)
+            title = m.group("title").rstrip(" .") if m else ln
+            if len(title) <= 80 and not re.fullmatch(r"\d{1,4}", title) and not re.search(r"[.!?;,…]$", title):
+                titles.append(title)
+        if len(titles) < 3 or len(titles) < 0.6 * len(lines):
+            continue
+        found: List[Tuple[str, int]] = []
+        start = idx + 1
+        for title in titles:
+            key = _toc_key(title)
+            hit = next((j for j in range(start, len(pages)) if key in keys[j]), None)
+            if hit is not None:
+                found.append((title, pages[hit][0]))
+                start = hit
+        # the titles open pages across the book, not lines that come back near each other (a poem's refrain)
+        opened = sorted({p for _, p in found})
+        if len(opened) >= 3 and opened[-1] - opened[0] >= (pages[-1][0] - n) / 3:
+            return n, found
+    return None, []
+
+
+# Front and back matter: no chapter of the work. Compared accent-free in lower case.
+_NOT_A_CHAPTER_RE = re.compile(
+    r"^(?:cover|title page|copyright|(?:table of )?contents|dedication|acknowledg(?:e)?ments?|index|about the author"
+    r"|also by\b.*|(?:creative commons )?licen[cs](?:e|ing)\b.*|εξωφυλλο|περιεχομενα|αφιερωση|ευχαριστιες"
+    r"|ευρετηριο|αδεια\b.*|σχετικα με τον συγγραφεα)$"
+)
+
+
+def _split_long(c: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """A chapter longer than CHAPTER_MAX_CHARS as pieces of about PIECE_CHARS, cut where a page ends (or, in an
+    EPUB chapter, where a sentence ends), so its middle is summarised too."""
+    units = c.get("units") or []
+    if len(c["text"]) <= CHAPTER_MAX_CHARS or not units:
+        return [c]
+    target = len(c["text"]) / -(-len(c["text"]) // PIECE_CHARS)
+    groups: List[List[Tuple[int, str]]] = [[]]
+    size = 0
+    for i, (page, ln) in enumerate(units):
+        groups[-1].append((page, ln))
+        size += len(ln) + 1
+        nxt = units[i + 1][0] if i + 1 < len(units) else None
+        if size >= target and nxt is not None and (nxt != page or (c["first"] == c["last"]
+                                                                  and re.search(r"[.!?…\"”»]$", ln.strip()))):
+            groups.append([])
+            size = 0
+    groups = [g for g in groups if g]
+    if len(groups) < 2:
+        return [c]
+    return [{"title": c["title"], "first": c["first"] if k == 1 else g[0][0], "last": g[-1][0], "piece": (k, len(groups)),
+             "text": "\n".join(ln for _, ln in g).strip()} for k, g in enumerate(groups, 1)]
+
+
+def detect_chapters(pages: List[Tuple[int, str]], unit: str,
+                    outline: Optional[List[Tuple[str, int]]] = None) -> List[Dict[str, Any]]:
+    """[{n, title (None: an untitled part), first, last, text, piece?}] in order. EPUB: its chapters; else the
+    PDF's bookmarks (outline), the titles of a contents list and the chapter headings; a book without them is cut
+    into equal parts. Front and back matter is left out; a very long chapter comes in pieces (piece = (k, of))."""
+    from backend.exporter import _is_chapter_heading, _toc_key
     chapters: List[Dict[str, Any]] = []
     if unit == "chapter":
         for n, t in pages:
             first_line = t.strip().split("\n", 1)[0].strip()
             title = first_line if len(first_line) <= 80 and not re.search(r"[.!?;…]$", first_line) else None
+            lines = [(n, ln) for ln in t.split("\n")]
             if chapters and len(chapters[-1]["text"]) < 400:  # a cover or title page joins the next chapter
                 chapters[-1].update(text=chapters[-1]["text"] + "\n\n" + t, last=n, title=chapters[-1]["title"] or title)
+                chapters[-1]["units"] += lines
                 continue
-            chapters.append({"title": title, "first": n, "last": n, "text": t})
+            chapters.append({"title": title, "first": n, "last": n, "text": t, "units": lines})
         # a contents, copyright or navigation page at the end is no chapter
         chapters = [c for c in chapters if len(c["text"].strip()) >= 300] or chapters
     else:
+        contents_page, listed = _listed_titles(pages)
+        marks: Dict[int, List[Tuple[str, str]]] = {}
+        for title, page in (outline or listed):
+            marks.setdefault(page, []).append((_toc_key(title), title))
         lead: List[str] = []
         lead_first: Optional[int] = None
+
+        def start(title: str, n: int) -> None:
+            chapters.append({"title": title, "first": n, "last": n, "text": "", "units": []})
+
         for n, t in pages:
-            for ln in t.split("\n"):
-                if _is_chapter_heading(ln):
-                    chapters.append({"title": ln.strip(), "first": n, "last": n, "text": ""})
+            lines = t.split("\n")
+            wanted = [k for k, _ in marks.get(n, [])]
+            heads = []
+            for ln in lines:
+                key = _toc_key(ln) if n != contents_page and 0 < len(ln.strip()) <= 90 else ""
+                if key and key in wanted:
+                    wanted.remove(key)
+                    heads.append(True)
+                else:
+                    heads.append(n != contents_page and _is_chapter_heading(ln))
+            if marks.get(n) and not any(heads):  # bookmarked, but no line of the page is its title
+                start(marks[n][0][1], n)
+            for ln, head in zip(lines, heads):
+                if head:
+                    start(ln.strip(), n)
                     continue
                 if chapters:
                     chapters[-1]["text"] += ln + "\n"
+                    chapters[-1]["units"].append((n, ln))
                     chapters[-1]["last"] = n
                 else:
                     lead.append(ln)
@@ -432,6 +544,9 @@ def detect_chapters(pages: List[Tuple[int, str]], unit: str) -> List[Dict[str, A
         if chapters and len(lead_text) >= 1500:  # text before the first heading that is more than a title page
             chapters.insert(0, {"title": None, "first": lead_first, "last": chapters[0]["first"], "text": lead_text})
         chapters = [c for c in chapters if len(c["text"].strip()) >= 200]
+    chapters = [c for c in chapters
+                if not (c["title"] and _NOT_A_CHAPTER_RE.match(_toc_key(c["title"])))] or chapters
+    chapters = [piece for c in chapters for piece in _split_long(c)]
     if len(chapters) < 2:
         total = sum(len(t) for _, t in pages)
         parts = max(2, min(12, round(total / 25_000)))
@@ -440,12 +555,14 @@ def detect_chapters(pages: List[Tuple[int, str]], unit: str) -> List[Dict[str, A
                     for grp in (pages[i:i + per] for i in range(0, len(pages), per))]
     for i, c in enumerate(chapters, 1):
         c["n"] = i
+        c.pop("units", None)
     return chapters
 
 
 _CHAPTERS_TASK = (
     "TASK: summarise EACH chapter below in 2-4 sentences: what happens or what is argued in it. Chapters are opened "
-    "by <<CH n>> and their title (if any). Use ONLY what each chapter says; never mention later chapters.\n"
+    "by <<CH n>> and their title (if any); a title ending in (k/m) is part k of m of a long chapter: summarise that "
+    "part. Use ONLY what each chapter says; never mention later chapters.\n"
     "Return ONLY a JSON object: {\"chapters\": [{\"n\": n, \"title\": \"the chapter's title in the output language, "
     "or a short title of your own when it has none\", \"summary\": \"...\"}]}, one entry for each <<CH n>>, in order. "
     "No other text."
@@ -456,11 +573,12 @@ def _chapter_text(c: Dict[str, Any]) -> str:
     text = c["text"].strip()
     if len(text) > CHAPTER_MAX_CHARS:  # its beginning and its end
         text = text[:CHAPTER_MAX_CHARS * 6 // 10] + "\n[…]\n" + text[-CHAPTER_MAX_CHARS * 4 // 10:]
-    return f"<<CH {c['n']}>> {c['title'] or ''}\n{text}"
+    piece = f" ({c['piece'][0]}/{c['piece'][1]})" if c.get("piece") else ""
+    return f"<<CH {c['n']}>> {c['title'] or ''}{piece}\n{text}"
 
 
 async def _chapter_summaries(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
-    chapters = detect_chapters(ctx.pages, ctx.unit)
+    chapters = detect_chapters(ctx.pages, ctx.unit, ctx.outline)
     batches: List[List[Dict[str, Any]]] = []
     size = 0
     for c in chapters:
@@ -498,10 +616,30 @@ async def _chapter_summaries(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
     if problems:
         raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)
     w = _words(ctx.lang)
+
+    def bare(t: str) -> str:  # without the "(k/m)" the model may have copied
+        return re.sub(r"\s*[(\[][^()\[\]]*[)\]]\s*$", "", t or "").strip()
+
+    # The pieces of a long chapter share one title: the model's most frequent one in the output language
+    # (asked separately, it may write "Θησέας" for one piece and "Theseus" for the next).
+    piece_title: Dict[int, str] = {}
+    group: List[Dict[str, Any]] = []
+    for c in chapters + [{}]:
+        if group and (not c.get("piece") or c["piece"][0] == 1):
+            names = [bare(found.get(p["n"], {}).get("title", "")) for p in group]
+            names = [t for t in names if t]
+            fitting = [t for t in names if (_greek_share(t) >= 0.5) == (ctx.lang == "greek")] or names
+            chosen = max(fitting, key=fitting.count) if fitting else (group[0]["title"] or w["part"])
+            piece_title.update((p["n"], chosen) for p in group)
+            group = []
+        if c.get("piece"):
+            group.append(c)
     blocks, rows = [], []
     for c in chapters:
         got = found.get(c["n"], {})
         title = got.get("title") or c["title"] or f"{w['part']} {c['n']}"
+        if c.get("piece"):  # the part's number is ours
+            title = f"{piece_title[c['n']]} ({c['piece'][0]}/{c['piece'][1]})"
         ref = _ref(ctx.lang, ctx.unit, c["first"], c["last"])
         blocks.append(f"## {c['n']}. {title}\n{got.get('summary', '—')} ({ref})")
         rows.append({"n": c["n"], "title": title, "first": c["first"], "last": c["last"],
@@ -758,7 +896,8 @@ async def generate_extra(
         import aiohttp
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=240))
     ctx = _Ctx(pages=pages, unit=unit, full=full, lang=out_lang, src_lang=src_lang, api_key=api_key, session=session,
-               title=title, words=info["meaningful_words"], until=until, progress=progress)
+               title=title, words=info["meaningful_words"], until=until, progress=progress,
+               outline=pdf_outline(file_path, file_type) if insight_type == "chapter_summaries" else [])
     try:
         ctx.step(5, "Προετοιμασία κειμένου…")
         text, data = await _GENERATORS[insight_type](ctx)

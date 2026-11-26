@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.13.0" />
-  <script src="i18n.js?v=1.5.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.14.0" />
+  <script src="i18n.js?v=1.6.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -1567,7 +1567,18 @@
         <h4>🎧 Ηχητικό βιβλίο</h4>
         <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια. Με <strong>📖 Κείμενο</strong> το κείμενο φωτίζεται καθώς ακούγεται· πατήστε μια πρόταση για να πάτε εκεί.</p>
         <h4>💡 Book Insights</h4>
-        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου, στην οθόνη ή ως PDF, DOCX ή TXT. Στο <strong>🔎 Περισσότερα για το βιβλίο</strong>: πρόσωπα &amp; όροι (που περνούν και στο Γλωσσάρι), περίληψη ανά κεφάλαιο, η ιστορία ως τώρα έως τη σελίδα σας, οπισθόφυλλο χωρίς να αποκαλύπτει το τέλος, αποσπάσματα ελεγμένα λέξη προς λέξη, οδηγός μελέτης, χρονολόγιο και ερωτήσεις στο βιβλίο. Χρειάζεται κλειδί Gemini.</p>
+        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου. Στο <strong>🔎 Περισσότερα για το βιβλίο</strong> διαλέγετε τη <strong>Γλώσσα κειμένου</strong> και ένα από τα παρακάτω:</p>
+        <ul>
+          <li><strong>👥 Πρόσωπα &amp; όροι</strong>: ποιος είναι ποιος και οι βασικοί όροι, με τη σελίδα όπου πρωτοεμφανίζονται. Ονόματα που δεν υπάρχουν στο βιβλίο αφαιρούνται. Με <strong>➕ Ονόματα στο Γλωσσάρι</strong> η ελληνική τους γραφή περνά στο Γλωσσάρι, ώστε η μετάφραση να τα γράφει παντού ίδια.</li>
+          <li><strong>📑 Ανά κεφάλαιο</strong>: λίγες γραμμές για κάθε κεφάλαιο ή μέρος του βιβλίου, με τις σελίδες του. Ένα πολύ μεγάλο μέρος χωρίζεται σε κομμάτια, π.χ. «(2/4)».</li>
+          <li><strong>🧭 Η ιστορία ως τώρα</strong>: γράψτε ως ποια σελίδα (ή κεφάλαιο) έχετε διαβάσει και πατήστε <strong>🧭 Ανακεφαλαίωση</strong>. Γράφεται μόνο από αυτές τις σελίδες.</li>
+          <li><strong>📣 Οπισθόφυλλο</strong>: κείμενο που δεν αποκαλύπτει το τέλος. Γίνεται και η περιγραφή του βιβλίου στον κατάλογο του <strong>📲 Συσκευές</strong>.</li>
+          <li><strong>❝ Αποσπάσματα</strong>: σημαντικά αποσπάσματα με τη σελίδα τους. Όποιο δεν βρίσκεται λέξη προς λέξη στο βιβλίο αφαιρείται.</li>
+          <li><strong>🎓 Οδηγός μελέτης</strong>: θέματα, ερωτήσεις για συζήτηση, κουίζ και απαντήσεις.</li>
+          <li><strong>🕰️ Χρονολόγιο</strong>: τα γεγονότα με τη σειρά που συνέβησαν, όχι με τη σειρά που αφηγούνται.</li>
+          <li><strong>💬 Ρωτήστε το βιβλίο</strong>: απαντήσεις μόνο από το κείμενο, με τις σελίδες όπου στηρίζονται.</li>
+        </ul>
+        <p>Κάθε αποτέλεσμα φαίνεται στην οθόνη, κατεβαίνει ως PDF, DOCX ή TXT, ακούγεται με <strong>🎧 Δημιουργία ήχου</strong> και κρατιέται με το βιβλίο. Χρειάζεται κλειδί Gemini.</p>
         <h4>🔑 Κλειδιά Gemini</h4>
         <p>Η μετάφραση με AI γίνεται με το Google Gemini. Ένα δωρεάν κλειδί φτιάχνεται στο <strong>aistudio.google.com/apikey</strong> και το προσθέτει ο διαχειριστής στο <strong>🔑 Gemini API Key</strong>. Χωράνε έως 8 κλειδιά, που δουλεύουν εκ περιτροπής.</p>
         <h4>🧰 Επίσης</h4>
@@ -1618,6 +1629,18 @@
             <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο. Κάθε ερώτηση στέλνει όλο το βιβλίο (ή, σε πολύ μεγάλο, τα σχετικά μέρη του) σε ένα μεγάλο αίτημα Gemini.</p>
           </details>
           <details>
+            <summary>Πώς βρίσκει τα κεφάλαια το «Ανά κεφάλαιο»;</summary>
+            <p>Σε ένα EPUB παίρνει τα κεφάλαιά του. Σε PDF, DOCX ή TXT χρησιμοποιεί τους σελιδοδείκτες του PDF, τον πίνακα περιεχομένων (και χωρίς αριθμούς σελίδων) και επικεφαλίδες όπως «Κεφάλαιο 3» ή «Πρόλογος»· αν δεν βρει τίποτα, χωρίζει το βιβλίο σε ίσα μέρη. Ένα πολύ μεγάλο μέρος, όπως σε μυθιστορήματα με λίγα, μεγάλα μέρη, χωρίζεται σε κομμάτια των περίπου 30 σελίδων, ώστε να περιληφθεί όλο. Ευχαριστίες, άδεια χρήσης, περιεχόμενα και ευρετήριο παραλείπονται.</p>
+          </details>
+          <details>
+            <summary>Θα μου αποκαλύψει τη συνέχεια η «Ιστορία ως τώρα»;</summary>
+            <p>Όχι. Στο Gemini στέλνονται μόνο οι σελίδες ως εκείνη που γράψατε, οπότε δεν ξέρει τι ακολουθεί. Και το <strong>📣 Οπισθόφυλλο</strong> δεν αποκαλύπτει το τέλος. Τα υπόλοιπα (περιλήψεις, ανά κεφάλαιο, χρονολόγιο) καλύπτουν όλο το βιβλίο.</p>
+          </details>
+          <details>
+            <summary>Πόσα αιτήματα Gemini χρειάζονται τα Book Insights;</summary>
+            <p>Ένα σύντομο βιβλίο θέλει λίγα. Ένα μεγάλο μυθιστόρημα διαβάζεται ενότητα προς ενότητα, οπότε θέλει περισσότερα: π.χ. περίπου 6 για το «Ανά κεφάλαιο» ενός βιβλίου 300 σελίδων. Κάθε ερώτηση στο βιβλίο είναι ένα μεγάλο αίτημα. Τα αποτελέσματα κρατιούνται με το βιβλίο, οπότε όταν τα ξανανοίγετε δεν ξοδεύεται κανένα αίτημα.</p>
+          </details>
+          <details>
             <summary>Μπορώ να διαβάζω τα βιβλία σε e-reader ή tablet;</summary>
             <p>Ναι: στο <strong>📲 Συσκευές</strong> πατήστε <strong>🔗 Νέος σύνδεσμος</strong> και προσθέστε τον ως κατάλογο OPDS σε εφαρμογή όπως το KOReader ή το Moon+ Reader. Βλέπετε τα τελειωμένα βιβλία σας και τα κατεβάζετε ως EPUB, PDF ή δίγλωσσο EPUB (τα κόμικ ως CBZ). Ο σύνδεσμος είναι μυστικός· ένας νέος σταματά τον παλιό.</p>
           </details>
@@ -1642,7 +1665,7 @@
           </details>
           <details>
             <summary>Πώς βάζω την εφαρμογή στην οθόνη του iPhone;</summary>
-            <p>Στο Safari πατήστε <strong>Κοινοποίηση</strong> → <strong>Προσθήκη στην οθόνη Αφετηρίας</strong>. Εμφανίζεται με το εικονίδιο της εφαρμογής.</p>
+            <p>Στο Safari πατήστε <strong>Κοινοποίηση</strong> → <strong>Προσθήκη στην οθόνη Αφετηρίας</strong>. Εμφανίζεται με το εικονίδιο της εφαρμογής. Εκεί, κάθε αρχείο που κατεβάζετε (μετάφραση, ηχητικό, Book Insights) ανοίγει το φύλλο <strong>Κοινοποίησης</strong> του iPhone: διαλέξτε <strong>Αποθήκευση στα Αρχεία</strong>, <strong>Βιβλία</strong> κ.λπ. και η εφαρμογή μένει εκεί που ήταν. Αν εμφανιστεί η μπάρα <strong>✅ Το αρχείο είναι έτοιμο</strong>, πατήστε <strong>📤 Αποθήκευση ή κοινοποίηση</strong>.</p>
           </details>
           <details>
             <summary>Μετά από ενημέρωση βλέπω ακόμη την παλιά εμφάνιση.</summary>
@@ -1667,7 +1690,18 @@
         <h4>🎧 Audiobook</h4>
         <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters. With <strong>📖 Text</strong> the text lights up as it is read; press a sentence to go there.</p>
         <h4>💡 Book Insights</h4>
-        <p>A short summary or a full synopsis of a book, on screen or as PDF, DOCX or TXT. Under <strong>🔎 More about the book</strong>: characters &amp; terms (which can go to the Glossary), chapter-by-chapter summaries, the story so far up to your page, a blurb that keeps the ending secret, quotes checked word for word, a study guide, a timeline, and questions to the book. It needs a Gemini key.</p>
+        <p>A short summary or a full synopsis of a book. Under <strong>🔎 More about the book</strong> you choose the <strong>Text language</strong> and one of these:</p>
+        <ul>
+          <li><strong>👥 Characters &amp; terms</strong>: who is who and the key terms, with the page where each first appears. Names the book does not contain are dropped. <strong>➕ Names to the Glossary</strong> puts their Greek spelling in the Glossary, so a translation writes them the same everywhere.</li>
+          <li><strong>📑 Chapter by chapter</strong>: a few lines for each chapter or part of the book, with its pages. A very long part comes in pieces, e.g. “(2/4)”.</li>
+          <li><strong>🧭 The story so far</strong>: write the page (or chapter) you have read up to and press <strong>🧭 Recap</strong>. It is written from those pages only.</li>
+          <li><strong>📣 Back-cover blurb</strong>: a text that keeps the ending secret. It is also the book's description in the <strong>📲 Devices</strong> catalogue.</li>
+          <li><strong>❝ Quotes</strong>: memorable passages with their page. Any that is not in the book word for word is dropped.</li>
+          <li><strong>🎓 Study guide</strong>: themes, discussion questions, a quiz and its answers.</li>
+          <li><strong>🕰️ Timeline</strong>: the events in the order they happened, not the order they are told.</li>
+          <li><strong>💬 Ask the book</strong>: answers from the text only, with the pages they rest on.</li>
+        </ul>
+        <p>Every result shows on screen, downloads as PDF, DOCX or TXT, can be heard with <strong>🎧 Create audio</strong> and is kept with the book. It needs a Gemini key.</p>
         <h4>🔑 Gemini keys</h4>
         <p>AI translation uses Google Gemini. A free key is made at <strong>aistudio.google.com/apikey</strong>, and the administrator adds it under <strong>🔑 Gemini API Key</strong>. Up to 8 keys fit, and they take turns.</p>
         <h4>🧰 Also</h4>
@@ -1718,6 +1752,18 @@
             <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book. Each question sends the whole book (or, for a very long one, its related parts) in one large Gemini request.</p>
           </details>
           <details>
+            <summary>How does “Chapter by chapter” find the chapters?</summary>
+            <p>In an EPUB it takes its chapters. In a PDF, DOCX or TXT it uses the PDF's bookmarks, the table of contents (even without page numbers) and headings such as “Chapter 3” or “Prologue”; when it finds none, it cuts the book into equal parts. A very long part, as in novels with a few long parts, comes in pieces of about 30 pages, so all of it is summarised. Acknowledgments, licences, contents and indexes are left out.</p>
+          </details>
+          <details>
+            <summary>Will “The story so far” give away what comes next?</summary>
+            <p>No. Only the pages up to the one you wrote are sent to Gemini, so it does not know what follows. The <strong>📣 Back-cover blurb</strong> keeps the ending secret too. The others (summaries, chapter by chapter, timeline) cover the whole book.</p>
+          </details>
+          <details>
+            <summary>How many Gemini requests do Book Insights need?</summary>
+            <p>A short book needs a few. A long novel is read section by section, so it needs more: e.g. about 6 for “Chapter by chapter” on a 300-page book. Each question to the book is one large request. Results are kept with the book, so opening them again costs no requests.</p>
+          </details>
+          <details>
             <summary>Can I read the books on an e-reader or tablet?</summary>
             <p>Yes: in <strong>📲 Devices</strong> press <strong>🔗 New link</strong> and add it as an OPDS catalogue in an app such as KOReader or Moon+ Reader. You see your finished books and download them as EPUB, PDF or bilingual EPUB (comics as CBZ). The link is secret; a new one stops the old.</p>
           </details>
@@ -1742,7 +1788,7 @@
           </details>
           <details>
             <summary>How do I put the app on my iPhone home screen?</summary>
-            <p>In Safari press <strong>Share</strong> → <strong>Add to Home Screen</strong>. It appears with the app's icon.</p>
+            <p>In Safari press <strong>Share</strong> → <strong>Add to Home Screen</strong>. It appears with the app's icon. There, every file you download (a translation, an audiobook, Book Insights) opens the iPhone's <strong>Share</strong> sheet: choose <strong>Save to Files</strong>, <strong>Books</strong> and so on, and the app stays where it was. If the <strong>✅ The file is ready</strong> bar appears, press <strong>📤 Save or share</strong>.</p>
           </details>
           <details>
             <summary>After an update I still see the old look.</summary>
@@ -1805,9 +1851,14 @@
 
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
+<div class="file-ready-bar" id="file-ready-bar" role="status" style="display:none">
+  <span class="file-ready-text">✅ Το αρχείο είναι έτοιμο: <strong id="file-ready-name" translate="no"></strong></span>
+  <button type="button" class="btn-sm btn-primary" onclick="shareReadyFile()">📤 Αποθήκευση ή κοινοποίηση</button>
+  <button type="button" class="btn-sm btn-outline" onclick="hideFileReady()" aria-label="Κλείσιμο">✖</button>
+</div>
 
-<script src="app.js?v=2.19.2"></script>
-<script src="insights.js?v=2.11.0"></script>
+<script src="app.js?v=2.20.0"></script>
+<script src="insights.js?v=2.12.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

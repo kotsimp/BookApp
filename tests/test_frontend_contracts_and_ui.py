@@ -1606,6 +1606,109 @@ ctx.toast = () => {};
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   More about the book (insights): OK")
 
+    def test_19_files_in_the_iphone_home_screen_app(self):
+        """A download (a Book Insights export, a translation, a History link) never replaces the iPhone Home Screen
+        app with the file: the app fetches it and opens the Share sheet. Elsewhere files download as before."""
+        print("-> 19. Testing downloads in the iPhone Home Screen app...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        app_js = Path("frontend/app.js").read_text(encoding="utf-8")
+        self.assertNotIn("window.location.href = targetUrl", app_js, "downloads go through saveFile")
+        self.assertIn("saveFile(", Path("frontend/insights.js").read_text(encoding="utf-8"))
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+const appended = [];
+function makeEl(id) {
+  return { id, value: '', textContent: '', innerHTML: '', disabled: false, href: '', download: '', dataset: {}, style: { display: '' },
+    clicked: 0, setAttribute() {}, getAttribute() {}, removeAttribute() {}, appendChild() {}, click() { this.clicked += 1; },
+    remove() { this.removed = true; }, classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const calls = [];
+const listeners = [];
+const ctx = vm.createContext({ console, setTimeout: (fn) => { Promise.resolve().then(fn); return 1; }, clearTimeout() {},
+  setInterval: () => 1, clearInterval() {}, EventSource: class { close() {} }, FormData: class { append() {} },
+  Audio: class {}, URLSearchParams, localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  File: class { constructor(parts, name, opts) { this.name = name; this.type = opts.type; this.size = parts[0].size; } },
+  navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+  fetch: async (url, opts) => { calls.push({ url, opts });
+    if (url.endsWith('/insights/export')) return { ok: true, status: 200,
+      json: async () => ({ file_name: 'Book_blurb_greek.pdf', url: '/api/insights/J1/files/Book_blurb_greek.pdf' }) };
+    return { ok: true, status: 200, headers: { get: (h) => (/disposition/i.test(h) ? 'attachment; filename="Book_blurb_greek.pdf"' : null) },
+      json: async () => ({}), blob: async () => ({ size: 42, type: 'application/pdf' }) }; },
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl,
+    querySelector: () => null, hidden: false, querySelectorAll: () => [], addEventListener: (t, fn) => listeners.push([t, fn]),
+    createElement: makeEl, body: { appendChild: (el) => appended.push(el) } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8'), ctx);
+ctx.toast = () => {};
+const flush = () => new Promise((r) => setImmediate(r));
+const clickLink = (href, attrs = {}) => {
+  const link = { href: `http://127.0.0.1:8000${href}`, getAttribute: (k) => (k === 'href' ? href : attrs[k] || null),
+    hasAttribute: (k) => k in attrs };
+  let prevented = false;
+  for (const [t, fn] of listeners) if (t === 'click') fn({ target: { closest: () => link }, preventDefault: () => { prevented = true; } });
+  return prevented;
+};
+(async () => {
+  vm.runInContext("insState.jobId = 'J1'; insState.record = { insight_type: 'blurb', language: 'greek' };", ctx);
+  // a computer: the file downloads, nothing is fetched by the app
+  await ctx.exportInsight('pdf');
+  const a = appended.pop();
+  assert.ok(a && a.href.endsWith('/api/insights/J1/files/Book_blurb_greek.pdf') && a.clicked === 1);
+  assert.strictEqual(a.download, 'Book_blurb_greek.pdf');
+  vm.runInContext("state.tr.jobId = 'T9'; state.tr.status = 'done';", ctx);
+  await ctx.downloadOutput('tr', 'pdf');
+  assert.ok(ctx.window.location.href.includes('/download/T9?format=pdf'), ctx.window.location.href);
+  assert.strictEqual(clickLink('/api/download/T9?format=pdf'), false, 'links are left alone');
+  assert.strictEqual(calls.filter((c) => c.url.includes('/files/') || c.url.includes('/download/')).length, 0);
+
+  // the iPhone Home Screen app: the Share sheet, and the app keeps its page
+  const shared = [];
+  let refuse = null;
+  ctx.navigator = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)', standalone: true,
+    canShare: () => true, share: async (d) => { if (refuse) { const e = new Error(refuse); e.name = refuse; refuse = null; throw e; } shared.push(d); } };
+  ctx.window.location.href = 'http://127.0.0.1:8000/';
+  await ctx.exportInsight('pdf'); await flush();
+  assert.strictEqual(shared.length, 1);
+  assert.strictEqual(shared[0].files[0].name, 'Book_blurb_greek.pdf');
+  assert.strictEqual(shared[0].files[0].type, 'application/pdf');
+  assert.strictEqual(ctx.window.location.href, 'http://127.0.0.1:8000/', 'the app stays on its page');
+  const fetched = calls.filter((c) => c.url.endsWith('/api/insights/J1/files/Book_blurb_greek.pdf'));
+  assert.ok(fetched.length === 1 && fetched[0].opts.credentials === 'same-origin', 'fetched by the app, with its sign-in');
+  // the tap expired while the file was made: one more tap shares it
+  refuse = 'NotAllowedError';
+  await ctx.downloadOutput('tr', 'docx'); await flush();
+  assert.strictEqual(getEl('file-ready-bar').style.display, 'flex', 'the file-ready bar');
+  assert.strictEqual(getEl('file-ready-name').textContent, 'Book_blurb_greek.pdf');
+  await ctx.shareReadyFile();
+  assert.strictEqual(shared.length, 2);
+  assert.strictEqual(getEl('file-ready-bar').style.display, 'none');
+  // closed by the user: nothing more
+  refuse = 'AbortError';
+  ctx.downloadBilingual(); await flush();
+  assert.strictEqual(getEl('file-ready-bar').style.display, 'none');
+  // plain links (History, the MP3) are caught; buttons with their own onclick and other links are not
+  assert.strictEqual(clickLink('/api/download/T9?format=epub&layout=standard'), true);
+  await flush();
+  assert.strictEqual(calls.filter((c) => c.url.includes('/api/download/T9?format=epub')).length, 1);
+  assert.strictEqual(clickLink('/api/insights/J1/files/a.mp3', { download: '' }), true);
+  assert.strictEqual(clickLink('/api/download/T9?format=pdf', { onclick: "downloadOutput('tr')" }), false);
+  assert.strictEqual(clickLink('/reader.html'), false);
+  // Safari in a tab is no Home Screen app: as on a computer
+  ctx.navigator = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)', canShare: () => true, share: async () => {} };
+  assert.strictEqual(ctx.filesTrapTheApp(), false);
+  process.stdout.write('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   Downloads in the iPhone Home Screen app: OK")
+
 
 if __name__ == "__main__":
     unittest.main()

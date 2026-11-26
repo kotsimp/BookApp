@@ -131,7 +131,8 @@ class FakeGemini:
                 if self.mode == "drop_chapter" and n == "2" and not self.dropped_chapter:
                     self.dropped_chapter = True
                     continue
-                out.append({"n": int(n), "title": (f"Κεφάλαιο {n}" if greek else f"Chapter {n}"),
+                english_title = not greek or (self.mode == "mixed_titles" and int(n) % 2)  # as Gemini at times
+                out.append({"n": int(n), "title": (f"Chapter {n}" if english_title else f"Κεφάλαιο {n}"),
                             "summary": self.lines(greek, 2)})
             return json.dumps({"chapters": out}, ensure_ascii=False)
         if "THE STORY SO FAR" in sp or "BACK-COVER BLURB" in sp:
@@ -247,6 +248,73 @@ class ModuleTests(unittest.TestCase):
         self.assertGreaterEqual(len(parts), 2)
         self.assertTrue(all(p["title"] is None for p in parts))
         self.assertEqual(sum(p["last"] - p["first"] + 1 for p in parts), len(pages), "every page in one part")
+
+    def novel(self) -> Path:
+        """A novel in named parts (no 'Chapter' words), listed on a contents page without page numbers, with
+        acknowledgments at the end; the second part is long (as Blindsight: Prologue, Theseus, Rorschach...)."""
+        para = lambda i: " ".join(STORY[(i + j) % len(STORY)] for j in range(4)) + f" (Scene {i}.)"  # noqa: E731
+        pages = ["The Lighthouse\nA. Writer", "Prologue\nThe Harbour\nThe Storm\nAcknowledgments"]
+        pages.append("Prologue\n\n" + "\n\n".join(para(i) for i in range(3)))
+        pages.append("The Harbour\n\n" + "\n\n".join(para(i) for i in range(3, 6)))
+        pages += ["\n\n".join(para(i) for i in range(k, k + 3)) for k in range(6, 36, 3)]  # the Harbour goes on
+        pages.append("The Storm\n\n" + "\n\n".join(para(i) for i in range(36, 39)))
+        pages.append("\n\n".join(para(i) for i in range(39, 42)))
+        pages.append("Acknowledgments\n\nMy thanks to the keepers of the lighthouses of the Aegean, who answered my "
+                     "questions about lamps, storms and the long nights of winter, and to my editor.")
+        return write_book("\n".join(f"=== PAGE {n} ===\n{t}" for n, t in enumerate(pages, 1)), self.dir, "novel.txt")
+
+    def test_named_parts_from_a_contents_list_and_long_parts_in_pieces(self):
+        pages, unit = im.extract_pages(str(self.novel()), "txt")
+        self.assertEqual(im._listed_titles(pages)[0], 2, "page 2 is the contents list")
+        whole = im.detect_chapters(pages, unit)
+        self.assertEqual([c["title"] for c in whole], ["Prologue", "The Harbour", "The Storm"],
+                         "parts named on the contents page; not the contents page itself, nor the acknowledgments")
+        self.assertEqual([(c["first"], c["last"]) for c in whole], [(3, 3), (4, 14), (15, 16)])
+        with mock.patch.object(im, "CHAPTER_MAX_CHARS", 6000), mock.patch.object(im, "PIECE_CHARS", 3500):
+            parts = im.detect_chapters(pages, unit)
+            harbour = [c for c in parts if c["title"] == "The Harbour"]
+            self.assertGreaterEqual(len(harbour), 3, "a long part comes in pieces")
+            self.assertEqual([c["piece"] for c in harbour], [(k, len(harbour)) for k in range(1, len(harbour) + 1)])
+            self.assertEqual(harbour[0]["first"], 4)
+            self.assertEqual(harbour[-1]["last"], 14)
+            self.assertTrue(all(a["last"] + 1 == b["first"] for a, b in zip(harbour, harbour[1:])),
+                            "cut where pages end, nothing left out")
+            self.assertIn("(Scene 20.)", "".join(c["text"] for c in harbour), "its middle is there too")
+            self.assertEqual([c["n"] for c in parts], list(range(1, len(parts) + 1)))
+            self.book = self.dir / "novel.txt"
+            FAKE.mode = "mixed_titles"
+            rec = self.make("chapter_summaries")
+        titles = [c["title"] for c in rec["data"]["chapters"]]
+        self.assertEqual(titles[1:1 + len(harbour)], [f"Κεφάλαιο 2 ({k}/{len(harbour)})" for k in range(1, len(harbour) + 1)],
+                         "the pieces share one title in the output language; the piece's number is ours")
+        self.assertTrue(any("(2/" in sp_c for _, sp_c in FAKE.calls), "the model is told which piece it reads")
+        self.assertNotIn("Acknowledgments", rec["text"])
+
+    def test_pdf_bookmarks_and_a_refrain_that_is_no_contents_list(self):
+        import pymupdf
+        doc = pymupdf.open()
+        heads = {1: "Dawn", 3: None, 5: "Dusk"}  # page 3 is bookmarked 'Noon' but has no such line
+        for n in range(1, 7):
+            page = doc.new_page()
+            body = " ".join(STORY[(n + j) % len(STORY)] for j in range(4)) + f" (Page {n}.)"
+            page.insert_textbox(pymupdf.Rect(50, 50, 550, 800), (heads.get(n) or "") + "\n\n" + body, fontsize=11)
+        doc.set_toc([[1, "Part One", 1], [2, "Dawn", 1], [2, "Noon", 3], [1, "Part Two", 5], [2, "Dusk", 5]])
+        doc.save(str(self.dir / "parts.pdf"))
+        doc.close()
+        outline = im.pdf_outline(str(self.dir / "parts.pdf"), "pdf")
+        self.assertEqual(outline, [("Part One", 1), ("Dawn", 1), ("Noon", 3), ("Part Two", 5), ("Dusk", 5)],
+                         "as deep as the chapters go")
+        self.assertEqual(im.pdf_outline(str(self.book), "txt"), [])
+        pages, unit = im.extract_pages(str(self.dir / "parts.pdf"), "pdf")
+        chapters = im.detect_chapters(pages, unit, outline)
+        self.assertEqual([(c["title"], c["first"], c["last"]) for c in chapters],
+                         [("Dawn", 1, 2), ("Noon", 3, 4), ("Dusk", 5, 6)])
+        # short lines that come back soon after (a refrain) are no contents list
+        song = ["The sea is calling\nThe wind is high\nWe sail at dawn\nAnd sing"]
+        song += [f"The sea is calling\n{' '.join(STORY[:2])}\nThe wind is high\nWe sail at dawn" for _ in range(3)]
+        song += [" ".join(STORY[k % 8:k % 8 + 3]) for k in range(26)]
+        poem = write_book("\n".join(f"=== PAGE {n} ===\n{t}" for n, t in enumerate(song, 1)), self.dir, "song.txt")
+        self.assertEqual(im._listed_titles(im.extract_pages(str(poem), "txt")[0]), (None, []))
 
     # ---- each kind ----
 
