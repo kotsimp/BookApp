@@ -213,8 +213,13 @@ def _feed(token: str, own) -> str:
     return head + "".join(_entry(j, base) for j in jobs) + "</feed>"
 
 
-@router.get("/opds/{token}")
-@router.get("/opds/{token}/")
+# Every catalogue path answers HEAD as well: a reading app may check a link before it downloads it, and a refused HEAD
+# (405) left an iPhone app on "Downloading…" while Readest, which only GETs, downloaded the same book (live).
+_GET_HEAD = ["GET", "HEAD"]
+
+
+@router.api_route("/opds/{token}", methods=_GET_HEAD)
+@router.api_route("/opds/{token}/", methods=_GET_HEAD)
 async def opds_catalogue(token: str):
     from backend.request_context import reset_current_user
     ctx, own = _catalogue_user(token)
@@ -228,11 +233,12 @@ async def opds_catalogue(token: str):
     return Response(content=body, media_type=FEED_TYPE)
 
 
-@router.get("/opds/{token}/book/{job_id}/{kind}/{filename}")
-@router.get("/opds/{token}/book/{job_id}/{kind}")  # the links of earlier versions, without a file name
+@router.api_route("/opds/{token}/book/{job_id}/{kind}/{filename}", methods=_GET_HEAD)
+@router.api_route("/opds/{token}/book/{job_id}/{kind}", methods=_GET_HEAD)  # earlier versions' links, no file name
 async def opds_book(request: Request, token: str, job_id: str, kind: str, filename: Optional[str] = None):
     """A book of the catalogue, made in the asked format on demand (as the app's own downloads are). The file name
-    at the end of the link is for the reader app only."""
+    at the end of the link is for the reader app only. A HEAD gets what the download would (the file is made if
+    needed), only without its body: the app's own HEAD would answer 404 for a file not made yet."""
     from backend import main
     from backend.job_manager import get_job
     from backend.request_context import can_view_owner, reset_current_user
@@ -247,12 +253,14 @@ async def opds_book(request: Request, token: str, job_id: str, kind: str, filena
             raise HTTPException(404, "Not found.")
         if kind == "bilingual-epub":
             return await main.download_bilingual(job_id, format="epub")
-        return await main.download_output(request, job_id, format=kind, layout=None)
+        as_download = request if request.method != "HEAD" else Request({**request.scope, "method": "GET"},
+                                                                        request.receive)
+        return await main.download_output(as_download, job_id, format=kind, layout=None)
     finally:
         reset_current_user(ctx)
 
 
-@router.get("/opds/{token}/cover/{job_id}")
+@router.api_route("/opds/{token}/cover/{job_id}", methods=_GET_HEAD)
 async def opds_cover(token: str, job_id: str):
     from backend import main
     from backend.job_manager import get_job

@@ -558,9 +558,17 @@ class ApiTests(unittest.TestCase):
         self.assertIn("application/pdf|PDF", links)
         self.assertTrue(links["application/epub+zip|EPUB"].endswith("/epub/lighthouse.epub"), links)
         self.assertTrue(links["application/pdf|PDF"].endswith("/pdf/lighthouse.pdf"), links)
+        # a reading app may check a link first (HEAD): it gets the download's answer without its body, also for a
+        # file not made yet (the EPUB of a PDF translation); a refused HEAD left an iPhone app on "Downloading…"
+        head_status, head_headers, head_body = _request(ROOT + links["application/epub+zip|EPUB"], method="HEAD")
+        self.assertEqual((head_status, head_body), (200, b""))
+        self.assertIn("application/epub+zip", head_headers.get("content-type", ""))
+        self.assertGreater(int(head_headers.get("content-length") or 0), 0)
+        self.assertEqual(_request(ROOT + path, method="HEAD")[0], 200, "the catalogue answers HEAD too")
         epub_status, epub_headers, epub_body = _request(ROOT + links["application/epub+zip|EPUB"])
         self.assertEqual(epub_status, 200)
         self.assertTrue(epub_body.startswith(b"PK"), "an EPUB is a ZIP file")
+        self.assertEqual(len(epub_body), int(head_headers["content-length"]), "the HEAD described this file")
         old_style = _request(ROOT + path + f"book/{self.job_id}/epub")  # a link of an earlier version
         self.assertEqual(old_style[0], 200)
         self.assertTrue(old_style[2].startswith(b"PK"))
