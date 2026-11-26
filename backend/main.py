@@ -1582,6 +1582,32 @@ def _export_from_text(text: str, out_dir: Path, fmt: str, base_name: str, **opti
     return path
 
 
+_FILE_BUILDS: dict = {}  # file path -> the build of that file now running (asyncio.Future)
+
+
+async def build_once(target: Path, build, *args, **kwargs) -> Path:
+    """A slow file build (a comic's CBZ renders every page as an image) in a worker thread, so the server keeps
+    answering, and once per file: a second request for the same file waits for the build already running. A
+    request that goes away does not stop it."""
+    key = str(target)
+    running = _FILE_BUILDS.get(key)
+    if running is None:
+        running = asyncio.ensure_future(asyncio.to_thread(build, *args, **kwargs))
+        _FILE_BUILDS[key] = running
+        running.add_done_callback(lambda _done: _FILE_BUILDS.pop(key, None))
+    return await asyncio.shield(running)
+
+
+def comic_source_pdf(job, out_dir: Path) -> Optional[Path]:
+    """The translated comic PDF that CBZ, CBR and comic EPUB downloads are made from (the translation language's)."""
+    comic_pdfs = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
+    if not comic_pdfs:
+        return None
+    wanted = f"_translated_{(getattr(job, 'target_lang', '') or '').lower()}" if job else ""
+    comic_pdfs.sort(key=lambda f: (f.stem.endswith(wanted), f.stat().st_mtime), reverse=True)
+    return comic_pdfs[0]
+
+
 @app.api_route("/api/download/{job_id}", methods=["GET", "HEAD"])
 async def download_output(request: Request, job_id: str, format: Optional[str] = None, layout: Optional[str] = None):
     """
@@ -1658,6 +1684,13 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
 
+        # A reader app checking the file first (HEAD) waits for the comic file being made (as on opening the catalogue)
+        if is_head and not out_path and is_comic_job and fmt in ("cbz", "cbr", "epub") and out_dir.exists():
+            src = comic_source_pdf(job, out_dir)
+            running = _FILE_BUILDS.get(str(out_dir / f"{src.stem}.{fmt}")) if src else None
+            if running is not None:
+                out_path = await asyncio.shield(running)
+
         # Skip write/conversion side effects on HEAD requests
         if not is_head and not out_path:
             # If cover image is not yet cached in out_dir, check original uploaded file
@@ -1674,23 +1707,21 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
 
             # 2. Comic-specific formats: CBZ, CBR, Fixed-Layout EPUB
             if is_comic_job and out_dir.exists():
-                comic_pdfs = list(out_dir.glob("*_translated_*.pdf")) or list(out_dir.glob("*.pdf"))
-                if comic_pdfs:
-                    wanted = f"_translated_{(getattr(job, 'target_lang', '') or '').lower()}" if job else ""
-                    comic_pdfs.sort(key=lambda f: (f.stem.endswith(wanted), f.stat().st_mtime), reverse=True)
-                    src_pdf = comic_pdfs[0]
+                src_pdf = comic_source_pdf(job, out_dir)
+                if src_pdf:
                     base_name = src_pdf.stem
                     reading_dir = getattr(job, "reading_direction", "ltr") if job else "ltr"
                     if fmt in ("cbz", "cbr"):
                         from backend.exporter import export_comic_archive
-                        out_path = export_comic_archive(src_pdf, out_dir / f"{base_name}.{fmt}", format=fmt)
+                        target = out_dir / f"{base_name}.{fmt}"
+                        out_path = await build_once(target, export_comic_archive, src_pdf, target, format=fmt)
                         if job:
                             update_job(job_id, output_path=str(out_path), output_format=fmt, layout_mode="comic")
                     elif fmt == "epub":
                         from backend.exporter import export_comic_epub
-                        out_path = export_comic_epub(
-                            src_pdf,
-                            out_dir / f"{base_name}.epub",
+                        target = out_dir / f"{base_name}.epub"
+                        out_path = await build_once(
+                            target, export_comic_epub, src_pdf, target,
                             title=job.file_name if job else "Graphic Novel",
                             reading_direction=reading_dir or "ltr",
                         )

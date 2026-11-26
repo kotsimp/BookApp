@@ -9,6 +9,7 @@ connections.py - The link to the user's reading devices.
 import asyncio
 import datetime
 import hashlib
+import logging
 import re
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,8 @@ from fastapi.responses import Response
 
 from backend.api.common import OUTPUT_DIR, _validate_job_id
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 FEED_TYPE = "application/atom+xml;profile=opds-catalog;kind=acquisition"
@@ -27,7 +30,9 @@ MAX_ENTRIES = 300
 # what each kind of book offers: (link name, media type, title)
 BOOK_FORMATS = (("epub", "application/epub+zip", "EPUB"), ("pdf", "application/pdf", "PDF"),
                 ("bilingual-epub", "application/epub+zip", "Δίγλωσσο EPUB · Bilingual EPUB"))
-COMIC_FORMATS = (("cbz", "application/vnd.comicbook+zip", "CBZ"), ("pdf", "application/pdf", "PDF"))
+# EPUB too: a KOReader without its PDF engine (MuPDF, which also opens CBZ) opens EPUB with its own (CREngine)
+COMIC_FORMATS = (("cbz", "application/vnd.comicbook+zip", "CBZ"), ("epub", "application/epub+zip", "EPUB"),
+                 ("pdf", "application/pdf", "PDF"))
 EXTENSIONS = {"epub": "epub", "pdf": "pdf", "bilingual-epub": "epub", "cbz": "cbz"}
 
 
@@ -144,10 +149,54 @@ def _entry(job, base: str) -> str:
     return "".join(parts)
 
 
-def _feed(token: str, own) -> str:
+def _catalogue_jobs(own) -> list:
     from backend.job_manager import list_jobs
+    return [j for j in list_jobs() if own(j) and _translated(j)][:MAX_ENTRIES]
+
+
+PREPARE_COMICS = 3  # comics whose CBZ is made in advance on each visit of the catalogue (newest first)
+_PREPARING: set = set()
+
+
+def _comics_to_prepare(jobs) -> list:
+    """[(job, source PDF, file)] of the catalogue's newest comics whose EPUB or CBZ is missing or older than their
+    translation (EPUB first: every KOReader opens it)."""
+    from backend import main
+    todo = []
+    for job in [j for j in jobs if _is_comic(j)][:PREPARE_COMICS]:
+        src = main.comic_source_pdf(job, OUTPUT_DIR / job.job_id)
+        if src is None:
+            continue
+        for target in (src.with_suffix(".epub"), src.with_suffix(".cbz")):
+            if not target.is_file() or target.stat().st_mtime < src.stat().st_mtime:
+                todo.append((job, src, target))
+    return todo
+
+
+async def _prepare_comics(todo) -> None:
+    """A comic's EPUB and CBZ are made from every page (seconds to a minute on a small server), more than an
+    e-reader waits for a download to start: made now, one at a time, they are ready when the book is tapped."""
+    from backend import main
+    from backend.exporter import export_comic_archive, export_comic_epub
+    for job, src, target in todo:
+        if str(target) in _PREPARING:
+            continue
+        _PREPARING.add(str(target))
+        try:
+            if target.suffix == ".epub":
+                await main.build_once(target, export_comic_epub, src, target, title=job.file_name or "Graphic Novel",
+                                      reading_direction=getattr(job, "reading_direction", None) or "ltr")
+            else:
+                await main.build_once(target, export_comic_archive, src, target, format="cbz")
+        except Exception as e:
+            logger.warning(f"E-reader catalogue: {target.name} could not be made in advance: {e}")
+        finally:
+            _PREPARING.discard(str(target))
+
+
+def _feed(token: str, own) -> str:
     base = f"/opds/{token}/"
-    jobs = [j for j in list_jobs() if own(j) and _translated(j)][:MAX_ENTRIES]
+    jobs = _catalogue_jobs(own)
     feed_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
     updated = _iso(max((j.updated_at for j in jobs), default=0))
     head = (
@@ -169,8 +218,11 @@ async def opds_catalogue(token: str):
     ctx, own = _catalogue_user(token)
     try:
         body = await asyncio.to_thread(_feed, token, own)
+        todo = await asyncio.to_thread(lambda: _comics_to_prepare(_catalogue_jobs(own)))
     finally:
         reset_current_user(ctx)
+    if todo:
+        asyncio.ensure_future(_prepare_comics(todo))
     return Response(content=body, media_type=FEED_TYPE)
 
 

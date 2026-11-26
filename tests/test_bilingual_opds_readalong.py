@@ -195,7 +195,9 @@ class CatalogueContentTests(unittest.TestCase):
 
         comic_links = acquisitions("nebraska")
         self.assertEqual([(t, koreader_suffix(h)) for t, h in comic_links],
-                         [("application/vnd.comicbook+zip", "cbz"), ("application/pdf", "pdf")])
+                         [("application/vnd.comicbook+zip", "cbz"), ("application/epub+zip", "epub"),
+                          ("application/pdf", "pdf")],
+                         "EPUB too: a KOReader without its PDF engine cannot open CBZ or PDF (live finding)")
         self.assertTrue(comic_links[0][1].endswith(
             "/book/nebraska/cbz/USS_Nebraska_Sanctum_Vol_01_Humanoids_Graphic_Novel_Xavier_Dorison_Christophe_Bec.cbz"))
         self.assertEqual([koreader_suffix(h) for _, h in acquisitions("book")], ["epub", "pdf", "epub"])
@@ -212,6 +214,100 @@ class CatalogueContentTests(unittest.TestCase):
         users["u-reader"]["disabled"] = True
         with self.assertRaises(Exception):
             self._titles("u-reader", users, jobs)
+
+
+class ComicDownloadTests(unittest.TestCase):
+    """A comic's CBZ renders every page (seconds to a minute on a small server): longer than an e-reader waits for a
+    download to start. It is made off the server's main loop, once per file, and in advance when the catalogue is
+    opened; a reader checking the file first (HEAD) waits for the one being made."""
+
+    def setUp(self):
+        import asyncio
+        from starlette.requests import Request
+        self.asyncio = asyncio
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        self.job = types.SimpleNamespace(job_id="comic1", owner="", mode="translate", status="done",
+                                         target_lang="greek", source_lang="english", file_name="Nebraska.pdf",
+                                         file_type="pdf", file_path="", layout_mode="comic", output_path=None,
+                                         sample_range=None, reading_direction="ltr", updated_at=time.time())
+        d = self.out / "comic1"
+        d.mkdir()
+        doc = fitz.open()
+        for n in range(3):
+            doc.new_page().insert_text((72, 72), f"Page {n + 1}")
+        doc.save(str(d / "Nebraska_translated_greek.pdf"))
+        doc.close()
+        (d / "Nebraska_translated_greek.txt").write_text("Κείμενο.", encoding="utf-8")
+        self.request = lambda method: Request({"type": "http", "method": method, "headers": [], "query_string": b"",
+                                               "path": "/"})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def patches(self):
+        from backend import main
+        return (mock.patch.object(main, "OUTPUT_DIR", self.out), mock.patch.object(main, "get_job", return_value=self.job),
+                mock.patch.object(main, "update_job"), mock.patch.object(main, "_validate_job_id"))
+
+    def test_a_cbz_is_made_once_off_the_main_loop(self):
+        from backend import main, exporter
+        from fastapi import HTTPException
+        real, calls = exporter.export_comic_archive, []
+
+        def slow(*args, **kwargs):  # a worker thread: the server keeps answering meanwhile
+            calls.append(args[1])
+            time.sleep(0.3)
+            return real(*args, **kwargs)
+
+        async def scenario():
+            out_dir, job, update, valid = self.patches()
+            with out_dir, job, update, valid, mock.patch.object(exporter, "export_comic_archive", slow):
+                with self.assertRaises(HTTPException) as nothing:  # nothing made nor being made: as before
+                    await main.download_output(self.request("HEAD"), "comic1", format="cbz")
+                self.assertEqual(nothing.exception.status_code, 404)
+                get = self.asyncio.ensure_future(main.download_output(self.request("GET"), "comic1", format="cbz"))
+                await self.asyncio.sleep(0.05)
+                ticks = 0
+                head = self.asyncio.ensure_future(main.download_output(self.request("HEAD"), "comic1", format="cbz"))
+                while not get.done():  # the loop runs while the pages are rendered
+                    ticks += 1
+                    await self.asyncio.sleep(0.02)
+                first, checked = await get, await head
+                again = await main.download_output(self.request("GET"), "comic1", format="cbz")
+                return first, checked, again, ticks
+
+        first, checked, again, ticks = self.asyncio.run(scenario())
+        self.assertEqual(len(calls), 1, "made once for both requests")
+        self.assertGreater(ticks, 3, "not on the main loop")
+        self.assertEqual(Path(first.path).name, "Nebraska_translated_greek.cbz")
+        self.assertEqual(checked.path, first.path, "the HEAD waited for the file being made")
+        self.assertEqual(again.path, first.path)
+        import zipfile
+        with zipfile.ZipFile(first.path) as z:
+            self.assertEqual(sorted(z.namelist()), ["page_0001.jpg", "page_0002.jpg", "page_0003.jpg"])
+
+    def test_opening_the_catalogue_makes_the_cbz_in_advance(self):
+        from backend.api import connections as api
+        from backend import main
+        with mock.patch.object(api, "OUTPUT_DIR", self.out):
+            todo = api._comics_to_prepare([self.job])
+            self.assertEqual([(s.name, f.name) for _, s, f in todo],
+                             [("Nebraska_translated_greek.pdf", "Nebraska_translated_greek.epub"),
+                              ("Nebraska_translated_greek.pdf", "Nebraska_translated_greek.cbz")], "EPUB first")
+            self.asyncio.run(api._prepare_comics(todo))
+            self.assertTrue((self.out / "comic1" / "Nebraska_translated_greek.cbz").is_file())
+            import zipfile
+            with zipfile.ZipFile(self.out / "comic1" / "Nebraska_translated_greek.epub") as z:
+                self.assertEqual(z.read("mimetype"), b"application/epub+zip")
+                self.assertEqual(len([n for n in z.namelist() if n.endswith(".jpg")]), 3, "a picture per page")
+            self.assertEqual(api._comics_to_prepare([self.job]), [], "made: nothing more to do")
+            book = types.SimpleNamespace(**{**vars(self.job), "layout_mode": "standard", "job_id": "book1"})
+            self.assertEqual(api._comics_to_prepare([book]), [], "only comics")
+            pdf = self.out / "comic1" / "Nebraska_translated_greek.pdf"
+            os.utime(pdf, (time.time() + 60, time.time() + 60))
+            self.assertEqual(len(api._comics_to_prepare([self.job])), 2, "a newer translation: both made again")
+        self.assertEqual(main._FILE_BUILDS, {}, "no build left behind")
 
 
 class ReadAlongTests(unittest.TestCase):

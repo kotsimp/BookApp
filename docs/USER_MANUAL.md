@@ -84,7 +84,8 @@ The **📲 Συσκευές** button in the tab bar opens the link for your read
 **📚 E-reader catalogue (OPDS).** Reading apps such as **KOReader**, **Moon+ Reader**, **Librera** or **Panels** (comics) list your finished translations and download them directly.
 1. Press **🔗 Νέος σύνδεσμος** and copy the link (`http://<server>:8000/opds/…/`).
 2. In the reading app, add it as an OPDS catalogue (KOReader: *Search → OPDS catalog → +*; Moon+ Reader: *My Shelf → Net Library → Add*).
-* Books offer **EPUB**, **PDF** and **Δίγλωσσο EPUB** (the bilingual edition); comics offer **CBZ** and **PDF**. Files are made on demand, as the app's own downloads are.
+* Books offer **EPUB**, **PDF** and **Δίγλωσσο EPUB** (the bilingual edition); comics offer **CBZ**, **EPUB** (a picture per page) and **PDF**. Files are made on demand, as the app's own downloads are; a comic's EPUB and CBZ are made in advance when the catalogue is opened, so the download starts at once.
+* **KOReader shows the PDF (and CBZ) button greyed out, or says the catalogue offers the book only in formats it cannot open:** its PDF engine (MuPDF, which also opens CBZ) is not working on that device; its EPUB engine is. Choose **EPUB**, also for comics. To check, copy any PDF to the device and open it in KOReader.
 * The link is secret: whoever has it sees your books, so don't share it. It is shown only when made; a new link stops the old one, and **🗑️ Κατάργηση** stops it for good.
 * If you opened BookApp as `localhost`, put the server's network address (e.g. `192.168.1.10`) in its place on the e-reader. The e-reader must reach the server (same network, or through your HTTPS address).
 
