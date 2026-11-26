@@ -9,7 +9,10 @@ connections.py - The link to the user's reading devices.
 import asyncio
 import datetime
 import hashlib
+import re
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,6 +28,7 @@ MAX_ENTRIES = 300
 BOOK_FORMATS = (("epub", "application/epub+zip", "EPUB"), ("pdf", "application/pdf", "PDF"),
                 ("bilingual-epub", "application/epub+zip", "Δίγλωσσο EPUB · Bilingual EPUB"))
 COMIC_FORMATS = (("cbz", "application/vnd.comicbook+zip", "CBZ"), ("pdf", "application/pdf", "PDF"))
+EXTENSIONS = {"epub": "epub", "pdf": "pdf", "bilingual-epub": "epub", "cbz": "cbz"}
 
 
 def _owner() -> str:
@@ -104,6 +108,14 @@ def _blurb(job) -> str:
     return ""
 
 
+def _file_name(job, kind: str) -> str:
+    """The name a link ends in: "USS_Nebraska_Sanctum_Vol_01.cbz". E-reader apps take the format and the saved file's
+    name from the link's extension (KOReader looks at it before the media type), so a link ending in ".../cbz"
+    could leave a reader with a file it cannot open."""
+    stem = re.sub(r"\W+", "_", Path(job.file_name or "Book").stem).strip("_")[:120].rstrip("_") or "Book"
+    return f"{stem}{'_bilingual' if kind == 'bilingual-epub' else ''}.{EXTENSIONS[kind]}"
+
+
 def _entry(job, base: str) -> str:
     from backend.bilingual import _lang_code
     title = Path(job.file_name or "Book").stem
@@ -126,7 +138,7 @@ def _entry(job, base: str) -> str:
         parts.append(f'<link rel="http://opds-spec.org/image" href={href} type="image/jpeg"/>')
         parts.append(f'<link rel="http://opds-spec.org/image/thumbnail" href={href} type="image/jpeg"/>')
     for kind, media, label in (COMIC_FORMATS if _is_comic(job) else BOOK_FORMATS):
-        href = quoteattr(f"{base}book/{job.job_id}/{kind}")
+        href = quoteattr(f"{base}book/{job.job_id}/{kind}/{quote(_file_name(job, kind))}")
         parts.append(f'<link rel="http://opds-spec.org/acquisition" href={href} type="{media}" title={quoteattr(label)}/>')
     parts.append("</entry>")
     return "".join(parts)
@@ -162,9 +174,11 @@ async def opds_catalogue(token: str):
     return Response(content=body, media_type=FEED_TYPE)
 
 
-@router.get("/opds/{token}/book/{job_id}/{kind}")
-async def opds_book(request: Request, token: str, job_id: str, kind: str):
-    """A book of the catalogue, made in the asked format on demand (as the app's own downloads are)."""
+@router.get("/opds/{token}/book/{job_id}/{kind}/{filename}")
+@router.get("/opds/{token}/book/{job_id}/{kind}")  # the links of earlier versions, without a file name
+async def opds_book(request: Request, token: str, job_id: str, kind: str, filename: Optional[str] = None):
+    """A book of the catalogue, made in the asked format on demand (as the app's own downloads are). The file name
+    at the end of the link is for the reader app only."""
     from backend import main
     from backend.job_manager import get_job
     from backend.request_context import can_view_owner, reset_current_user

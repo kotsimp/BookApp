@@ -172,6 +172,37 @@ class CatalogueContentTests(unittest.TestCase):
                 self._job("running", "", status="running"), self._job("untranslated", "", translated=False)]
         self.assertEqual(self._titles("", {}, jobs), ["narrated", "plain"])
 
+    def test_links_end_in_a_file_name_with_its_extension(self):
+        """Live finding (KOReader, a comic): KOReader takes a download's format and file name from the link's
+        extension (the text after the last dot of the whole address) before its media type. Links ended in ".../cbz",
+        so its file type could not be told. Now each ends in the book's file name with the right extension."""
+        from backend.api import connections as api
+        comic = self._job("nebraska", "")
+        comic.file_name = "USS Nebraska (Sanctum Vol 01 - Humanoids Graphic Novel) -- Xavier Dorison & Christophe Bec.pdf"
+        comic.layout_mode = "comic"
+        book = self._job("book", "")
+        book.file_name = "Ο Φάρος.epub"
+        with mock.patch.object(api, "OUTPUT_DIR", self.out):
+            entries = {j.job_id: ET.fromstring('<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">'
+                                               f'{api._entry(j, "/opds/t/")}</feed>') for j in (comic, book)}
+
+        def acquisitions(job_id):
+            return [(l.get("type"), "http://192.168.1.20:8000" + l.get("href")) for l in entries[job_id].iter(f"{ATOM}link")
+                    if l.get("rel") == "http://opds-spec.org/acquisition"]
+
+        def koreader_suffix(href):  # util.getFileNameSuffix on the absolute link: after its last dot
+            return href.rsplit(".", 1)[-1] if "." in href else ""
+
+        comic_links = acquisitions("nebraska")
+        self.assertEqual([(t, koreader_suffix(h)) for t, h in comic_links],
+                         [("application/vnd.comicbook+zip", "cbz"), ("application/pdf", "pdf")])
+        self.assertTrue(comic_links[0][1].endswith(
+            "/book/nebraska/cbz/USS_Nebraska_Sanctum_Vol_01_Humanoids_Graphic_Novel_Xavier_Dorison_Christophe_Bec.cbz"))
+        self.assertEqual([koreader_suffix(h) for _, h in acquisitions("book")], ["epub", "pdf", "epub"])
+        self.assertIn("/book/book/bilingual-epub/", acquisitions("book")[2][1])
+        self.assertTrue(acquisitions("book")[0][1].endswith("/%CE%9F_%CE%A6%CE%AC%CF%81%CE%BF%CF%82.epub"),
+                        "a Greek title, encoded")
+
     def test_each_user_sees_only_their_own_books(self):
         users = {"u-admin": {"id": "u-admin", "username": "a", "role": "admin", "disabled": False},
                  "u-reader": {"id": "u-reader", "username": "r", "role": "user", "disabled": False}}
@@ -299,9 +330,14 @@ class ApiTests(unittest.TestCase):
                  if l.get("rel") == "http://opds-spec.org/acquisition"}
         self.assertIn("application/epub+zip|EPUB", links)
         self.assertIn("application/pdf|PDF", links)
+        self.assertTrue(links["application/epub+zip|EPUB"].endswith("/epub/lighthouse.epub"), links)
+        self.assertTrue(links["application/pdf|PDF"].endswith("/pdf/lighthouse.pdf"), links)
         epub_status, epub_headers, epub_body = _request(ROOT + links["application/epub+zip|EPUB"])
         self.assertEqual(epub_status, 200)
         self.assertTrue(epub_body.startswith(b"PK"), "an EPUB is a ZIP file")
+        old_style = _request(ROOT + path + f"book/{self.job_id}/epub")  # a link of an earlier version
+        self.assertEqual(old_style[0], 200)
+        self.assertTrue(old_style[2].startswith(b"PK"))
         bilingual_link = next(h for k, h in links.items() if "Bilingual" in k)
         self.assertEqual(_request(ROOT + bilingual_link)[0], 200)
         status_info = json.loads(_request(f"{API}/connections")[2])
