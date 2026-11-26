@@ -29,7 +29,7 @@ from backend.book_insights import InsightsError, OUTPUT_LANGUAGES
 
 logger = logging.getLogger(__name__)
 
-EXTRA_VERSION = "1.0"   # bump when prompts/checks change: stored results are made again
+EXTRA_VERSION = "1.1"   # bump when prompts/checks change: stored results are made again
 SECTION_CHARS = 45_000  # one request's share of a long book (as the notes of book_insights)
 CHAPTER_BATCH_CHARS = 60_000
 CHAPTER_MAX_CHARS = 110_000  # a longer chapter is sent as its beginning and end
@@ -178,7 +178,19 @@ def language_problems(text: str, lang: str) -> List[str]:
 
 
 def _leak(text: str) -> bool:
-    return bool(re.search(r"</?(?:SOURCE|DOCUMENT|TEXT)[^>]*>|STRICT RULES|TASK:|\[\[\d+\]\]", text or ""))
+    return bool(re.search(r"</?(?:SOURCE|DOCUMENT|TEXT)[^>]*>|STRICT RULES|TASK:", text or ""))
+
+
+_ITALIC_RE = re.compile(r"(?<![*\w])\*(?![\s*])([^*\n]+?)(?<![\s*])\*(?![*\w])")
+
+
+def tidy(text: str, lang: str, unit: str) -> str:
+    """A page cited the way the prompt marks pages ([[12]]) reads as the reader's page reference (σ. 12 / p. 12),
+    and *italics*, which the page and the exports do not draw, lose their asterisks (**bold** stays)."""
+    word = _words(lang)[unit]
+    text = re.sub(r"\(\s*\[\[(\d+)\]\]\s*\)", lambda m: f"({word} {m.group(1)})", text or "")
+    text = re.sub(r"\[\[(\d+)\]\]", lambda m: f"({word} {m.group(1)})", text)
+    return _ITALIC_RE.sub(r"\1", text)
 
 
 def _fold(s: str) -> str:
@@ -278,7 +290,7 @@ async def _text_call(ctx: _Ctx, material: str, prompt: str, check: Callable[[str
             p += "\nYOUR PREVIOUS ATTEMPT WAS REJECTED BECAUSE: " + "; ".join(problems) + ". Fix this."
         raw = await bi._ai(material, p, ctx.api_key, ctx.session, temperature=temperature if attempt == 0 else 0.15,
                            bypass_cache=attempt > 0)
-        text = bi.normalize_output(raw, ctx.lang)
+        text = tidy(bi.normalize_output(raw, ctx.lang), ctx.lang, ctx.unit)
         if ctx.lang == "greek":
             text = await bi._proofread_greek(text, ctx.api_key, ctx.session)
         problems = check(text)
@@ -288,14 +300,15 @@ async def _text_call(ctx: _Ctx, material: str, prompt: str, check: Callable[[str
     raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)
 
 
-def _common_checks(text: str, ctx: _Ctx, source: str, min_words: int = 20) -> List[str]:
+def _common_checks(text: str, ctx: _Ctx, source: str, min_words: int = 20, names: bool = True) -> List[str]:
+    """`names`: capitalised words must be the book's. Off for a study guide, whose theme titles are capitalised."""
     problems = []
     if bi.count_words(text) < min_words:
         problems.append("the text is too short")
     if _leak(text):
         problems.append("prompt text leaked into the answer")
     problems += language_problems(text, ctx.lang)
-    if ctx.src_lang == ctx.lang:
+    if names and ctx.src_lang == ctx.lang:
         names = bi._unknown_names(text, source)
         if len(names) > 3:
             problems.append(f"names not found in the book: {', '.join(names[:6])}")
@@ -614,7 +627,7 @@ async def _study_guide(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
               "the same). Use ONLY the book.\n" + bi._COMMON_RULES)
 
     def check(t: str) -> List[str]:
-        problems = _common_checks(t, ctx, ctx.full, min_words=120)
+        problems = _common_checks(t, ctx, ctx.full, min_words=120, names=False)
         if bi._heading_count(t) < 4:
             problems.append("the guide needs its four sections")
         return problems
@@ -749,6 +762,7 @@ async def generate_extra(
     try:
         ctx.step(5, "Προετοιμασία κειμένου…")
         text, data = await _GENERATORS[insight_type](ctx)
+        text = tidy(text, out_lang, unit)
     finally:
         if owns_session:
             await session.close()
@@ -881,12 +895,12 @@ async def ask_book(
         if progress:
             progress(20, "Αναζήτηση της απάντησης στο βιβλίο…")
         raw = await bi._ai(marked(chosen), prompt, api_key, session, temperature=0.2)
-        answer = bi.normalize_output(raw, lang)
+        answer = tidy(bi.normalize_output(raw, lang), lang, unit)
         problems = language_problems(answer, lang) + (["prompt text leaked"] if _leak(answer) else [])
         if problems:
             raw = await bi._ai(marked(chosen), prompt + "\nYOUR PREVIOUS ANSWER WAS REJECTED BECAUSE: "
                                + "; ".join(problems) + ".", api_key, session, temperature=0.1, bypass_cache=True)
-            answer = bi.normalize_output(raw, lang)
+            answer = tidy(bi.normalize_output(raw, lang), lang, unit)
             if language_problems(answer, lang) or _leak(answer):
                 raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)
     finally:

@@ -153,6 +153,10 @@ class FakeGemini:
             heads = ["Θέματα", "Ερωτήσεις συζήτησης", "Κουίζ", "Απαντήσεις"] if greek else \
                 ["Themes", "Discussion questions", "Quiz", "Answers"]
             count = 2 if self.mode == "short_guide" else 4
+            if self.mode == "titled_themes":  # theme titles are capitalised words the book never uses (live finding)
+                return ("## Themes\n- Nature and Tradition: " + self.lines(greek, 2) + "\n- Collaboration Across "
+                        "Generations: " + self.lines(greek, 2) + "\n- Estrangement: " + self.lines(greek, 1) + " (see [[2]])"
+                        + "".join(f"\n\n## {h}\n{self.lines(greek, 5)}" for h in heads[1:]))
             return "\n\n".join(f"## {h}\n{self.lines(greek, 5)}" for h in heads[:count])
         if "list the main EVENTS" in sp:
             pages = [int(p) for p in re.findall(r"\[\[(\d+)\]\]", content)]
@@ -168,7 +172,8 @@ class FakeGemini:
             page = (re.findall(r"\[\[(\d+)\]\]", content) or ["1"])[0]
             ref = "σ." if greek else "p."
             body = GR_LINES[0] if greek else EN_LINES[0]
-            return f"{body} ({ref} {page})"
+            boat = "Το σκάφος λεγόταν *Γκάνετ*." if greek else "The boat was called *Gannet*."
+            return f"{body} {boat} ({ref} {page})"
         if "SHORT SUMMARY" in sp:
             return "\n\n".join([self.lines(greek, 7), self.lines(greek, 6)])
         return self.lines(greek, 3)
@@ -324,6 +329,20 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "ai_output_rejected")
         self.assertEqual(sum(1 for sp, _ in FAKE.calls if "STUDY GUIDE" in sp), 2, "written once more, then refused")
 
+    def test_study_guide_with_theme_titles_and_page_markers(self):
+        FAKE.mode = "titled_themes"
+        rec = self.make("study_guide", "english")
+        self.assertIn("- Nature and Tradition: ", rec["text"], "theme titles are no unknown names")
+        self.assertIn("(see (p. 2))", rec["text"], "a page cited as [[N]] reads as the reader's page")
+        self.assertNotIn("[[", rec["text"])
+
+    def test_tidy(self):
+        self.assertEqual(im.tidy("As told ([[12]]) and [[3]].", "greek", "page"), "As told (σ. 12) and (σ. 3).")
+        self.assertEqual(im.tidy("See [[4]].", "english", "chapter"), "See (ch. 4).")
+        self.assertEqual(im.tidy("The *Gannet* sailed; **bold** stays; 2 * 3 = 6.", "english", "page"),
+                         "The Gannet sailed; **bold** stays; 2 * 3 = 6.")
+        self.assertEqual(im.tidy("- **«Quote»** (p. 1) — note", "english", "page"), "- **«Quote»** (p. 1) — note")
+
     def test_timeline_in_story_order(self):
         rec = self.make("timeline", "english")
         events = rec["data"]["events"]
@@ -365,6 +384,7 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(rec["language"], "greek")
         self.assertEqual(rec["pages"], [1])
         self.assertIn("(σ. 1)", rec["answer"])
+        self.assertNotIn("*", rec["answer"], "no italics asterisks in an answer (live finding)")
         self.assertTrue(rec["whole_book"])
         rec2 = run(im.ask_book(str(self.book), "txt", "Who is Nikos?", "auto", "fake-key", job_output_dir=self.out))
         self.assertEqual(rec2["language"], "english")

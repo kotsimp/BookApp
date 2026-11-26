@@ -9,10 +9,13 @@ matched by their lengths (the method of Gale & Church), so a passage never drift
 
 import html
 import io
+import logging
 import math
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _PAGE_ONE_LINE = re.compile(r"^\s*={3,}\s*PAGE\s+(\d+)\s*={3,}\s*$", re.MULTILINE)
 _PAGE_THREE_LINES = re.compile(r"^\s*={6,}\s*\n\s*PAGE\s+(\d+)\s*\n\s*={6,}\s*$", re.MULTILINE)
@@ -195,6 +198,10 @@ def export_bilingual_pdf(passages, out_path: Path, title: str, subtitle: str, sr
                 page.insert_text((mediabox.width / 2 - 6, mediabox.height - 24), str(number), fontsize=8,
                                  color=(0.45, 0.45, 0.45))
         doc.set_metadata({"title": title, "subject": subtitle, "creator": "BookApp"})
+        try:
+            doc.subset_fonts()  # only the letters used: ~100 KB instead of the whole face (over 1 MB)
+        except Exception as e:
+            logger.debug(f"Bilingual PDF fonts kept whole: {e}")
         doc.save(str(out_path), garbage=3, deflate=True)
     return out_path
 

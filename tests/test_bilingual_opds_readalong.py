@@ -85,6 +85,8 @@ class BilingualTests(unittest.TestCase):
             self.assertIn("The ship sailed at dawn.", text)
             self.assertIn("Το πλοίο σάλπαρε την αυγή.", text)
             self.assertLess(text.index("The ship sailed"), text.index("Το πλοίο σάλπαρε"), "the original first")
+            self.assertLess(pdf.stat().st_size, 400_000, "only the letters used are embedded (live: 1.3 MB before)")
+            self.assertNotIn("\xa0", text, "copied text has the book's own spaces")
             from docx import Document
             docx = bilingual.export_bilingual_docx(passages, Path(td) / "b.docx", "T", "sub", "english", "greek")
             paras = [p.text for p in Document(str(docx)).paragraphs]
