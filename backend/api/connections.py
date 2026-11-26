@@ -162,13 +162,15 @@ def _comics_to_prepare(jobs) -> list:
     """[(job, source PDF, file)] of the catalogue's newest comics whose EPUB or CBZ is missing or older than their
     translation (EPUB first: every KOReader opens it)."""
     from backend import main
+    from backend.exporter import comic_file_outdated
     todo = []
     for job in [j for j in jobs if _is_comic(j)][:PREPARE_COMICS]:
         src = main.comic_source_pdf(job, OUTPUT_DIR / job.job_id)
         if src is None:
             continue
         for target in (src.with_suffix(".epub"), src.with_suffix(".cbz")):
-            if not target.is_file() or target.stat().st_mtime < src.stat().st_mtime:
+            if (not target.is_file() or target.stat().st_mtime < src.stat().st_mtime
+                    or (str(target) not in _PREPARING and comic_file_outdated(target))):
                 todo.append((job, src, target))
     return todo
 

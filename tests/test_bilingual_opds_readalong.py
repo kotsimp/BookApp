@@ -309,6 +309,105 @@ class ComicDownloadTests(unittest.TestCase):
             self.assertEqual(len(api._comics_to_prepare([self.job])), 2, "a newer translation: both made again")
         self.assertEqual(main._FILE_BUILDS, {}, "no build left behind")
 
+    def test_a_file_made_too_large_before_is_made_again(self):
+        """Pages used to be rendered at 150 dpi of a page sized by the scan's pixels: 3107x4775 px or more, an EPUB
+        of 600 MB or more that an e-reader never finished downloading (live). Such a file is made again."""
+        import io
+        import zipfile
+        from PIL import Image
+        from backend import main, exporter
+        from backend.api import connections as api
+        d = self.out / "comic1"
+        old = d / "Nebraska_translated_greek.epub"
+        img = io.BytesIO()
+        Image.new("RGB", (3107, 40), (255, 255, 255)).save(img, "JPEG")
+        with zipfile.ZipFile(old, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("EPUB/images/page_0001.jpg", img.getvalue())
+        os.utime(old, (time.time() + 60, time.time() + 60))  # newer than the translation: only its size is wrong
+        self.assertTrue(exporter.comic_file_outdated(old))
+        with mock.patch.object(api, "OUTPUT_DIR", self.out):
+            self.assertIn("Nebraska_translated_greek.epub", [f.name for _, _, f in api._comics_to_prepare([self.job])])
+
+        async def download():
+            out_dir, job, update, valid = self.patches()
+            with out_dir, job, update, valid:
+                return await main.download_output(self.request("GET"), "comic1", format="epub")
+
+        served = self.asyncio.run(download())
+        self.assertEqual(Path(served.path), old, "made again under its own name")
+        self.assertFalse(exporter.comic_file_outdated(old))
+        with zipfile.ZipFile(old) as z:
+            self.assertEqual(len([n for n in z.namelist() if n.endswith(".jpg")]), 3)
+        (d / "broken.cbz").write_bytes(b"not a zip")
+        self.assertTrue(exporter.comic_file_outdated(d / "broken.cbz"), "a file that cannot be read is made again")
+        self.assertFalse(exporter.comic_file_outdated(d / "Nebraska_translated_greek.pdf"))
+
+
+class ComicPageSizeTests(unittest.TestCase):
+    """A comic's CBZ / EPUB pages keep their scan's own resolution (1600-2560 px on the long side), whatever
+    resolution the scan says it has; a page with no picture is rendered at 150 dpi as before."""
+
+    def make_pdf(self, path, scans):
+        import io
+        from PIL import Image
+        doc = fitz.open()
+        for w, h, dpi in scans:  # as the comic translator builds a PDF from a CBZ's images
+            buf = io.BytesIO()
+            Image.new("RGB", (w, h), (200, 180, 160)).save(buf, "JPEG", **({"dpi": (dpi, dpi)} if dpi else {}))
+            with fitz.open("jpg", buf.getvalue()) as img_doc:
+                pdf_bytes = img_doc.convert_to_pdf()
+            with fitz.open("pdf", pdf_bytes) as page_pdf:
+                r = page_pdf[0].rect
+                doc.new_page(width=r.width, height=r.height).show_pdf_page(r, page_pdf, 0)
+        doc.new_page(width=612, height=792).insert_text((72, 72), "Vector art only")
+        doc.save(str(path))
+        doc.close()
+
+    def test_pages_keep_their_scan_resolution(self):
+        import zipfile
+        from PIL import Image
+        from backend import exporter
+        with tempfile.TemporaryDirectory() as td:
+            pdf = Path(td) / "Comic_translated_greek.pdf"
+            self.make_pdf(pdf, [(1800, 2800, 72), (1200, 1800, 300), (600, 900, 72), (1988, 3056, None)])
+            cbz = exporter.export_comic_archive(pdf, Path(td) / "c.cbz", format="cbz")
+            epub = exporter.export_comic_epub(pdf, Path(td) / "c.epub", title="Comic")
+            for archive in (cbz, epub):
+                with zipfile.ZipFile(archive) as z:
+                    names = sorted(n for n in z.namelist() if n.endswith(".jpg"))
+                    sizes = []
+                    for n in names:
+                        with z.open(n) as f, Image.open(f) as im:
+                            sizes.append(max(im.size))
+                self.assertEqual(len(sizes), 5, archive)
+                self.assertEqual(sizes[0], 2560, "a large scan tagged 72 dpi: at most 2560, not 5833")
+                self.assertAlmostEqual(sizes[1], 1800, delta=2, msg="a scan tagged 300 dpi: its own 1800, not 900")
+                self.assertEqual(sizes[2], 1600, "a small scan: enlarged so its balloons stay readable")
+                self.assertEqual(sizes[3], 2560, "an untagged scan: at most 2560, not 4775")
+                self.assertAlmostEqual(sizes[4], 1650, delta=2, msg="vector art: 150 dpi, as before")
+                self.assertFalse(exporter.comic_file_outdated(archive))
+            self.assertLess(Path(epub).stat().st_size, 6_000_000)
+
+    def test_an_epub_is_complete_or_not_there(self):
+        from backend import exporter
+        from ebooklib import epub as ebooklib_epub
+        with tempfile.TemporaryDirectory() as td:
+            pdf = Path(td) / "Comic_translated_greek.pdf"
+            self.make_pdf(pdf, [(600, 900, 72)])
+            target = Path(td) / "Comic_translated_greek.epub"
+
+            def cut_short(name, book, options):  # a restart in the middle of writing
+                Path(name).write_bytes(b"PK\x03\x04 half")
+                raise OSError("stopped")
+
+            with mock.patch.object(ebooklib_epub, "write_epub", cut_short):
+                with self.assertRaises(OSError):
+                    exporter.export_comic_epub(pdf, target)
+            self.assertEqual(list(Path(td).iterdir()), [pdf], "no broken EPUB, no part file left")
+            exporter.export_comic_epub(pdf, target)
+            self.assertTrue(target.is_file())
+
 
 class ReadAlongTests(unittest.TestCase):
     def test_sentence_times(self):

@@ -1543,6 +1543,58 @@ p {
     return out_path
 
 
+COMIC_MAX_SIDE = 2560  # px on the long side of a comic page in a CBZ / EPUB: sharp on a tablet or a phone
+COMIC_MIN_SIDE = 1600  # a small scan is enlarged to this, so its translated balloons stay readable
+COMIC_JPEG_QUALITY = 90
+
+
+def _comic_page_zoom(page, dpi: int) -> float:
+    """The zoom that renders a comic page at its scan's own resolution (the page's largest picture), kept between
+    COMIC_MIN_SIDE and COMIC_MAX_SIDE pixels on the long side. A fixed dpi enlarged scans whose page size came from
+    their pixel count: a 1988x3056 scan became 3107x4775 or 4142x6367 pixels, 4-7.5 MB a page, an EPUB of 600 MB or
+    more that an e-reader never finished downloading. A page with no picture (vector art) is rendered at `dpi`."""
+    long_pt = max(page.rect.width, page.rect.height)
+    best_area, native = 0.0, 0.0
+    try:
+        for info in page.get_image_info():
+            x0, y0, x1, y1 = info.get("bbox") or (0, 0, 0, 0)
+            bw, bh = x1 - x0, y1 - y0
+            if bw > 1 and bh > 1 and info.get("width") and info.get("height") and bw * bh > best_area:
+                best_area = bw * bh
+                native = long_pt * max(info["width"] / bw, info["height"] / bh)
+    except Exception:
+        native = 0.0
+    if long_pt <= 0 or native <= 0:
+        return dpi / 72
+    return min(COMIC_MAX_SIDE, max(COMIC_MIN_SIDE, native)) / long_pt
+
+
+def comic_page_jpeg(page, dpi: int = 150) -> bytes:
+    """A translated comic page as the JPEG of a CBZ or an EPUB (see _comic_page_zoom)."""
+    import pymupdf
+    zoom = _comic_page_zoom(page, dpi)
+    return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("jpeg", jpg_quality=COMIC_JPEG_QUALITY)
+
+
+def comic_file_outdated(path: Union[str, Path]) -> bool:
+    """True for a comic CBZ or EPUB made before pages were rendered at their own resolution (its first page is larger
+    than COMIC_MAX_SIDE): it is made again. A file that cannot be read is made again too."""
+    import zipfile
+    from PIL import Image
+    p = Path(path)
+    if p.suffix.lower() not in (".cbz", ".epub"):
+        return False
+    try:
+        with zipfile.ZipFile(p) as z:
+            pages = sorted(n for n in z.namelist() if re.search(r"page_\d+\.jpe?g$", n, re.IGNORECASE))
+            if not pages:
+                return False
+            with z.open(pages[0]) as f, Image.open(f) as img:
+                return max(img.size) > COMIC_MAX_SIDE
+    except Exception:
+        return True
+
+
 def export_comic_archive(
     pdf_path: Union[str, Path],
     out_path: Union[str, Path],
@@ -1576,7 +1628,7 @@ def export_comic_archive(
                 archive = zipfile.ZipFile(raw, "w", compression=zipfile.ZIP_DEFLATED)
                 add = archive.writestr
             for i, page in enumerate(doc):
-                add(f"page_{i+1:04d}.jpg", page.get_pixmap(dpi=dpi).tobytes("jpeg"))
+                add(f"page_{i+1:04d}.jpg", comic_page_jpeg(page, dpi))
             archive.close()
         part.replace(out_p)
     finally:
@@ -1596,6 +1648,7 @@ def export_comic_epub(
     Creates a pre-paginated fixed-layout EPUB containing rendered full-bleed comic pages.
     Supports standard LTR or Japanese Manga RTL page progression.
     """
+    import uuid
     import pymupdf
     from ebooklib import epub
 
@@ -1625,8 +1678,7 @@ def export_comic_epub(
         chapters = []
 
         for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=dpi)
-            img_bytes = pix.tobytes("jpeg")
+            img_bytes = comic_page_jpeg(page, dpi)
             img_name = f"images/page_{i+1:04d}.jpg"
             img_item = epub.EpubItem(
                 uid=f"img_{i+1}",
@@ -1662,7 +1714,13 @@ def export_comic_epub(
         book.toc = tuple(chapters)
         book.add_item(epub.EpubNcx())
         book.add_item(epub.EpubNav())
-        epub.write_epub(str(out_p), book, {})
+        # complete or not at all: a build cut short (a restart) must not leave a broken EPUB that is then served
+        part = out_p.with_name(f".{out_p.name}.{uuid.uuid4().hex[:8]}.part")
+        try:
+            epub.write_epub(str(part), book, {})
+            part.replace(out_p)
+        finally:
+            part.unlink(missing_ok=True)
     finally:
         doc.close()
     return out_p

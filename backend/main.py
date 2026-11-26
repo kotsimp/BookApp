@@ -1682,6 +1682,11 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
                 # an audiobook generated again makes the earlier conversion stale
                 newest_mp3 = max((f.stat().st_mtime for f in out_dir.glob("*.mp3")), default=0.0)
                 matching = [f for f in matching if f.stat().st_mtime >= newest_mp3]
+            if is_comic_job and fmt in ("epub", "cbz") and matching:
+                # one made before pages kept their scan's resolution is far too large for a reader: made again below
+                from backend.exporter import comic_file_outdated
+                outdated = await asyncio.to_thread(lambda: {f for f in matching if comic_file_outdated(f)})
+                matching = [f for f in matching if f not in outdated]
             if matching:
                 matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
                 out_path = matching[0]
