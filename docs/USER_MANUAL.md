@@ -9,7 +9,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
 1. [Accessing the Application](#1-accessing-the-application)
    - [Help: Guide & FAQ](#-help-guide--faq)
    - [Light by Day, Dark at Night](#--light-by-day-dark-at-night)
-   - [Devices: Phone Notifications & E-reader Catalogue](#-devices-phone-notifications--e-reader-catalogue)
+   - [Devices: E-reader Catalogue](#-devices-e-reader-catalogue)
    - [Signing In & Your Account](#-signing-in--your-account)
    - [Managing Users (Administrators)](#-managing-users-administrators)
 2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
@@ -71,21 +71,13 @@ The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the
 * Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
 
 ### ❓ Help: Guide & FAQ
-The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, trying a few pages first, a message on your phone when a job finishes, reading on an e-reader, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
+The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, trying a few pages first, reading on an e-reader, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
 
 ### ☀️ / 🌙 Light by Day, Dark at Night
 The interface is light from sunrise to sunset and dark at night, by itself (the times follow the date; on Greek time they are those of Athens). The **Theme** button at the top right still switches it whenever you like: your choice holds until the next sunrise or sunset, and then the automatic theme takes over again. Hover over the button to see until when your choice lasts.
 
-### 📲 Devices: Phone Notifications & E-reader Catalogue
-The **📲 Συσκευές** button in the tab bar opens a window with two links to your other devices. With user accounts, each user sets up their own.
-
-**🔔 Phone notifications (ntfy).** When a translation or an audiobook finishes, or stops (for example at the Gemini daily limit, or with an error), a message comes to your phone, even with the page closed.
-1. On the phone, install the free **ntfy** app (Android, iPhone).
-2. In the window, write a **topic name** (or press **🎲** for a random one that is hard to guess) and press **💾 Αποθήκευση**.
-3. In the ntfy app press **+** and add the same topic. **📨 Δοκιμαστικό μήνυμα** checks that it arrives.
-* The message says what happened (`✅ Η μετάφραση ολοκληρώθηκε`, `🎧 Το ηχοβιβλίο είναι έτοιμο`, `⏳ Σταμάτησε στο ημερήσιο όριο Gemini`, `⚠️ … σταμάτησε` with the reason) and the file name. Tapping it opens BookApp. It is written in the interface language chosen when you saved.
-* The topic works like a password: whoever knows it sees the messages. Only the file name and the outcome are sent, never the book's text.
-* The public server `https://ntfy.sh` is used unless you write the address of your own ntfy server. **🔕 Απενεργοποίηση** stops the messages.
+### 📲 Devices: E-reader Catalogue
+The **📲 Συσκευές** button in the tab bar opens the link for your reading devices. With user accounts, each user has their own.
 
 **📚 E-reader catalogue (OPDS).** Reading apps such as **KOReader**, **Moon+ Reader**, **Librera** or **Panels** (comics) list your finished translations and download them directly.
 1. Press **🔗 Νέος σύνδεσμος** and copy the link (`http://<server>:8000/opds/…/`).

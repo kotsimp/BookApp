@@ -1,7 +1,7 @@
 """
-connections.py - The links to the user's other devices.
+connections.py - The link to the user's reading devices.
 
-/api/connections...  the 📲 Devices window (signed in): the e-reader catalogue link and phone notifications.
+/api/connections...  the 📲 Devices window (signed in): the e-reader catalogue link.
 /opds/<token>/...    the e-reader catalogue (OPDS 1.2): finished translations for reading apps (KOReader, Moon+ Reader,
                      Librera, Panels…). The secret token in the path is the pass, since these apps cannot sign in.
 """
@@ -10,12 +10,10 @@ import asyncio
 import datetime
 import hashlib
 from pathlib import Path
-from typing import Optional
 from xml.sax.saxutils import escape, quoteattr
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
 
 from backend.api.common import OUTPUT_DIR, _validate_job_id
 
@@ -34,18 +32,11 @@ def _owner() -> str:
     return current_user_id()
 
 
-class NtfyRequest(BaseModel):
-    server: Optional[str] = None
-    topic: Optional[str] = None
-    app_url: Optional[str] = None
-    lang: Optional[str] = None
-
-
 @router.get("/api/connections")
 async def connections_status():
-    """The signed-in user's e-reader link (whether one exists; it is shown only when made) and notifications."""
-    from backend.connections import ntfy_settings, opds_status
-    return {"opds": opds_status(_owner()), "ntfy": ntfy_settings(_owner())}
+    """The signed-in user's e-reader link: whether one exists (it is shown only when made)."""
+    from backend.connections import opds_status
+    return {"opds": opds_status(_owner())}
 
 
 @router.post("/api/connections/opds")
@@ -63,49 +54,13 @@ async def connections_remove_opds_link():
     return {"status": "removed"}
 
 
-def _checked_ntfy(req: NtfyRequest) -> tuple[str, str]:
-    from backend.notify import TOPIC_RE, normalize_server
-    server = normalize_server(req.server or "")
-    if not server:
-        raise HTTPException(400, "The ntfy server must be an address such as https://ntfy.sh.")
-    topic = (req.topic or "").strip()
-    if topic and not TOPIC_RE.fullmatch(topic):
-        raise HTTPException(400, "The topic name: 6–64 Latin letters, digits, - or _.")
-    return server, topic
-
-
-@router.post("/api/connections/ntfy")
-async def connections_save_ntfy(req: NtfyRequest):
-    """Saves the phone notifications (an empty topic turns them off)."""
-    from backend.connections import set_ntfy
-    server, topic = _checked_ntfy(req)
-    app_url = (req.app_url or "").strip()
-    if app_url and not app_url.startswith(("http://", "https://")):
-        app_url = ""
-    return await asyncio.to_thread(set_ntfy, _owner(), server, topic, app_url[:300], (req.lang or "el").lower())
-
-
-@router.post("/api/connections/ntfy/test")
-async def connections_test_ntfy(req: NtfyRequest):
-    """Sends a test message to the given server and topic, and says whether it went."""
-    from backend.notify import send, texts
-    server, topic = _checked_ntfy(req)
-    if not topic:
-        raise HTTPException(400, "Write a topic name first.")
-    t = texts(req.lang or "el")
-    try:
-        await asyncio.to_thread(send, server, topic, t["test_title"], t["test_body"])
-    except Exception as e:
-        raise HTTPException(502, f"ntfy did not accept the message: {str(e)[:200]}")
-    return {"status": "sent"}
-
-
 # ---------------------------------------------------------------------------
 # The catalogue
 # ---------------------------------------------------------------------------
 
 def _catalogue_user(token: str):
-    """Opens the catalogue as the token's user for this request (job visibility); 404 for anything else."""
+    """Opens the catalogue as the token's user for this request; 404 for anything else.
+    Returns (context token to reset, the predicate of the books that are this user's own)."""
     from backend import auth
     from backend.connections import owner_for_opds_token
     from backend.request_context import set_current_user
@@ -116,8 +71,18 @@ def _catalogue_user(token: str):
         user = auth.get_user(owner) if owner else None
         if not user or user.get("disabled"):  # a link made before accounts were on, or of a removed account
             raise HTTPException(404, "Not found.")
-        return set_current_user({"id": user["id"], "username": user["username"], "role": user["role"]})
-    return set_current_user(None)
+        ctx = set_current_user({"id": user["id"], "username": user["username"], "role": user["role"]})
+        # the user's own books (an administrator also has the jobs from before accounts), never other users'
+        admin = user["role"] == "admin"
+        return ctx, (lambda job: (job.owner or "") == owner or (admin and not job.owner))
+    return set_current_user(None), (lambda job: True)
+
+
+def _translated(job) -> bool:
+    """A finished translation of this job is on disk (also after an audiobook was made from it on the same job)."""
+    from backend import main
+    out_dir = OUTPUT_DIR / job.job_id
+    return job.status != "running" and out_dir.is_dir() and bool(main._translated_texts(job, out_dir))
 
 
 def _iso(ts: float) -> str:
@@ -156,10 +121,10 @@ def _entry(job, base: str) -> str:
     return "".join(parts)
 
 
-def _feed(token: str) -> str:
+def _feed(token: str, own) -> str:
     from backend.job_manager import list_jobs
     base = f"/opds/{token}/"
-    jobs = [j for j in list_jobs() if j.mode == "translate" and j.status == "done" and j.output_path][:MAX_ENTRIES]
+    jobs = [j for j in list_jobs() if own(j) and _translated(j)][:MAX_ENTRIES]
     feed_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
     updated = _iso(max((j.updated_at for j in jobs), default=0))
     head = (
@@ -178,9 +143,9 @@ def _feed(token: str) -> str:
 @router.get("/opds/{token}/")
 async def opds_catalogue(token: str):
     from backend.request_context import reset_current_user
-    ctx = _catalogue_user(token)
+    ctx, own = _catalogue_user(token)
     try:
-        body = await asyncio.to_thread(_feed, token)
+        body = await asyncio.to_thread(_feed, token, own)
     finally:
         reset_current_user(ctx)
     return Response(content=body, media_type=FEED_TYPE)
@@ -193,10 +158,10 @@ async def opds_book(request: Request, token: str, job_id: str, kind: str):
     from backend.job_manager import get_job
     from backend.request_context import can_view_owner, reset_current_user
     _validate_job_id(job_id)
-    ctx = _catalogue_user(token)
+    ctx, own = _catalogue_user(token)
     try:
         job = get_job(job_id)
-        if not job or not can_view_owner(job.owner) or job.status != "done":
+        if not job or not can_view_owner(job.owner) or not own(job) or not _translated(job):
             raise HTTPException(404, "Not found.")
         allowed = {k for k, _, _ in (COMIC_FORMATS if _is_comic(job) else BOOK_FORMATS)}
         if kind not in allowed:
@@ -214,10 +179,10 @@ async def opds_cover(token: str, job_id: str):
     from backend.job_manager import get_job
     from backend.request_context import can_view_owner, reset_current_user
     _validate_job_id(job_id)
-    ctx = _catalogue_user(token)
+    ctx, own = _catalogue_user(token)
     try:
         job = get_job(job_id)
-        if not job or not can_view_owner(job.owner):
+        if not job or not can_view_owner(job.owner) or not own(job):
             raise HTTPException(404, "Not found.")
         return await main.get_cover_image(job_id)
     finally:

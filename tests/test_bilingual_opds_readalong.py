@@ -1,14 +1,12 @@
 """
-tests/test_bilingual_opds_ntfy_readalong.py - The bilingual edition, the e-reader catalogue (OPDS), phone notifications
-(ntfy) and reading along with an audiobook.
+tests/test_bilingual_opds_readalong.py - The bilingual edition, the e-reader catalogue (OPDS) and reading along with
+an audiobook.
 
 1. Bilingual: page markers of both styles, paragraph matching (joined, split, missing paragraphs, whole texts without
    markers), the PDF / DOCX / EPUB files, and the download endpoint (formats, comics, not yet translated).
 2. OPDS: secret links (only a hash kept, a new one stops the old), open paths for reading apps, the Atom feed, book
    downloads and the 404 of unknown or removed links.
-3. ntfy: server addresses, messages per outcome and language, the notice sent once when a job stops running, the
-   settings endpoints and a test message to a local stand-in server.
-4. Reading along: sentence times from the parts' durations, and the endpoint ignoring times of an older recording.
+3. Reading along: sentence times from the parts' durations, and the endpoint ignoring times of an older recording.
 """
 try:
     import _sandbox_guard  # noqa: F401  (never run against the real jobs, keys or port 8000)
@@ -20,21 +18,18 @@ sys.path.insert(0, ".")
 import json
 import os
 import tempfile
-import threading
 import time
 import types
 import unittest
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
 
 import pymupdf as fitz
 
-from backend import bilingual, connections, job_manager, notify
-from backend.database import db_delete_job
+from backend import bilingual, connections
 
 API = "http://127.0.0.1:8000/api"
 ROOT = "http://127.0.0.1:8000"
@@ -135,86 +130,55 @@ class ConnectionStoreTests(unittest.TestCase):
         self.assertFalse(auth.is_open_path("/opdsx"))
         self.assertFalse(auth.is_open_path("/api/connections"))
 
-    def test_ntfy_settings(self):
-        self.assertFalse(connections.ntfy_settings("u2")["enabled"])
-        s = connections.set_ntfy("u2", "https://ntfy.example.org", "bookapp-abc123", "http://192.168.1.5:8000", "en")
-        self.assertEqual((s["enabled"], s["topic"], s["lang"]), (True, "bookapp-abc123", "en"))
-        self.assertFalse(connections.set_ntfy("u2", "https://ntfy.sh", "")["enabled"])
+class CatalogueContentTests(unittest.TestCase):
+    """Which books a catalogue link lists: finished translations of its own user."""
 
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
 
-class NotifyTests(unittest.TestCase):
-    def test_server_addresses(self):
-        self.assertEqual(notify.normalize_server(""), "https://ntfy.sh")
-        self.assertEqual(notify.normalize_server("ntfy.example.org/"), "https://ntfy.example.org")
-        self.assertEqual(notify.normalize_server("http://192.168.1.9:8080"), "http://192.168.1.9:8080")
-        for bad in ("ftp://x.org", "https://user:pw@x.org", "https://x.org/?a=1", "https://"):
-            self.assertIsNone(notify.normalize_server(bad), bad)
-        self.assertTrue(notify.TOPIC_RE.fullmatch("bookapp-k7x2m9"))
-        self.assertIsNone(notify.TOPIC_RE.fullmatch("short"))
-        self.assertIsNone(notify.TOPIC_RE.fullmatch("with space here"))
+    def tearDown(self):
+        self.tmp.cleanup()
 
-    def test_messages(self):
-        job = types.SimpleNamespace(mode="translate", status="done", file_name="Book.pdf", error=None,
-                                    sample_range=[1, 12])
-        title, body, prio = notify.job_message(job, "el")
-        self.assertEqual(title, "✅ Η μετάφραση ολοκληρώθηκε")
-        self.assertEqual(body, "«Book.pdf» · δείγμα, σελίδες 1–12")
-        job.sample_range = None
-        self.assertEqual(notify.job_message(job, "en")[:2], ("✅ Translation finished", "«Book.pdf»"))
-        job.status, job.error = "error", "⚠️ Εξαντλήθηκε το ημερήσιο όριο του Gemini API (Free Tier)."
-        self.assertEqual(notify.job_message(job, "el")[0], "⏳ Σταμάτησε στο ημερήσιο όριο Gemini")
-        job.error = "No text found to convert to audio."
-        job.mode = "audiobook"
-        title, body, prio = notify.job_message(job, "en")
-        self.assertEqual((title, prio), ("⚠️ Audiobook stopped", 4))
-        self.assertIn("No text found", body)
-        job.status = "cancelled"
-        self.assertIsNone(notify.job_message(job))
+    def _job(self, job_id, owner, mode="translate", status="done", translated=True):
+        if translated:
+            (self.out / job_id).mkdir()
+            (self.out / job_id / f"{job_id}_translated_greek.txt").write_text("Κείμενο.", encoding="utf-8")
+        return types.SimpleNamespace(job_id=job_id, owner=owner, mode=mode, status=status, target_lang="greek",
+                                     source_lang="english", file_name=f"{job_id}.pdf", file_type="pdf",
+                                     layout_mode="standard", updated_at=time.time(), sample_range=None)
 
-    def test_sent_once_when_a_job_stops_running(self):
-        job = job_manager.create_job("", "notify_test.pdf", "pdf")
-        try:
-            with mock.patch("backend.notify.job_finished") as finished:
-                job_manager.update_job(job.job_id, mode="translate", status="running")
-                job_manager.update_job(job.job_id, progress=50)
-                self.assertEqual(finished.call_count, 0)
-                job_manager.update_job(job.job_id, status="done")
-                self.assertEqual(finished.call_count, 1)
-                job_manager.update_job(job.job_id, current_step="later")
-                job_manager.update_job(job.job_id, status="done")
-                self.assertEqual(finished.call_count, 1, "only the end of a run")
-                job_manager.update_job(job.job_id, mode="", status="running")
-                job_manager.update_job(job.job_id, status="error")
-                self.assertEqual(finished.call_count, 1, "not for other kinds of work")
-        finally:
-            job_manager._jobs.pop(job.job_id, None)
-            db_delete_job(job.job_id)
+    def _titles(self, token_owner, users, jobs):
+        from backend import auth
+        from backend.api import connections as api
+        from backend.request_context import reset_current_user
+        with mock.patch.object(api, "OUTPUT_DIR", self.out), \
+                mock.patch("backend.connections.owner_for_opds_token", return_value=token_owner), \
+                mock.patch.object(auth, "is_enabled", return_value=bool(users)), \
+                mock.patch.object(auth, "get_user", side_effect=lambda uid: users.get(uid)), \
+                mock.patch("backend.job_manager.list_jobs", return_value=jobs):
+            ctx, own = api._catalogue_user("token")
+            try:
+                feed = api._feed("token", own)
+            finally:
+                reset_current_user(ctx)
+        root = ET.fromstring(feed)
+        return sorted(e.findtext(f"{ATOM}title") for e in root.findall(f"{ATOM}entry"))
 
-    def test_job_finished_uses_the_owners_settings(self):
-        job = types.SimpleNamespace(job_id="j", owner="u9", mode="audiobook", status="done", file_name="A.epub",
-                                    error=None, sample_range=None)
-        sent = []
+    def test_translations_stay_listed_after_an_audiobook(self):
+        jobs = [self._job("narrated", "", mode="audiobook"), self._job("plain", ""),
+                self._job("running", "", status="running"), self._job("untranslated", "", translated=False)]
+        self.assertEqual(self._titles("", {}, jobs), ["narrated", "plain"])
 
-        class InlineThread:
-            def __init__(self, target, **kw):
-                self.target = target
-
-            def start(self):
-                self.target()
-
-        with mock.patch("backend.connections.ntfy_settings", return_value={
-                "enabled": True, "server": "https://ntfy.example.org", "topic": "bookapp-xyz789",
-                "app_url": "http://nas:8000", "lang": "el"}), \
-                mock.patch.object(notify, "send", side_effect=lambda *a, **kw: sent.append((a, kw))), \
-                mock.patch.object(notify.threading, "Thread", InlineThread):
-            notify.job_finished(job)
-        self.assertEqual(sent[0][0][:4], ("https://ntfy.example.org", "bookapp-xyz789", "🎧 Το ηχοβιβλίο είναι έτοιμο",
-                                          "«A.epub»"))
-        self.assertEqual(sent[0][1]["click"], "http://nas:8000")
-        with mock.patch("backend.connections.ntfy_settings", return_value={"enabled": False}), \
-                mock.patch.object(notify, "send") as never:
-            notify.job_finished(job)
-        never.assert_not_called()
+    def test_each_user_sees_only_their_own_books(self):
+        users = {"u-admin": {"id": "u-admin", "username": "a", "role": "admin", "disabled": False},
+                 "u-reader": {"id": "u-reader", "username": "r", "role": "user", "disabled": False}}
+        jobs = [self._job("admins", "u-admin"), self._job("readers", "u-reader"), self._job("before-accounts", "")]
+        self.assertEqual(self._titles("u-admin", users, jobs), ["admins", "before-accounts"])
+        self.assertEqual(self._titles("u-reader", users, jobs), ["readers"])
+        users["u-reader"]["disabled"] = True
+        with self.assertRaises(Exception):
+            self._titles("u-reader", users, jobs)
 
 
 class ReadAlongTests(unittest.TestCase):
@@ -289,20 +253,6 @@ def _translated_job(tmp: Path, name: str) -> str:
     return job_id
 
 
-class _FakeNtfy(BaseHTTPRequestHandler):
-    received = []
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        _FakeNtfy.received.append(json.loads(self.rfile.read(length).decode("utf-8")))
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"{}")
-
-    def log_message(self, *args):
-        pass
-
-
 class ApiTests(unittest.TestCase):
     """Against the sandbox server that run_all_tests.py starts."""
 
@@ -362,40 +312,6 @@ class ApiTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             _request(ROOT + path)
         self.assertEqual(ctx.exception.code, 404, "a removed link stops working")
-
-    def test_ntfy_settings_and_test_message(self):
-        server = HTTPServer(("127.0.0.1", 0), _FakeNtfy)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            address = f"http://127.0.0.1:{server.server_address[1]}"
-            with self.assertRaises(urllib.error.HTTPError) as ctx:
-                _request(f"{API}/connections/ntfy", {"server": address, "topic": "bad topic!"})
-            self.assertEqual(ctx.exception.code, 400)
-            with self.assertRaises(urllib.error.HTTPError) as ctx:
-                _request(f"{API}/connections/ntfy", {"server": "ftp://x", "topic": "bookapp-abc123"})
-            self.assertEqual(ctx.exception.code, 400)
-            _request(f"{API}/connections/ntfy/test", {"server": address, "topic": "bookapp-abc123", "lang": "en"})
-            self.assertEqual(_FakeNtfy.received[-1]["topic"], "bookapp-abc123")
-            self.assertEqual(_FakeNtfy.received[-1]["title"], "🔔 BookApp")
-            self.assertIn("Notifications work", _FakeNtfy.received[-1]["message"])
-            _, _, raw = _request(f"{API}/connections/ntfy", {"server": address, "topic": "bookapp-abc123",
-                                                             "app_url": "http://nas:8000", "lang": "el"})
-            self.assertTrue(json.loads(raw)["enabled"])
-            self.assertEqual(json.loads(_request(f"{API}/connections")[2])["ntfy"]["server"], address)
-            # a finished job reaches the phone
-            before = len(_FakeNtfy.received)
-            _translated_job(Path(self.tmp.name), "notified.pdf")
-            deadline = time.time() + 10
-            while len(_FakeNtfy.received) == before and time.time() < deadline:
-                time.sleep(0.1)
-            self.assertEqual(_FakeNtfy.received[-1]["title"], "✅ Η μετάφραση ολοκληρώθηκε")
-            self.assertEqual(_FakeNtfy.received[-1]["message"], "«notified.pdf»")
-            self.assertEqual(_FakeNtfy.received[-1]["click"], "http://nas:8000")
-            _request(f"{API}/connections/ntfy", {"server": address, "topic": ""})
-            self.assertFalse(json.loads(_request(f"{API}/connections")[2])["ntfy"]["enabled"])
-        finally:
-            server.shutdown()
 
     def test_read_along_endpoint(self):
         from backend.api.common import OUTPUT_DIR

@@ -1783,7 +1783,7 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
     media_type = MIME_MAP.get(out_path.suffix.lower(), "application/octet-stream")
     download_name = out_path.name
     sample = getattr(job, "sample_range", None) if job else None
-    if sample and job.mode == "translate" and out_path.suffix.lower() not in (".mp3", ".m4b"):
+    if sample and out_path.suffix.lower() not in (".mp3", ".m4b"):  # also after an audiobook made from the sample
         download_name = f"{out_path.stem}_sample_p{sample[0]}-{sample[1]}{out_path.suffix}"  # not the whole book
     return FileResponse(
         path=str(out_path),

@@ -30,11 +30,6 @@ def reset_current_user(token: contextvars.Token) -> None:
     _CURRENT_USER.reset(token)
 
 
-def is_admin(user: Optional[Dict[str, Any]] = None) -> bool:
-    u = user if user is not None else _CURRENT_USER.get()
-    return bool(u) and u.get("role") == "admin"
-
-
 def can_view_owner(owner: Optional[str]) -> bool:
     """
     Whether the current requester may see a job owned by `owner`.

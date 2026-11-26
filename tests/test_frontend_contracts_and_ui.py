@@ -1390,16 +1390,21 @@ getEl('tr-file-name').textContent = 'Old Scan.pdf';
 
     def test_17_read_along_bilingual_and_devices(self):
         """The player lights the sentence being read and jumps to a clicked one; the bilingual download follows the
-        chosen format; the Devices window shows the link state and sends the notification settings."""
+        chosen format; the Devices window shows the e-reader link's state and makes a new link."""
         print("-> 17. Testing reading along, the bilingual download and the Devices window...")
         node_bin = shutil.which("node")
         if not node_bin:
             self.skipTest("Node.js not available in PATH")
         index = Path("frontend/index.html").read_text(encoding="utf-8")
         for el_id in ("ab-readalong-btn", "ab-readalong", "ab-readalong-text", "ab-readalong-follow", "tr-bilingual-btn",
-                      "btn-devices", "devices-modal", "ntfy-topic", "ntfy-server", "opds-link", "opds-new-btn"):
+                      "btn-devices", "devices-modal", "opds-link", "opds-new-btn"):
             self.assertIn(f'id="{el_id}"', index)
         self.assertIn('id="ab-readalong-text" translate="no"', index, "the book's own text is never switched")
+        self.assertNotIn("ntfy", index, "phone notifications were removed")
+        app_js = Path("frontend/app.js").read_text(encoding="utf-8")
+        smart = app_js[app_js.index("async function executeSmartResume"):]
+        self.assertIn("startTranslation({ keepSavedFormat: true, resume: true })", smart[:1200],
+                      "the Smart Resume banner resumes a stopped sample as that sample")
         harness = r"""
 const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
 const els = new Map();
@@ -1473,24 +1478,16 @@ ctx.toast = () => {};
   assert.strictEqual(getEl('tr-bilingual-btn').style.display, '');
 
   // the Devices window
-  responses['/connections'] = { opds: { exists: true, created: 1764000000 },
-    ntfy: { enabled: true, topic: 'bookapp-abc123', server: 'https://ntfy.sh' } };
+  responses['/connections'] = { opds: { exists: true, created: 1764000000 } };
   await ctx.openDevicesModal();
   assert.strictEqual(getEl('devices-modal').style.display, 'flex');
-  assert.strictEqual(getEl('ntfy-topic').value, 'bookapp-abc123');
   assert.ok(getEl('opds-status').textContent.startsWith('Υπάρχει σύνδεσμος από'));
   assert.strictEqual(getEl('opds-remove-btn').style.display, '');
   assert.strictEqual(getEl('opds-localhost-note').style.display, 'none', 'a LAN address works on the e-reader');
-  const body = JSON.parse(ctx.ntfyRequestBody());
-  assert.deepStrictEqual([body.topic, body.app_url, body.lang], ['bookapp-abc123', 'http://192.168.1.5:8000', 'el']);
   responses['/connections/opds'] = { path: '/opds/SECRET123/' };
   await ctx.newOpdsLink();
   assert.strictEqual(getEl('opds-link').value, 'http://192.168.1.5:8000/opds/SECRET123/');
   assert.strictEqual(getEl('opds-link-box').style.display, '');
-  ctx.suggestNtfyTopic === undefined || (getEl('ntfy-topic').value = '');
-  win.crypto = { getRandomValues: (a) => { a.fill(7); return a; } };
-  ctx.suggestNtfyTopic();
-  assert.match(getEl('ntfy-topic').value, /^bookapp-[a-z0-9]{12}$/);
   process.stdout.write('OK');
 })().catch((e) => { console.error(e); process.exit(1); });
 """

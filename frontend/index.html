@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.12.0" />
-  <script src="i18n.js?v=1.4.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.12.2" />
+  <script src="i18n.js?v=1.4.2"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -86,7 +86,7 @@
       <span class="tab-icon">📚</span>
       <span class="tab-label">Glossary (Γλωσσάρι)</span>
     </button>
-    <button class="tab-btn tab-btn-tool" id="btn-devices" onclick="openDevicesModal()" title="Ειδοποιήσεις στο κινητό και κατάλογος για e-reader">
+    <button class="tab-btn tab-btn-tool" id="btn-devices" onclick="openDevicesModal()" title="Κατάλογος για εφαρμογές e-reader (OPDS)">
       <span class="tab-icon">📲</span>
       <span class="tab-label">Συσκευές</span>
     </button>
@@ -1483,26 +1483,6 @@
     </div>
     <div class="modal-body devices-body">
       <section class="devices-section">
-        <h3>🔔 Ειδοποιήσεις στο κινητό (ntfy)</h3>
-        <p>Όταν τελειώνει ή σταματά μια μετάφραση ή ένα ηχοβιβλίο, έρχεται μήνυμα στο κινητό, ακόμη κι αν η σελίδα είναι κλειστή. Εγκαταστήστε τη δωρεάν εφαρμογή <strong>ntfy</strong>, πατήστε <strong>+</strong> και γράψτε το ίδιο όνομα θέματος με αυτό εδώ.</p>
-        <label class="devices-field">Όνομα θέματος
-          <span class="devices-row">
-            <input type="text" id="ntfy-topic" class="form-input" maxlength="64" autocomplete="off" spellcheck="false" placeholder="π.χ. bookapp-k7x2m9" />
-            <button type="button" class="btn-sm btn-outline" onclick="suggestNtfyTopic()" title="Ένα τυχαίο όνομα που δύσκολα μαντεύει κάποιος">🎲</button>
-          </span>
-        </label>
-        <label class="devices-field">Διακομιστής ntfy
-          <input type="text" id="ntfy-server" class="form-input" autocomplete="off" spellcheck="false" placeholder="https://ntfy.sh" />
-        </label>
-        <p class="devices-note">Το θέμα λειτουργεί σαν κωδικός: όποιος το ξέρει βλέπει τα μηνύματα. Στέλνεται μόνο το όνομα του αρχείου και το αποτέλεσμα, ποτέ το κείμενο του βιβλίου. Με δικό σας διακομιστή ntfy, γράψτε τη διεύθυνσή του.</p>
-        <div class="devices-actions">
-          <button type="button" class="btn-sm btn-outline" onclick="testNtfy()">📨 Δοκιμαστικό μήνυμα</button>
-          <button type="button" class="btn-sm btn-primary" onclick="saveNtfy()">💾 Αποθήκευση</button>
-          <button type="button" class="btn-sm btn-outline" id="ntfy-off-btn" onclick="disableNtfy()">🔕 Απενεργοποίηση</button>
-        </div>
-        <div class="devices-status" id="ntfy-status" aria-live="polite"></div>
-      </section>
-      <section class="devices-section">
         <h3>📚 Κατάλογος για e-reader (OPDS)</h3>
         <p>Εφαρμογές ανάγνωσης όπως <strong>KOReader</strong>, <strong>Moon+ Reader</strong>, <strong>Librera</strong> ή <strong>Panels</strong> (για κόμικ) βλέπουν τα τελειωμένα βιβλία σας και τα κατεβάζουν απευθείας. Προσθέστε τον σύνδεσμο ως κατάλογο OPDS.</p>
         <div id="opds-link-box" class="devices-link" style="display:none">
@@ -1554,7 +1534,7 @@
           <li><strong>☀️ / 🌙</strong>: φωτεινό θέμα τη μέρα, σκοτεινό τη νύχτα· πατήστε το για να το αλλάξετε.</li>
           <li><strong>📚 Γλωσσάρι</strong>: σταθερή μετάφραση για ονόματα και όρους σε όλο το βιβλίο.</li>
           <li><strong>🕑 Ιστορικό εργασιών</strong>: κατεβάζετε ξανά ή συνεχίζετε παλαιότερες εργασίες.</li>
-          <li><strong>📲 Συσκευές</strong>: μήνυμα στο κινητό όταν τελειώνει μια εργασία (ntfy) και κατάλογος για εφαρμογές e-reader (OPDS).</li>
+          <li><strong>📲 Συσκευές</strong>: κατάλογος για εφαρμογές e-reader (OPDS).</li>
         </ul>
 
         <h3>💬 Συχνές ερωτήσεις</h3>
@@ -1590,10 +1570,6 @@
           <details>
             <summary>Μπορώ να δοκιμάσω πρώτα λίγες σελίδες;</summary>
             <p>Ναι: με <strong>🧪 Μετάφραση δείγματος</strong> μεταφράζονται μόνο οι σελίδες που ορίζετε (στα EPUB, τα κεφάλαια), με τις ίδιες ρυθμίσεις. Η <strong>📊 Εκτίμηση</strong> λέει πόσα αιτήματα Gemini θέλει το δείγμα και πόσα όλο το βιβλίο. Αν σας αρέσει, πατήστε <strong>🌐 Μετάφραση ολόκληρου του βιβλίου</strong>. Το αρχείο του δείγματος κατεβαίνει με «_sample» στο όνομα.</p>
-          </details>
-          <details>
-            <summary>Μπορώ να μάθω στο κινητό πότε τελείωσε;</summary>
-            <p>Ναι: στο <strong>📲 Συσκευές</strong> γράψτε ένα όνομα θέματος (ή πατήστε 🎲) και αποθηκεύστε. Στο κινητό εγκαταστήστε τη δωρεάν εφαρμογή <strong>ntfy</strong> και προσθέστε το ίδιο θέμα. Όταν μια μετάφραση ή ένα ηχοβιβλίο τελειώνει ή σταματά (π.χ. στο ημερήσιο όριο), έρχεται μήνυμα με το όνομα του αρχείου, ακόμη κι αν η σελίδα είναι κλειστή.</p>
           </details>
           <details>
             <summary>Μπορώ να διαβάζω τα βιβλία σε e-reader ή tablet;</summary>
@@ -1654,7 +1630,7 @@
           <li><strong>☀️ / 🌙</strong>: the light theme by day, the dark one at night; press it to switch.</li>
           <li><strong>📚 Glossary</strong>: a fixed translation for names and terms across the whole book.</li>
           <li><strong>🕑 Session History</strong>: download again or continue earlier jobs.</li>
-          <li><strong>📲 Devices</strong>: a message on your phone when a job finishes (ntfy) and a catalogue for e-reader apps (OPDS).</li>
+          <li><strong>📲 Devices</strong>: a catalogue for e-reader apps (OPDS).</li>
         </ul>
 
         <h3>💬 Frequently asked questions</h3>
@@ -1690,10 +1666,6 @@
           <details>
             <summary>Can I try a few pages first?</summary>
             <p>Yes: <strong>🧪 Translate the sample</strong> translates only the pages you choose (chapters, for an EPUB), with the same settings. The <strong>📊 Estimate</strong> says how many Gemini requests the sample needs, and how many the whole book. If you like it, press <strong>🌐 Translate the whole book</strong>. The sample's file downloads with “_sample” in its name.</p>
-          </details>
-          <details>
-            <summary>Can my phone tell me when it is done?</summary>
-            <p>Yes: in <strong>📲 Devices</strong> write a topic name (or press 🎲) and save. On the phone, install the free <strong>ntfy</strong> app and add the same topic. When a translation or an audiobook finishes or stops (e.g. at the daily limit), a message with the file name arrives, even with the page closed.</p>
           </details>
           <details>
             <summary>Can I read the books on an e-reader or tablet?</summary>
@@ -1784,7 +1756,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="app.js?v=2.19.0"></script>
+<script src="app.js?v=2.19.2"></script>
 <script src="insights.js?v=2.10.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>

@@ -7,13 +7,10 @@ import uuid
 import time
 import json
 import asyncio
-import logging
 import re
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -453,7 +450,6 @@ def update_job(job_id: str, **kwargs):
                 kwargs.pop("progress", None)
                 kwargs.pop("output_path", None)
                 kwargs.pop("error", None)
-        was_running = job.status == "running"
         for k, v in kwargs.items():
             setattr(job, k, v)
         job.updated_at = time.time()
@@ -465,13 +461,6 @@ def update_job(job_id: str, **kwargs):
             pass
         # Notify SSE subscribers
         _notify_subscribers(job)
-        # The owner's phone hears about a translation or audiobook that finished or stopped (ntfy, if set up)
-        if was_running and job.status in ("done", "error") and job.mode in ("translate", "audiobook"):
-            try:
-                from backend.notify import job_finished
-                job_finished(job)
-            except Exception as e:
-                logger.warning(f"[{job_id}] Finish notification skipped: {e}")
 
 
 def _push_to_queue(q: asyncio.Queue, payload: dict) -> None:

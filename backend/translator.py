@@ -371,7 +371,6 @@ async def _translate_with_retry(
     text: str,
     source_lang: str,
     target_lang: str,
-    deep_trans: Optional[GoogleTranslator] = None,
     retries: int = 3,
     session: Optional[aiohttp.ClientSession] = None,
 ) -> str:
@@ -557,7 +556,6 @@ async def translate_document(
     source_lang: str,
     target_lang: str,
     output_path: str,
-    progress_callback: Optional[Callable] = None,
     style: Optional[str] = None,
     page_range: Optional[tuple] = None,
 ) -> str:

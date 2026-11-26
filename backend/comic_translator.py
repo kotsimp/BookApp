@@ -22,7 +22,7 @@ import uuid
 import logging
 import asyncio
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any, List, NamedTuple, Tuple
+from typing import Optional, Dict, Any, List, NamedTuple, Tuple
 
 import pymupdf as fitz
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
@@ -1812,7 +1812,6 @@ async def translate_comic_document(
     output_path: str,
     api_key: Optional[str] = None,
     reading_direction: str = "ltr",
-    progress_callback: Optional[Callable] = None,
     quota_behavior: str = "wait",
     notes: Optional[List[str]] = None,
     page_range: Optional[Tuple[int, int]] = None,

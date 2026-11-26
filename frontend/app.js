@@ -3355,7 +3355,7 @@ async function executeSmartResume() {
   }
   toast('▶️ Συνέχιση εργασίας από το αποθηκευμένο checkpoint...', 'info');
   if ((job.mode || 'translate') === 'translate') {
-    await startTranslation({ keepSavedFormat: true });
+    await startTranslation({ keepSavedFormat: true, resume: true });  // a stopped sample resumes as that sample
   } else {
     await startAudiobook();
   }
@@ -4330,7 +4330,7 @@ function closeHelpModal() {
   if (modal) modal.style.display = 'none';
 }
 
-// ── 📲 Devices: phone notifications (ntfy) and the e-reader catalogue (OPDS) ──
+// ── 📲 Devices: the e-reader catalogue (OPDS) ──
 let _opdsLinkExists = false;
 
 function setDevicesStatus(id, text) {
@@ -4342,7 +4342,6 @@ async function openDevicesModal() {
   const modal = document.getElementById('devices-modal');
   if (!modal) return;
   modal.style.display = 'flex';
-  setDevicesStatus('ntfy-status', '');
   setDevicesStatus('opds-status', '');
   const linkBox = document.getElementById('opds-link-box');
   if (linkBox) linkBox.style.display = 'none';
@@ -4353,24 +4352,15 @@ async function openDevicesModal() {
     const res = await fetch(`${API}/connections`);
     if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load the devices settings'));
     const data = await res.json();
-    document.getElementById('ntfy-topic').value = data.ntfy?.topic || '';
-    document.getElementById('ntfy-server').value = data.ntfy?.server || 'https://ntfy.sh';
-    showNtfyState(Boolean(data.ntfy?.enabled));
     showOpdsState(data.opds || {});
   } catch (e) {
-    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
+    setDevicesStatus('opds-status', `❌ ${e.message}`);
   }
 }
 
 function closeDevicesModal() {
   const modal = document.getElementById('devices-modal');
   if (modal) modal.style.display = 'none';
-}
-
-function showNtfyState(enabled) {
-  const off = document.getElementById('ntfy-off-btn');
-  if (off) off.style.display = enabled ? '' : 'none';
-  setDevicesStatus('ntfy-status', enabled ? '✅ Οι ειδοποιήσεις είναι ενεργές.' : '');
 }
 
 function showOpdsState(opds) {
@@ -4382,61 +4372,6 @@ function showOpdsState(opds) {
     setDevicesStatus('opds-status', `Υπάρχει σύνδεσμος από ${day}. Για να τον ξαναδείτε, φτιάξτε νέο.`);
   } else {
     setDevicesStatus('opds-status', 'Δεν υπάρχει σύνδεσμος ακόμη.');
-  }
-}
-
-function suggestNtfyTopic() {
-  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
-  const bytes = new Uint8Array(12);
-  (window.crypto || crypto).getRandomValues(bytes);
-  document.getElementById('ntfy-topic').value = 'bookapp-' + Array.from(bytes, (b) => chars[b % chars.length]).join('');
-}
-
-function ntfyRequestBody(topic) {
-  return JSON.stringify({
-    server: (document.getElementById('ntfy-server')?.value || '').trim(),
-    topic: topic !== undefined ? topic : (document.getElementById('ntfy-topic')?.value || '').trim(),
-    app_url: (window.location && window.location.origin) || '',
-    lang: document.documentElement.lang === 'en' ? 'en' : 'el',
-  });
-}
-
-async function saveNtfy() {
-  const topic = (document.getElementById('ntfy-topic')?.value || '').trim();
-  if (!topic) {
-    setDevicesStatus('ntfy-status', '❌ Γράψτε ένα όνομα θέματος (ή πατήστε 🎲).');
-    return;
-  }
-  try {
-    const res = await fetch(`${API}/connections/ntfy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody() });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to save'));
-    showNtfyState(true);
-    toast('🔔 Οι ειδοποιήσεις αποθηκεύτηκαν.', 'success');
-  } catch (e) {
-    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
-  }
-}
-
-async function testNtfy() {
-  setDevicesStatus('ntfy-status', '📨 Αποστολή…');
-  try {
-    const res = await fetch(`${API}/connections/ntfy/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody() });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to send'));
-    setDevicesStatus('ntfy-status', '📨 Στάλθηκε. Αν δεν φάνηκε στο κινητό, ελέγξτε ότι η εφαρμογή ntfy έχει το ίδιο όνομα θέματος.');
-  } catch (e) {
-    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
-  }
-}
-
-async function disableNtfy() {
-  try {
-    const res = await fetch(`${API}/connections/ntfy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ntfyRequestBody('') });
-    if (!res.ok) throw new Error(await parseApiError(res, 'Failed to save'));
-    document.getElementById('ntfy-topic').value = '';
-    showNtfyState(false);
-    setDevicesStatus('ntfy-status', '🔕 Οι ειδοποιήσεις απενεργοποιήθηκαν.');
-  } catch (e) {
-    setDevicesStatus('ntfy-status', `❌ ${e.message}`);
   }
 }
 

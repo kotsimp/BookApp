@@ -506,7 +506,6 @@ select option:disabled {
   color: var(--text-muted);
 }
 
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
 /* Lang direction toggle */
 .lang-direction {
@@ -662,13 +661,6 @@ select option:disabled {
   .format-selector { grid-template-columns: repeat(2, 1fr); }
 }
 
-
-/* ---- Progress Section ---- */
-.progress-section {
-  display: none;
-  margin-top: 24px;
-}
-.progress-section.visible { display: block; }
 
 .progress-header {
   display: flex;
@@ -854,13 +846,6 @@ select option:disabled {
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
-/* ---- Divider ---- */
-.divider {
-  height: 1px;
-  background: var(--border);
-  margin: 24px 0;
-}
-
 /* ---- Toast Notifications ---- */
 .toast-container {
   position: fixed;
@@ -943,7 +928,6 @@ select option:disabled {
 
 /* ---- Responsive ---- */
 @media (max-width: 640px) {
-  .form-row { grid-template-columns: 1fr; }
   .card { padding: 20px; }
   .hero { padding: 40px 0 24px; }
   .tab-btn span.tab-label { display: none; }
@@ -1261,16 +1245,11 @@ html:not([lang="en"]) .help-lang[lang="en"] { display: none; }
 .readalong-text .ra-s.ra-current { background: rgba(124, 58, 237, 0.22); color: var(--text-primary); box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.22); }
 @media (max-width: 480px) { .readalong-text { max-height: 50vh; font-size: 0.95rem; } }
 
-/* ---- 📲 Devices: phone notifications and the e-reader catalogue ---- */
+/* ---- 📲 Devices: the e-reader catalogue ---- */
 .devices-body { font-size: 0.88rem; line-height: 1.5; color: var(--text-secondary); }
 .devices-body h3 { font-size: 0.98rem; color: var(--text-primary); margin: 0 0 6px; }
 .devices-body p { margin: 0 0 10px; }
 .devices-body strong { color: var(--text-primary); }
-.devices-section + .devices-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.devices-field { display: block; margin: 0 0 10px; font-weight: 600; color: var(--text-primary); }
-.devices-field .form-input { margin-top: 4px; width: 100%; }
-.devices-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-.devices-row .form-input { margin-top: 0; flex: 1; min-width: 0; }
 .devices-note { font-size: 0.78rem; color: var(--text-muted); }
 .devices-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .devices-actions .btn-primary, .sample-done .btn-primary { width: auto; } /* a small button among others */
