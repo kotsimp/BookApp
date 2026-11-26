@@ -1633,8 +1633,8 @@ ctx.toast = () => {};
         print("   More about the book (insights): OK")
 
     def test_19_files_in_the_iphone_home_screen_app(self):
-        """A download (a Book Insights export, a translation, a History link) never replaces the iPhone Home Screen
-        app with the file: the app fetches it and opens the Share sheet. Elsewhere files download as before."""
+        """A download (a Book Insights export, a translation, a History link) never replaces the app with the file on
+        an iPhone or iPad: the app fetches it and opens the Share sheet. Elsewhere files download as before."""
         print("-> 19. Testing downloads in the iPhone Home Screen app...")
         node_bin = shutil.which("node")
         if not node_bin:
@@ -1725,9 +1725,15 @@ const clickLink = (href, attrs = {}) => {
   assert.strictEqual(clickLink('/api/insights/J1/files/a.mp3', { download: '' }), true);
   assert.strictEqual(clickLink('/api/download/T9?format=pdf', { onclick: "downloadOutput('tr')" }), false);
   assert.strictEqual(clickLink('/reader.html'), false);
-  // Safari in a tab is no Home Screen app: as on a computer
+  // every iPhone and iPad (live finding: whether a page runs as the Home Screen app is not reliably told)
   ctx.navigator = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)', canShare: () => true, share: async () => {} };
-  assert.strictEqual(ctx.filesTrapTheApp(), false);
+  assert.strictEqual(ctx.filesTrapTheApp(), true, 'Safari, or a Home Screen app not telling it is one');
+  ctx.navigator = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 5 };
+  assert.strictEqual(ctx.filesTrapTheApp(), true, 'an iPad that says it is a Mac');
+  ctx.navigator = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 0 };
+  assert.strictEqual(ctx.filesTrapTheApp(), false, 'a Mac');
+  ctx.navigator = { userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9)', platform: 'Linux armv8l', maxTouchPoints: 5 };
+  assert.strictEqual(ctx.filesTrapTheApp(), false, 'Android downloads as before');
   process.stdout.write('OK');
 })().catch((e) => { console.error(e); process.exit(1); });
 """

@@ -2420,19 +2420,18 @@ function setStatusBadge(prefix, status) {
   badge.innerHTML = `<span class="status-dot"></span> ${escHtml(labels[status] || status)}`;
 }
 
-// ── Files in the iPhone / iPad Home Screen app ──
-// There a downloaded file opens in the app's own window, which has no back button, and the app is lost until it is
-// closed. A new window would not help: it does not share the app's sign-in. So the app fetches the file itself and
+// ── Files on an iPhone / iPad ──
+// There a downloaded file opens over the app in its own window. In the Home Screen app (since iOS 26 every Home
+// Screen shortcut opens as one, whatever the manifest says) that window has no back button and the app is lost until
+// it is closed; whether the page runs as one is not reliably told (navigator.standalone, display-mode). A new window
+// would not help: it does not share the app's sign-in. So on every iPhone and iPad the app fetches the file itself and
 // hands it to the Share sheet (Save to Files, Books, Mail…), staying where it was. Elsewhere files download as before.
 const DOWNLOAD_URL_RE = /\/api\/(?:download\/|insights\/[^/?#]+\/files\/)/;
 
 function filesTrapTheApp() {
   try {
     const nav = typeof navigator !== 'undefined' ? navigator : {};
-    const ios = /iPhone|iPad|iPod/.test(nav.userAgent || '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
-    const standalone = nav.standalone === true
-      || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
-    return ios && standalone;
+    return /iPhone|iPad|iPod/.test(nav.userAgent || '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
   } catch (_) {
     return false;
   }
