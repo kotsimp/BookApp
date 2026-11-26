@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -319,6 +319,21 @@ async def insights_questions(job_id: str):
     from backend.insights_more import list_questions
     _insights_job(job_id)
     return {"job_id": job_id, "questions": list_questions(_job_output_dir(job_id))}
+
+
+@router.delete("/api/insights/{job_id}/questions")
+async def insights_delete_questions(job_id: str, question: Optional[str] = None,
+                                    every: bool = Query(False, alias="all")):
+    """Deletes one question and its answer (?question=its text) or every one (?all=true); the questions left."""
+    from backend.insights_more import delete_questions, list_questions
+    _insights_job(job_id)
+    if question is None and not every:
+        raise HTTPException(400, "Choose a question to delete, or all of them.")
+    if question is not None and not question.strip():
+        raise HTTPException(400, "Choose a question to delete.")
+    out_dir = _job_output_dir(job_id)
+    deleted = delete_questions(out_dir, None if every else question)
+    return {"job_id": job_id, "deleted": deleted, "questions": list_questions(out_dir)}
 
 
 @router.post("/api/insights/glossary")

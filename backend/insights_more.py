@@ -1193,6 +1193,20 @@ def list_questions(job_output_dir: Path) -> List[Dict[str, Any]]:
         return []
 
 
+def delete_questions(job_output_dir: Path, question: Optional[str] = None) -> int:
+    """Removes the question with this text, or every question when none is given; returns how many were removed.
+    No await between the read and the write, so a question being answered at the same time is never lost."""
+    history = list_questions(job_output_dir)
+    keep = [] if question is None else [r for r in history if r.get("question") != question]
+    removed = len(history) - len(keep)
+    if removed:
+        if keep:
+            bi._write_json_atomic(_qa_path(job_output_dir), keep)
+        else:
+            _qa_path(job_output_dir).unlink(missing_ok=True)
+    return removed
+
+
 def _question_language(question: str, language: Optional[str]) -> str:
     if (language or "").lower() in OUTPUT_LANGUAGES:
         return language.lower()

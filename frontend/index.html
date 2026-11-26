@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.16.0" />
-  <script src="i18n.js?v=1.7.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.17.0" />
+  <script src="i18n.js?v=1.8.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -53,7 +53,7 @@
       Neural AI Powered
     </div>
     <h1>DocTranslate &amp; AudioBook</h1>
-    <p>Translate large documents between <strong>English &amp; Greek</strong> and generate professional-quality audiobooks with neural voices — up to 2,500 pages.</p>
+    <p>Translate large documents between <strong>English &amp; Greek</strong> and generate professional-quality audiobooks with neural voices — whole books, files up to 250 MB each.</p>
   </header>
 
   <!-- ── Global Mode Switcher: Basic vs Advanced ── -->
@@ -1088,7 +1088,7 @@
       </div>
       <div class="ins-more-lang">
         <label class="form-label" for="ins-more-lang">Γλώσσα κειμένου</label>
-        <select class="form-select" id="ins-more-lang">
+        <select class="form-select" id="ins-more-lang" onchange="updateChapterButton()">
           <option value="auto">Η γλώσσα του βιβλίου</option>
           <option value="greek">Ελληνικά</option>
           <option value="english">English</option>
@@ -1112,9 +1112,9 @@
       </div>
       <div class="ins-recap-row" id="ins-chapter-row">
         <span class="ins-recap-title">📖 Ένα κεφάλαιο</span>
-        <select class="form-select ins-chapter-select" id="ins-chapter-select" aria-label="Κεφάλαιο" translate="no"></select>
-        <button type="button" class="btn-sm btn-outline" id="ins-more-chapter" onclick="runExtraInsight('chapter')" disabled>📖 Αναλυτικά</button>
-        <span class="sample-hint">Μόνο το κεφάλαιο που διαλέγετε, αναλυτικά: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει.</span>
+        <select class="form-select ins-chapter-select" id="ins-chapter-select" aria-label="Κεφάλαιο" translate="no" onchange="updateChapterButton()"></select>
+        <button type="button" class="btn-sm btn-outline" id="ins-more-chapter" onclick="toggleChapterInsight()" aria-pressed="false" disabled>📖 Αναλυτικά</button>
+        <span class="sample-hint">Μόνο το κεφάλαιο που διαλέγετε, αναλυτικά: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει. Ξανά το κουμπί το κρύβει.</span>
       </div>
       <div class="ins-ask">
         <label class="form-label" for="ins-ask-input">💬 Ρωτήστε το βιβλίο</label>
@@ -1123,7 +1123,7 @@
           <button type="button" class="btn-sm btn-primary" id="ins-ask-btn" onclick="askBook()" disabled>💬 Ερώτηση</button>
         </div>
         <p class="sample-hint">Η απάντηση βγαίνει μόνο από το βιβλίο, με τις σελίδες όπου στηρίζεται. Κάθε ερώτηση είναι ένα μεγάλο αίτημα Gemini.</p>
-        <div id="ins-answers" class="ins-answers" translate="no"></div>
+        <div id="ins-answers" class="ins-answers"></div>
       </div>
     </div>
 
@@ -1145,6 +1145,7 @@
       <div class="card-title">
         <span class="card-title-icon">💡</span>
         <span id="ins-result-title">Αποτέλεσμα</span>
+        <button type="button" class="btn-sm btn-icon ins-result-close" onclick="closeInsightResult()" title="Κλείσιμο" aria-label="Κλείσιμο">✕</button>
       </div>
       <div class="ins-result-meta" id="ins-result-meta"></div>
       <div class="ins-result-warnings" id="ins-result-warnings" style="display:none"></div>
@@ -1632,7 +1633,7 @@
           </details>
           <details>
             <summary>Μπορώ να κάνω ερωτήσεις για ένα βιβλίο;</summary>
-            <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο. Κάθε ερώτηση στέλνει όλο το βιβλίο σε ένα μεγάλο αίτημα Gemini. Από ένα πολύ μεγάλο βιβλίο στέλνονται τα σχετικά μέρη του: η ερώτηση γίνεται πρώτα λέξεις αναζήτησης στη γλώσσα του βιβλίου, οπότε μπορείτε να ρωτάτε στα ελληνικά για ένα αγγλικό βιβλίο. Αν έχετε φτιάξει το «Ανά κεφάλαιο», στέλνεται κι αυτό ως επισκόπηση.</p>
+            <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο· το 🗑️ δίπλα σε μια ερώτηση τη διαγράφει, και το «🗑️ Διαγραφή όλων» τις διαγράφει όλες. Κάθε ερώτηση στέλνει όλο το βιβλίο σε ένα μεγάλο αίτημα Gemini. Από ένα πολύ μεγάλο βιβλίο στέλνονται τα σχετικά μέρη του: η ερώτηση γίνεται πρώτα λέξεις αναζήτησης στη γλώσσα του βιβλίου, οπότε μπορείτε να ρωτάτε στα ελληνικά για ένα αγγλικό βιβλίο. Αν έχετε φτιάξει το «Ανά κεφάλαιο», στέλνεται κι αυτό ως επισκόπηση.</p>
           </details>
           <details>
             <summary>Πώς βρίσκει τα κεφάλαια το «Ανά κεφάλαιο»;</summary>
@@ -1755,7 +1756,7 @@
           </details>
           <details>
             <summary>Can I ask questions about a book?</summary>
-            <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book. Each question sends the whole book in one large Gemini request. A very long book sends its related parts: the question first becomes search words in the book's language, so you can ask in Greek about an English book. If you made “Chapter by chapter”, it goes along as an overview.</p>
+            <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book; 🗑️ next to a question deletes it, and “🗑️ Clear All” deletes them all. Each question sends the whole book in one large Gemini request. A very long book sends its related parts: the question first becomes search words in the book's language, so you can ask in Greek about an English book. If you made “Chapter by chapter”, it goes along as an overview.</p>
           </details>
           <details>
             <summary>How does “Chapter by chapter” find the chapters?</summary>
@@ -1865,7 +1866,7 @@
 </div>
 
 <script src="app.js?v=2.22.0"></script>
-<script src="insights.js?v=2.13.0"></script>
+<script src="insights.js?v=2.14.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

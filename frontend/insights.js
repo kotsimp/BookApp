@@ -41,6 +41,15 @@ function showInsightsError(msg) {
   box.style.display = '';
 }
 
+// The progress, the messages and the result sit below the "More about the book" card: a button high on the page
+// (on a phone, most of them) would otherwise seem to do nothing, as a stored result comes back at once.
+function _insReveal(id, block = 'nearest') {
+  const el = document.getElementById(id);
+  if (el && el.style.display !== 'none' && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'smooth', block });
+  }
+}
+
 function setInsightsBusy(busy) {
   insState.busy = !!busy;
   updateInsightsButtons();
@@ -128,6 +137,7 @@ function removeInsightsDocument() {
   document.getElementById('ins-selected-file').classList.remove('visible');
   document.getElementById('ins-upload-zone').style.display = '';
   document.getElementById('ins-result-card').style.display = 'none';
+  updateChapterButton();
   renderInsightQuestions([]);
   const inp = document.getElementById('ins-file-input');
   if (inp) inp.value = '';
@@ -202,6 +212,7 @@ async function loadHistoryJobIntoInsights(jobId, fileName) {
   insState.analysis = null;
   insState.record = null;
   document.getElementById('ins-result-card').style.display = 'none';
+  updateChapterButton();
   setInsightsProgress(null);
   showInsightsError('');
   _insShowDocument(insState.fileName || 'Έγγραφο', 'Φόρτωση από το Ιστορικό…');
@@ -304,6 +315,7 @@ async function runInsight(mode, kind) {
   showInsightsError('');
   setInsightsBusy(true);
   setInsightsProgress(2, 'Έναρξη…');
+  _insReveal('ins-progress-card');
   try {
     const apiKey = getClientApiKey();
     const res = await fetch(`${API}/insights/generate`, {
@@ -315,11 +327,11 @@ async function runInsight(mode, kind) {
     const started = await res.json();
     if (started.duplicate) toast('Η ίδια δημιουργία εκτελείται ήδη — εμφανίζεται η πρόοδός της.', 'info');
     const task = await _insPollTask(started.task_id);
-    renderInsightResult(task.result);
+    _insShowResult(task.result);
     if (format !== 'screen') await exportInsight(format);
     toast('✅ Ολοκληρώθηκε!', 'success');
   } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
+    _insShowError(err);
   } finally {
     setInsightsProgress(null);
     setInsightsBusy(false);
@@ -375,6 +387,7 @@ function renderInsightResult(rec) {
     glossaryBtn.style.display = named ? '' : 'none';
   }
   document.getElementById('ins-result-card').style.display = '';
+  updateChapterButton();
 }
 
 async function copyInsightText() {
@@ -508,7 +521,7 @@ async function runExtraInsight(type) {
   if (type === 'recap') {
     const until = parseInt(document.getElementById('ins-recap-until')?.value, 10);
     if (!until || until < 1) {
-      showInsightsError('Γράψτε ως ποια σελίδα έχετε διαβάσει.');
+      _insShowError(new Error('Γράψτε ως ποια σελίδα έχετε διαβάσει.'));
       return;
     }
     body.until = until;
@@ -516,7 +529,7 @@ async function runExtraInsight(type) {
   if (type === 'chapter') {
     const chapter = parseInt(document.getElementById('ins-chapter-select')?.value, 10);
     if (!chapter || chapter < 1) {
-      showInsightsError('Διαλέξτε ένα κεφάλαιο.');
+      _insShowError(new Error('Διαλέξτε ένα κεφάλαιο.'));
       return;
     }
     body.chapter = chapter;
@@ -524,25 +537,106 @@ async function runExtraInsight(type) {
   showInsightsError('');
   setInsightsBusy(true);
   setInsightsProgress(2, 'Έναρξη…');
+  _insReveal('ins-progress-card');
   try {
     const task = await _insRunTask('/insights/generate', body);
-    renderInsightResult(task.result);
+    _insShowResult(task.result);
     toast('✅ Ολοκληρώθηκε!', 'success');
   } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
+    _insShowError(err);
   } finally {
     setInsightsProgress(null);
     setInsightsBusy(false);
   }
 }
 
+// A result or a message asked for by a click: the progress bar goes first (else the page moves under the
+// scrolling), then the page scrolls to it
+function _insShowResult(rec) {
+  setInsightsProgress(null);
+  renderInsightResult(rec);
+  _insReveal(rec && rec.text ? 'ins-result-card' : 'ins-error', 'start');
+}
+
+function _insShowError(err) {
+  setInsightsProgress(null);
+  showInsightsError(_insFriendlyNetworkError(err));
+  _insReveal('ins-error');
+}
+
+// "📖 In detail" is a switch: pressed, the chosen chapter's account is shown; pressed again, it is hidden.
+// Another chapter or language chosen meanwhile is asked for instead.
+function _chapterShown() {
+  const card = document.getElementById('ins-result-card');
+  const rec = insState.record;
+  const chosen = parseInt(document.getElementById('ins-chapter-select')?.value, 10);
+  const lang = document.getElementById('ins-more-lang')?.value || 'auto';
+  return Boolean(card && card.style.display !== 'none' && rec && rec.insight_type === 'chapter'
+    && Number(rec.chapter) === chosen && (lang === 'auto' || lang === rec.language));
+}
+
+function updateChapterButton() {
+  const btn = document.getElementById('ins-more-chapter');
+  if (btn) btn.setAttribute('aria-pressed', _chapterShown() ? 'true' : 'false');
+}
+
+async function toggleChapterInsight() {
+  if (_chapterShown()) {
+    closeInsightResult();
+    return;
+  }
+  await runExtraInsight('chapter');
+}
+
+function closeInsightResult() {
+  const card = document.getElementById('ins-result-card');
+  if (card) card.style.display = 'none';
+  const audio = document.getElementById('ins-audio-player');
+  if (audio && typeof audio.pause === 'function') audio.pause();
+  updateChapterButton();
+}
+
 function renderInsightQuestions(list) {
   const box = document.getElementById('ins-answers');
   if (!box) return;
-  box.innerHTML = (list || []).map((r) => (
-    `<div class="ins-answer"><div class="ins-q">❓ ${escHtml(r.question || '')}</div>`
-    + `<div class="ins-a">${renderInsightMarkdown(r.answer || '')}</div></div>`
-  )).join('');
+  insState.questions = Array.isArray(list) ? list : [];
+  // the question and the answer are the book's words (translate="no"); the buttons follow the interface language
+  const answers = insState.questions.map((r, i) => (
+    `<div class="ins-answer"><div class="ins-answer-head"><div class="ins-q" translate="no">❓ ${escHtml(r.question || '')}</div>`
+    + `<button type="button" class="btn-sm btn-outline ins-answer-del" onclick="deleteInsightQuestion(${i})" `
+    + 'title="Διαγραφή της ερώτησης" aria-label="Διαγραφή της ερώτησης">🗑️</button></div>'
+    + `<div class="ins-a" translate="no">${renderInsightMarkdown(r.answer || '')}</div></div>`
+  ));
+  const all = insState.questions.length > 1
+    ? '<div class="ins-answers-tools"><button type="button" class="btn-sm btn-outline" '
+      + 'onclick="deleteAllInsightQuestions()">🗑️ Διαγραφή όλων</button></div>'
+    : '';
+  box.innerHTML = all + answers.join('');
+}
+
+async function _insDeleteQuestions(query) {
+  const jobId = insState.jobId;
+  if (!jobId) return;
+  try {
+    const res = await fetch(`${API}/insights/${encodeURIComponent(jobId)}/questions?${query}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Η διαγραφή απέτυχε'));
+    const data = await res.json();
+    if (insState.jobId === jobId) renderInsightQuestions(data.questions || []);
+  } catch (err) {
+    showInsightsError(_insFriendlyNetworkError(err));
+  }
+}
+
+async function deleteInsightQuestion(index) {
+  const rec = (insState.questions || [])[index];
+  if (!rec || !rec.question) return;
+  await _insDeleteQuestions(`question=${encodeURIComponent(rec.question)}`);
+}
+
+async function deleteAllInsightQuestions() {
+  if (!(insState.questions || []).length) return;
+  if (!window.confirm('Να διαγραφούν όλες οι ερωτήσεις και οι απαντήσεις αυτού του βιβλίου;')) return;
+  await _insDeleteQuestions('all=true');
 }
 
 async function loadInsightQuestions(jobId) {
@@ -557,7 +651,7 @@ async function askBook() {
   const input = document.getElementById('ins-ask-input');
   const question = (input?.value || '').trim();
   if (question.length < 3) {
-    showInsightsError('Γράψτε μια ερώτηση για το βιβλίο.');
+    _insShowError(new Error('Γράψτε μια ερώτηση για το βιβλίο.'));
     return;
   }
   if (insState.busy) {
@@ -573,12 +667,13 @@ async function askBook() {
   showInsightsError('');
   setInsightsBusy(true);
   setInsightsProgress(2, 'Η ερώτηση στέλνεται…');
+  _insReveal('ins-progress-card');
   try {
     await _insRunTask('/insights/ask', { job_id: jobId, question, language: lang, api_key: getClientApiKey() });
     if (input) input.value = '';
     await loadInsightQuestions(jobId);
   } catch (err) {
-    showInsightsError(_insFriendlyNetworkError(err));
+    _insShowError(err);
   } finally {
     setInsightsProgress(null);
     setInsightsBusy(false);

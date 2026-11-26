@@ -650,6 +650,17 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(len(im.list_questions(self.out)), 2, "the same question is kept once")
         with self.assertRaises(bi.InsightsError):
             run(im.ask_book(str(self.book), "txt", "?", "auto", "fake-key"))
+        # deleting: one question by its text, an unknown one changes nothing, then every question
+        self.assertEqual(im.delete_questions(self.out, "Who is Nikos?"), 1)
+        self.assertEqual([h["question"] for h in im.list_questions(self.out)],
+                         ["Γιατί αρνείται η Ελένη να πουλήσει τον φάρο;"])
+        self.assertEqual(im.delete_questions(self.out, "Not asked"), 0)
+        self.assertEqual(len(im.list_questions(self.out)), 1)
+        run(im.ask_book(str(self.book), "txt", "Who is Nikos?", "auto", "fake-key", job_output_dir=self.out))
+        self.assertEqual(im.delete_questions(self.out), 2)
+        self.assertEqual(im.list_questions(self.out), [])
+        self.assertFalse((self.out / "insights" / "qa.json").exists())
+        self.assertEqual(im.delete_questions(self.out), 0, "nothing to delete is no error")
 
     def test_relevant_pages_of_a_long_book(self):
         pages = [(n, ("Weather notes about clouds and rain. " * 40)) for n in range(1, 60)]
@@ -835,6 +846,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(listing["questions"][0]["question"], "Who keeps the lighthouse?")
         st, err = api("POST", "/insights/ask", {"job_id": self.job, "question": "?", "api_key": "k"})
         self.assertEqual(st, 400)
+        # deleting through the API: one by its text, then all; neither asked for is refused
+        for q in ("Who is Nikos?", "Where is the lighthouse?"):
+            st, data = api("POST", "/insights/ask", {"job_id": self.job, "question": q, "api_key": "fake-key"})
+            self.assertEqual(wait_task(data["task_id"])["status"], "done")
+        st, err = api("DELETE", f"/insights/{self.job}/questions")
+        self.assertEqual(st, 400, "no question named and not all: nothing is deleted")
+        st, err = api("DELETE", f"/insights/{self.job}/questions?question=%20")
+        self.assertEqual(st, 400)
+        self.assertEqual(len(api("GET", f"/insights/{self.job}/questions")[1]["questions"]), 3)
+        st, data = api("DELETE", f"/insights/{self.job}/questions?question=Who%20is%20Nikos%3F")
+        self.assertEqual(st, 200, data)
+        self.assertEqual(data["deleted"], 1)
+        self.assertEqual([q["question"] for q in data["questions"]], ["Where is the lighthouse?", "Who keeps the lighthouse?"])
+        st, data = api("DELETE", f"/insights/{self.job}/questions?all=true")
+        self.assertEqual((st, data["deleted"], data["questions"]), (200, 2, []))
+        st, err = api("DELETE", "/insights/0123456789abcdef0123456789abcdef/questions?all=true")
+        self.assertEqual(st, 404, "an unknown book")
 
     def test_analysis_gives_the_page_range(self):
         st, a = api("GET", f"/insights/{self.job}/analysis")

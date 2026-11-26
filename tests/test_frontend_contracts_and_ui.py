@@ -1509,13 +1509,17 @@ ctx.toast = () => {};
                       "ins-more-blurb", "ins-more-quotes", "ins-more-study_guide", "ins-more-timeline", "ins-more-recap",
                       "ins-recap-until", "ins-ask-input", "ins-ask-btn", "ins-answers", "ins-glossary-btn"):
             self.assertIn(f'id="{el_id}"', index)
-        self.assertIn('id="ins-answers" class="ins-answers" translate="no"', index, "answers are the book's text")
+        self.assertIn('id="ins-answers" class="ins-answers"', index)
+        self.assertIn('id="ins-more-chapter" onclick="toggleChapterInsight()" aria-pressed="false"', index)
+        self.assertIn('onclick="closeInsightResult()"', index, "every result can be closed")
         harness = r"""
 const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
 const els = new Map();
+const scrolled = [];
 function makeEl(id) {
   const cls = new Set();
   return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', href: '', dataset: {},
+    scrollIntoView() { scrolled.push(id); },
     style: { display: '' }, attrs: {}, min: '', max: '', setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; },
     removeAttribute() {}, appendChild() {}, click() {}, remove() {},
     classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
@@ -1558,16 +1562,45 @@ ctx.toast = () => {};
   assert.ok(opts.includes('<option value="3">3. #3 (37)</option>'), opts);
   responses['/insights/generate'] = { task_id: 'C1' };
   responses['/insights/tasks/C1'] = { status: 'done', progress: 100,
-    result: { insight_type: 'chapter', language: 'greek', label: 'Κεφάλαιο 2: Θησέας (1/4)', title: 'Book', text: '## 2. Θησέας (1/4)\nΚείμενο.', word_count: 1 } };
+    result: { insight_type: 'chapter', chapter: 2, language: 'greek', label: 'Κεφάλαιο 2: Θησέας (1/4)', title: 'Book', text: '## 2. Θησέας (1/4)\nΚείμενο.', word_count: 1 } };
   getEl('ins-chapter-select').value = '2';
   await ctx.runExtraInsight('chapter');
   const chosen = JSON.parse(calls.filter((c) => c.url.endsWith('/insights/generate')).pop().opts.body);
   assert.deepStrictEqual([chosen.insight_type, chosen.chapter], ['chapter', 2]);
+  // the result sits below the card: the page goes to it (on a phone the button seemed to do nothing)
+  assert.strictEqual(getEl('ins-result-card').style.display, '');
+  assert.ok(scrolled.includes('ins-progress-card') && scrolled.includes('ins-result-card'), scrolled.join());
+  // "In detail" is a switch: pressed again, the account is hidden with no request; once more, shown again
+  assert.strictEqual(getEl('ins-more-chapter').attrs['aria-pressed'], 'true', 'shown: the switch is on');
+  const generateCalls = () => calls.filter((c) => c.url.endsWith('/insights/generate')).length;
+  const beforeToggle = generateCalls();
+  await ctx.toggleChapterInsight();
+  assert.strictEqual(generateCalls(), beforeToggle, 'hiding asks for nothing');
+  assert.strictEqual(getEl('ins-result-card').style.display, 'none');
+  assert.strictEqual(getEl('ins-more-chapter').attrs['aria-pressed'], 'false');
+  await ctx.toggleChapterInsight();
+  assert.strictEqual(getEl('ins-result-card').style.display, '', 'pressed once more: shown again');
+  assert.strictEqual(getEl('ins-more-chapter').attrs['aria-pressed'], 'true');
+  getEl('ins-chapter-select').value = '3';
+  ctx.updateChapterButton();
+  assert.strictEqual(getEl('ins-more-chapter').attrs['aria-pressed'], 'false', 'another chapter chosen: off');
+  await ctx.toggleChapterInsight();
+  assert.strictEqual(JSON.parse(calls.filter((c) => c.url.endsWith('/insights/generate')).pop().opts.body).chapter, 3,
+    'another chapter is asked for, not hidden');
+  getEl('ins-chapter-select').value = '2';
+  getEl('ins-more-lang').value = 'english';
+  ctx.updateChapterButton();
+  assert.strictEqual(getEl('ins-more-chapter').attrs['aria-pressed'], 'false', 'another language chosen: off');
+  getEl('ins-more-lang').value = '';
+  ctx.closeInsightResult();
+  assert.strictEqual(getEl('ins-result-card').style.display, 'none', 'the ✕ closes any result');
   getEl('ins-chapter-select').value = '';
   const generated = () => calls.filter((c) => c.url.endsWith('/insights/generate')).length;
   const sent = generated();
+  scrolled.length = 0;
   await ctx.runExtraInsight('chapter');
   assert.strictEqual(generated(), sent, 'no request without a chapter');
+  assert.ok(scrolled.includes('ins-error'), 'the page goes to the message too');
   vm.runInContext("insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true };", ctx);
   assert.strictEqual(getEl('ins-ask-btn').disabled, false);
   vm.runInContext("insState.analysis = { has_api_key: false, can_summary: true };", ctx);
@@ -1625,6 +1658,33 @@ ctx.toast = () => {};
   const n = calls.length;
   await ctx.askBook();
   assert.strictEqual(calls.length, n, 'no request for an empty question');
+
+  // deleting: one question by its text, or all of them after a confirmation
+  responses['/insights/B1/questions'] = { questions: [{ question: 'Q one & two', answer: 'A.' }, { question: 'Q2', answer: 'B.' }] };
+  await ctx.loadInsightQuestions('B1');
+  const listed = getEl('ins-answers').innerHTML;
+  assert.ok(listed.includes('deleteInsightQuestion(0)') && listed.includes('deleteInsightQuestion(1)'), listed);
+  assert.ok(listed.includes('deleteAllInsightQuestions()'), 'two answers or more: "delete all" too');
+  assert.ok(listed.includes('class="ins-q" translate="no"') && listed.includes('class="ins-a" translate="no"'),
+    "the book's words stay as they are; the buttons follow the interface language");
+  responses['/insights/B1/questions?'] = { deleted: 1, questions: [{ question: 'Q2', answer: 'B.' }] };
+  await ctx.deleteInsightQuestion(0);
+  const one = calls[calls.length - 1];
+  assert.strictEqual(one.opts.method, 'DELETE');
+  assert.ok(one.url.endsWith('/insights/B1/questions?question=Q%20one%20%26%20two'), one.url);
+  assert.ok(getEl('ins-answers').innerHTML.includes('Q2') && !getEl('ins-answers').innerHTML.includes('Q one'));
+  assert.ok(!getEl('ins-answers').innerHTML.includes('deleteAllInsightQuestions'), 'one answer left: only its own button');
+  const asks = [];
+  ctx.window.confirm = (msg) => { asks.push(msg); return false; };
+  const k = calls.length;
+  await ctx.deleteAllInsightQuestions();
+  assert.strictEqual(calls.length, k, 'nothing deleted when the confirmation is declined');
+  ctx.window.confirm = () => true;
+  responses['/insights/B1/questions?'] = { deleted: 1, questions: [] };
+  await ctx.deleteAllInsightQuestions();
+  assert.ok(calls[calls.length - 1].url.endsWith('/insights/B1/questions?all=true'));
+  assert.strictEqual(getEl('ins-answers').innerHTML, '', 'no answers left');
+  assert.strictEqual(asks.length, 1);
   process.stdout.write('OK');
 })().catch((e) => { console.error(e); process.exit(1); });
 """
