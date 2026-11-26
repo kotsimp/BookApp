@@ -197,7 +197,7 @@ class CatalogueContentTests(unittest.TestCase):
         self.assertEqual([(t, koreader_suffix(h)) for t, h in comic_links],
                          [("application/vnd.comicbook+zip", "cbz"), ("application/epub+zip", "epub"),
                           ("application/pdf", "pdf")],
-                         "EPUB too: a KOReader without its PDF engine cannot open CBZ or PDF (live finding)")
+                         "EPUB too: some reading apps (an iPhone one, live finding) open EPUB only")
         self.assertTrue(comic_links[0][1].endswith(
             "/book/nebraska/cbz/USS_Nebraska_Sanctum_Vol_01_Humanoids_Graphic_Novel_Xavier_Dorison_Christophe_Bec.cbz"))
         self.assertEqual([koreader_suffix(h) for _, h in acquisitions("book")], ["epub", "pdf", "epub"])

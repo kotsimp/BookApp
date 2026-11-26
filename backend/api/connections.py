@@ -30,7 +30,7 @@ MAX_ENTRIES = 300
 # what each kind of book offers: (link name, media type, title)
 BOOK_FORMATS = (("epub", "application/epub+zip", "EPUB"), ("pdf", "application/pdf", "PDF"),
                 ("bilingual-epub", "application/epub+zip", "Δίγλωσσο EPUB · Bilingual EPUB"))
-# EPUB too: a KOReader without its PDF engine (MuPDF, which also opens CBZ) opens EPUB with its own (CREngine)
+# EPUB too: some reading apps (several on the iPhone among them) open EPUB only, not CBZ or PDF
 COMIC_FORMATS = (("cbz", "application/vnd.comicbook+zip", "CBZ"), ("epub", "application/epub+zip", "EPUB"),
                  ("pdf", "application/pdf", "PDF"))
 EXTENSIONS = {"epub": "epub", "pdf": "pdf", "bilingual-epub": "epub", "cbz": "cbz"}
