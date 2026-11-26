@@ -1495,6 +1495,117 @@ ctx.toast = () => {};
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
         print("   Reading along, bilingual download and Devices window: OK")
 
+    def test_18_more_book_insights(self):
+        """The 'More about the book' card: its buttons follow the document's readiness, each kind is asked with the
+        chosen language (the story so far with its page), questions are sent and their answers listed, and a
+        characters result offers its Greek names to the Glossary."""
+        print("-> 18. Testing the 'More about the book' insights...")
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js not available in PATH")
+        index = Path("frontend/index.html").read_text(encoding="utf-8")
+        for el_id in ("ins-more-card", "ins-more-lang", "ins-more-characters", "ins-more-chapter_summaries",
+                      "ins-more-blurb", "ins-more-quotes", "ins-more-study_guide", "ins-more-timeline", "ins-more-recap",
+                      "ins-recap-until", "ins-ask-input", "ins-ask-btn", "ins-answers", "ins-glossary-btn"):
+            self.assertIn(f'id="{el_id}"', index)
+        self.assertIn('id="ins-answers" class="ins-answers" translate="no"', index, "answers are the book's text")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const els = new Map();
+function makeEl(id) {
+  const cls = new Set();
+  return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', href: '', dataset: {},
+    style: { display: '' }, attrs: {}, min: '', max: '', setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; },
+    removeAttribute() {}, appendChild() {}, click() {}, remove() {},
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
+    closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+}
+const getEl = (id) => { if (!els.has(id)) els.set(id, makeEl(id)); return els.get(id); };
+const calls = [];
+const responses = {};
+const ctx = vm.createContext({ console, setTimeout: (fn) => { Promise.resolve().then(fn); return 1; }, clearTimeout() {},
+  setInterval: () => 1, clearInterval() {}, EventSource: class { close() {} }, FormData: class { append() {} },
+  Notification: undefined, Audio: class { play() { return Promise.resolve(); } }, URLSearchParams,
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, navigator: {},
+  fetch: async (url, opts) => { calls.push({ url, opts });
+    const r = Object.entries(responses).sort((a, b) => b[0].length - a[0].length).find(([k]) => url.includes(k));
+    return { ok: true, status: 200, json: async () => (r ? r[1] : {}) }; },
+  window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
+  document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
+vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8'), ctx);
+ctx.toast = () => {};
+(async () => {
+  // readiness
+  vm.runInContext("insState.jobId = 'B1'; insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true };", ctx);
+  ctx.updateInsightsButtons();
+  for (const t of ['characters', 'chapter_summaries', 'blurb', 'quotes', 'study_guide', 'timeline', 'recap']) {
+    assert.strictEqual(getEl(`ins-more-${t}`).disabled, false, t);
+  }
+  assert.strictEqual(getEl('ins-ask-btn').disabled, false);
+  vm.runInContext("insState.analysis = { has_api_key: false, can_summary: true };", ctx);
+  ctx.updateInsightsButtons();
+  assert.strictEqual(getEl('ins-more-quotes').disabled, true, 'no key, no request');
+
+  // the story so far: its unit and range
+  ctx.setupRecapInput({ unit: 'chapter', first_page: 2, last_page: 40 });
+  assert.strictEqual(getEl('ins-recap-unit').textContent, 'κεφάλαιο');
+  assert.deepStrictEqual([getEl('ins-recap-until').min, getEl('ins-recap-until').max, getEl('ins-recap-until').value], ['2', '40', '2']);
+
+  // a kind is asked with the chosen language; the story so far with its page
+  responses['/insights/generate'] = { task_id: 'T1' };
+  responses['/insights/tasks/T1'] = { status: 'done', progress: 100,
+    result: { insight_type: 'characters', language: 'greek', source_language: 'english', label: 'Πρόσωπα & όροι',
+      title: 'Book', text: '## Πρόσωπα\n- **Ελένη**', word_count: 2, data: { people: [{ name: 'Elena' }], terms: [] } } };
+  getEl('ins-more-lang').value = 'greek';
+  await ctx.runExtraInsight('characters');
+  const body = JSON.parse(calls.filter((c) => c.url.endsWith('/insights/generate')).pop().opts.body);
+  assert.deepStrictEqual([body.insight_type, body.language, body.until], ['characters', 'greek', undefined]);
+  assert.strictEqual(getEl('ins-result-card').style.display, '');
+  assert.strictEqual(getEl('ins-glossary-btn').style.display, '', 'Greek names of an English book go to the Glossary');
+  getEl('ins-recap-until').value = '12';
+  await ctx.runExtraInsight('recap');
+  assert.strictEqual(JSON.parse(calls.filter((c) => c.url.endsWith('/insights/generate')).pop().opts.body).until, 12);
+  getEl('ins-recap-until').value = '';
+  const before = calls.length;
+  await ctx.runExtraInsight('recap');
+  assert.strictEqual(calls.length, before, 'no request without a page');
+  assert.ok(getEl('ins-error').textContent.includes('σελίδα'));
+
+  // the Glossary button: only for a Greek characters list of a non-Greek book
+  ctx.renderInsightResult({ insight_type: 'blurb', language: 'greek', text: 'Κείμενο.', word_count: 1 });
+  assert.strictEqual(getEl('ins-glossary-btn').style.display, 'none');
+  responses['/insights/glossary'] = { added: 3 };
+  ctx.renderInsightResult({ insight_type: 'characters', language: 'greek', source_language: 'english', text: 'x', word_count: 1,
+    data: { people: [{ name: 'Elena' }] } });
+  await ctx.addInsightNamesToGlossary();
+  assert.deepStrictEqual(JSON.parse(calls.filter((c) => c.url.endsWith('/insights/glossary')).pop().opts.body),
+    { job_id: 'B1', language: 'greek' });
+
+  // questions
+  responses['/insights/ask'] = { task_id: 'Q1' };
+  responses['/insights/tasks/Q1'] = { status: 'done', progress: 100, result: {} };
+  responses['/insights/B1/questions'] = { questions: [{ question: 'Who <keeps> it?', answer: 'Η **Ελένη** (σ. 1).' }] };
+  getEl('ins-ask-input').value = 'Who keeps it?';
+  vm.runInContext("insState.analysis = { has_api_key: true, can_summary: true };", ctx);
+  await ctx.askBook();
+  const asked = JSON.parse(calls.filter((c) => c.url.endsWith('/insights/ask')).pop().opts.body);
+  assert.deepStrictEqual([asked.question, asked.language], ['Who keeps it?', 'greek']);
+  assert.strictEqual(getEl('ins-ask-input').value, '', 'the box empties after a question');
+  assert.ok(getEl('ins-answers').innerHTML.includes('Who &lt;keeps&gt; it?'), 'questions are escaped');
+  assert.ok(getEl('ins-answers').innerHTML.includes('<strong>Ελένη</strong>'));
+  getEl('ins-ask-input').value = '?';
+  const n = calls.length;
+  await ctx.askBook();
+  assert.strictEqual(calls.length, n, 'no request for an empty question');
+  process.stdout.write('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+        res = subprocess.run([node_bin, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+        print("   More about the book (insights): OK")
+
 
 if __name__ == "__main__":
     unittest.main()

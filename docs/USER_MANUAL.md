@@ -49,6 +49,8 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Reading Along](#-reading-along)
    - [Understanding Progress: "Audio Parts" vs "Pages"](#understanding-progress-audio-parts-vs-pages)
 5. [Book Insights: Summaries, Synopses & Audio](#5-book-insights-summaries-synopses--audio)
+   - [More About the Book](#-more-about-the-book)
+   - [Ask the Book](#-ask-the-book)
 6. [Session History & Task Management](#6-session-history--task-management)
 7. [Frequently Asked Questions & Troubleshooting](#7-frequently-asked-questions--troubleshooting)
 
@@ -71,7 +73,7 @@ The **ΕΛ | EN** switch at the top right (next to Refresh and Theme, and on the
 * Product and format names stay as they are in both languages (AI Polish, Smart Batch Queue, Gemini, PDF, EPUB…), and so do technical details quoted inside a message (an HTTP code, a model's error text).
 
 ### ❓ Help: Guide & FAQ
-The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, trying a few pages first, reading on an e-reader, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
+The **❓ Help** button in the tab bar opens a short guide (translation, audiobooks, Book Insights, Gemini keys) and answers to frequently asked questions: whether you need a Gemini key, why a translation can take hours, what happens when the daily Gemini limit runs out, whether several keys from one Google account help, what survives closing the page or a server restart, how accurate the time left is, what Maximum quality does, trying a few pages first, asking questions about a book, reading on an e-reader, translating a scanned PDF (no OCR needed, but a Gemini key is), names translated inconsistently, where your files go, a forgotten password, the iPhone home screen and an old look after an update. It shows in the interface language (ΕΛ | EN). Close it with ✕, Esc or a click outside.
 
 ### ☀️ / 🌙 Light by Day, Dark at Night
 The interface is light from sunrise to sunset and dark at night, by itself (the times follow the date; on Greek time they are those of Athens). The **Theme** button at the top right still switches it whenever you like: your choice holds until the next sunrise or sunset, and then the automatic theme takes over again. Hover over the button to see until when your choice lasts.
@@ -562,6 +564,31 @@ Greek texts also get a proofreading pass. If a check fails, the text is regenera
 
 ### 🎧 Listening
 Press **🎧 Create audio** under any result. The final text is narrated exactly as written, with a Greek or English neural voice matching the text's language. Play it in the page or **⬇️ Download MP3**.
+
+### 🔎 More About the Book
+The **🔎 Περισσότερα για το βιβλίο** card (in both modes) makes seven more kinds of text. Choose the **text language** first: the book's own, Greek or English. Like the summaries, each result shows on screen, downloads as PDF, DOCX or TXT, can be narrated, and is kept with the book: asking again gives the stored result at once, with no new Gemini requests. Each is checked before you see it (right language, nothing the book does not contain); a result that fails is not shown (the recap, blurb and study guide are first written once more).
+
+| Button | What you get | How it is checked |
+|---|---|---|
+| **👥 Πρόσωπα & όροι** | The people (role, relations to others) and, for non-fiction or invented worlds, the key terms with a one-line definition, each with the page where it first appears. | A name or term the book does not contain is left out; the first page is found in the book itself. |
+| **📑 Ανά κεφάλαιο** | Two to four sentences for every chapter, under its title, with its pages. | Chapters come from the EPUB's chapters or the book's chapter headings; a book without headings is cut into equal parts. A chapter the answer left out is asked again. |
+| **🧭 Η ιστορία ως τώρα, έως σελίδα N** | A recap of everything up to the page (EPUB: chapter) you have reached, to pick a book up again. | Only the pages up to N are sent, so nothing later can leak in. |
+| **📣 Οπισθόφυλλο** | An 80–130-word back-cover text that sets up the premise and stops before the ending or the twists. | Length and language. It also becomes the book's description in the e-reader catalogue (📲 Συσκευές). |
+| **❝ Αποσπάσματα** | Up to 12 memorable passages, spread over the book, each with its page and a line on why it matters. | Every passage is searched for word for word in the book; one that is not found exactly is left out (the notes say how many), and a wrong page is corrected. Passages stay in the book's own language. |
+| **🎓 Οδηγός μελέτης** | Themes, 8–10 discussion questions, an 8-question quiz and its answers. | It must have its four sections. |
+| **🕰️ Χρονολόγιο** | Up to 40 main events in the order they happen in the story (dates, years or seasons where the book states them), each with its page. | Page numbers must exist in the book. If putting them in story order fails, they stay in the order the book tells them, and the notes say so. |
+
+**👥 → 📚 Glossary.** When the characters list is in Greek and the book is not, **➕ Ονόματα στο Γλωσσάρι** adds every name and term with its Greek spelling to the Glossary (General category), so a translation of the book writes them the same way everywhere.
+
+**Requests:** a short book is one request for each of these. A long book is read in parts of about 45,000 characters (about one request per part), plus one more for the chronological order of the timeline; the blurb, the recap and the study guide use the same section notes as the summaries.
+
+### 💬 Ask the Book
+Type a question in **💬 Ρωτήστε το βιβλίο** and press Enter or **💬 Ερώτηση**.
+* The answer comes only from the book's text, with the pages it rests on, for example `(σ. 42)`. When the book does not answer the question, it says so instead of guessing.
+* It is written in the language of the question (or in the text language you chose).
+* A book of up to about 350,000 characters (about 200 pages) is sent whole. A longer one sends the pages that share the most words with the question, with the pages next to them.
+* Each question is **one large Gemini request**. The same question asked again is answered from the cache.
+* The last 30 questions and answers are kept with the book and shown under the box.
 
 ### ⚠️ Messages you may see
 | Message | What to do |

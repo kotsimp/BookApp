@@ -32,6 +32,20 @@ class InsightsGenerateRequest(BaseModel):
                                           # extended_synopsis | summary (basic) | synopsis (basic)
     language: Optional[str] = None        # 'greek' | 'english' | None/'auto' (= document language)
     api_key: Optional[str] = None
+    until: Optional[int] = None           # recap: the story so far up to this page (chapter, for an EPUB)
+
+
+class InsightsAskRequest(BaseModel):
+    job_id: str
+    question: str
+    language: Optional[str] = None        # 'greek' | 'english' | None/'auto' (= the question's language)
+    api_key: Optional[str] = None
+
+
+class InsightsGlossaryRequest(BaseModel):
+    job_id: str
+    language: str = "greek"               # the characters record whose names go to the Glossary
+    sources: Optional[list[str]] = None   # only these names/terms (all when omitted)
 
 
 class InsightsExportRequest(BaseModel):
@@ -72,9 +86,10 @@ async def _insights_source_text(job) -> str:
 
 def _insights_resolve_type(raw: str) -> str:
     from backend.book_insights import INSIGHT_TYPES, BASIC_TYPES, InsightsError
+    from backend.insights_more import EXTRA_TYPES
     t = (raw or "").strip().lower()
     t = BASIC_TYPES.get(t, t)
-    if t not in INSIGHT_TYPES:
+    if t not in INSIGHT_TYPES and t not in EXTRA_TYPES:
         raise _insights_http_error(InsightsError("invalid_request"))
     return t
 
@@ -131,6 +146,12 @@ async def insights_analysis(job_id: str):
     info["has_api_key"] = bool(resolve_gemini_api_key(None))
     info["file_name"] = job.file_name
     info["existing"] = list_insights(_job_output_dir(job_id))
+    try:  # the page range for "the story so far" (chapters, for an EPUB)
+        from backend.insights_more import extract_pages
+        pages, unit = await asyncio.to_thread(extract_pages, job.file_path, job.file_type)
+        info.update(first_page=pages[0][0] if pages else None, last_page=pages[-1][0] if pages else None, unit=unit)
+    except Exception:
+        info.update(first_page=None, last_page=None, unit="page")
     if await asyncio.to_thread(needs_reading, job.file_path, job.file_type, job.file_name or ""):
         # a scanned book: its text is read from the page images first (Gemini Vision), when a summary is asked for
         info["needs_scan_reading"] = True
@@ -157,6 +178,9 @@ async def insights_list(job_id: str):
 @router.post("/api/insights/generate")
 async def insights_generate(req: InsightsGenerateRequest):
     """Starts summary/synopsis generation in the background. Identical in-flight requests are de-duplicated."""
+    from backend.insights_more import EXTRA_TYPES
+    if _insights_resolve_type(req.insight_type) in EXTRA_TYPES:
+        return await _insights_generate_extra(req)
     from backend.book_insights import (
         start_task, generate_insight, analyze_text, InsightsError, INSIGHT_TYPES, OUTPUT_LANGUAGES,
     )
@@ -208,6 +232,104 @@ async def insights_generate(req: InsightsGenerateRequest):
 
     task, duplicate = start_task(req.job_id, "generate", insight_type, lang, _run)
     return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate, "insight_type": insight_type}
+
+
+async def _scanned_book_read(job, api_key: str, task_progress) -> None:
+    """A scanned book's pages are read first (Gemini Vision), as for summaries."""
+    from backend.scan_reader import needs_reading, read_scanned_text
+    if await asyncio.to_thread(needs_reading, job.file_path, job.file_type, job.file_name or ""):
+        def _read_prog(done, total):
+            task_progress(int(done / max(total, 1) * 40),
+                          f"📖 Ανάγνωση σκαναρισμένων σελίδων (Gemini Vision): σελίδα {done} από {total}...")
+        await read_scanned_text(job.file_path, api_key, progress=_read_prog)
+
+
+async def _insights_generate_extra(req: InsightsGenerateRequest):
+    """Characters and terms, chapter by chapter, the story so far, blurb, quotes, study guide, timeline."""
+    from backend.book_insights import start_task, InsightsError, OUTPUT_LANGUAGES
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    from backend.insights_more import generate_extra
+    job = _insights_job(req.job_id)
+    insight_type = _insights_resolve_type(req.insight_type)
+    lang = (req.language or "auto").strip().lower()
+    if lang not in OUTPUT_LANGUAGES + ("auto",):
+        raise _insights_http_error(InsightsError("invalid_request"))
+    if insight_type == "recap" and (req.until is None or req.until < 1):
+        raise HTTPException(400, "Choose the page (or chapter) the story so far reaches.")
+    api_key = resolve_gemini_api_key(req.api_key)
+    if not api_key:
+        raise _insights_http_error(InsightsError("no_api_key", http_status=401))
+    await _insights_source_text(job)  # comics and unsupported files stop here, before any request
+    out_dir = _job_output_dir(req.job_id)
+    title = Path(job.file_name or "document").stem
+
+    async def _run(task):
+        def _prog(pct, step):
+            task.progress, task.step = int(pct), step
+        await _scanned_book_read(job, api_key, _prog)
+        return await generate_extra(job.file_path, job.file_type, insight_type, None if lang == "auto" else lang,
+                                    api_key, title=title, job_output_dir=out_dir, progress=_prog, until=req.until)
+
+    task_lang = lang if insight_type != "recap" else f"{lang}@{req.until}"
+    task, duplicate = start_task(req.job_id, "generate", insight_type, task_lang, _run)
+    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate, "insight_type": insight_type}
+
+
+@router.post("/api/insights/ask")
+async def insights_ask(req: InsightsAskRequest):
+    """A question answered from the book, citing its pages (one large Gemini request)."""
+    import hashlib
+    from backend.book_insights import start_task, InsightsError
+    from backend.gemini_key_pool import resolve_gemini_api_key
+    from backend.insights_more import ask_book
+    job = _insights_job(req.job_id)
+    question = " ".join((req.question or "").split())
+    if not (3 <= len(question) <= 500):
+        raise HTTPException(400, "Write a question of 3–500 characters.")
+    api_key = resolve_gemini_api_key(req.api_key)
+    if not api_key:
+        raise _insights_http_error(InsightsError("no_api_key", http_status=401))
+    await _insights_source_text(job)
+    out_dir = _job_output_dir(req.job_id)
+    title = Path(job.file_name or "document").stem
+
+    async def _run(task):
+        def _prog(pct, step):
+            task.progress, task.step = int(pct), step
+        await _scanned_book_read(job, api_key, _prog)
+        return await ask_book(job.file_path, job.file_type, question, req.language, api_key, title=title,
+                              job_output_dir=out_dir, progress=_prog)
+
+    key = hashlib.sha256(question.casefold().encode("utf-8")).hexdigest()[:16]
+    task, duplicate = start_task(req.job_id, "ask", key, (req.language or "auto").lower(), _run)
+    return {"task_id": task.task_id, "status": task.status, "duplicate": duplicate}
+
+
+@router.get("/api/insights/{job_id}/questions")
+async def insights_questions(job_id: str):
+    """The questions asked of this book and their answers, newest first."""
+    from backend.insights_more import list_questions
+    _insights_job(job_id)
+    return {"job_id": job_id, "questions": list_questions(_job_output_dir(job_id))}
+
+
+@router.post("/api/insights/glossary")
+async def insights_to_glossary(req: InsightsGlossaryRequest):
+    """The names and terms of a characters record go to the Glossary with their Greek spelling."""
+    from backend.book_insights import load_insight, InsightsError
+    from backend.glossary import set_term
+    from backend.insights_more import glossary_items
+    _insights_job(req.job_id)
+    rec = load_insight(_job_output_dir(req.job_id), "characters", _validate_language(req.language))
+    if not rec:
+        raise _insights_http_error(InsightsError("not_generated", http_status=404))
+    wanted = {s.casefold() for s in (req.sources or [])}
+    pairs = [(src, dst) for src, dst in glossary_items(rec) if not wanted or src.casefold() in wanted]
+    if not pairs:
+        raise HTTPException(422, "There are no names or terms with a Greek spelling to add.")
+    for src, dst in pairs:
+        await asyncio.to_thread(set_term, src, dst, "general")
+    return {"added": len(pairs), "terms": [{"source": s, "target": t} for s, t in pairs]}
 
 
 @router.post("/api/insights/export")

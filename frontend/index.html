@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.12.2" />
-  <script src="i18n.js?v=1.4.2"></script>
+  <link rel="stylesheet" href="style.css?v=2.13.0" />
+  <script src="i18n.js?v=1.5.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -1080,6 +1080,47 @@
       <p style="font-size:0.75rem; color:var(--text-muted); margin:10px 0 0">Τα όρια λέξεων είναι οδηγίες· σε μικρά κείμενα το μήκος προσαρμόζεται ώστε να μην προστίθενται πληροφορίες που δεν υπάρχουν στο βιβλίο.</p>
     </div>
 
+    <!-- More about the book -->
+    <div class="card animate-in" id="ins-more-card">
+      <div class="card-title">
+        <span class="card-title-icon">🔎</span>
+        Περισσότερα για το βιβλίο
+      </div>
+      <div class="ins-more-lang">
+        <label class="form-label" for="ins-more-lang">Γλώσσα κειμένου</label>
+        <select class="form-select" id="ins-more-lang">
+          <option value="auto">Η γλώσσα του βιβλίου</option>
+          <option value="greek">Ελληνικά</option>
+          <option value="english">English</option>
+        </select>
+      </div>
+      <div class="ins-more-grid">
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-characters" onclick="runExtraInsight('characters')" disabled>👥 Πρόσωπα &amp; όροι<small>Ποιος είναι ποιος, βασικοί όροι</small></button>
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-chapter_summaries" onclick="runExtraInsight('chapter_summaries')" disabled>📑 Ανά κεφάλαιο<small>Λίγες γραμμές για κάθε κεφάλαιο</small></button>
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-blurb" onclick="runExtraInsight('blurb')" disabled>📣 Οπισθόφυλλο<small>Χωρίς να αποκαλύπτει το τέλος</small></button>
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-quotes" onclick="runExtraInsight('quotes')" disabled>❝ Αποσπάσματα<small>Ελεγμένα λέξη προς λέξη</small></button>
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-study_guide" onclick="runExtraInsight('study_guide')" disabled>🎓 Οδηγός μελέτης<small>Θέματα, ερωτήσεις, κουίζ</small></button>
+        <button type="button" class="btn btn-secondary ins-more-btn" id="ins-more-timeline" onclick="runExtraInsight('timeline')" disabled>🕰️ Χρονολόγιο<small>Τα γεγονότα με τη σειρά</small></button>
+      </div>
+      <div class="ins-recap-row">
+        <span class="ins-recap-title">🧭 Η ιστορία ως τώρα, έως</span>
+        <label class="sample-field"><span id="ins-recap-unit">σελίδα</span>
+          <input type="number" id="ins-recap-until" class="sample-input" min="1" value="1" inputmode="numeric" aria-label="Έως ποια σελίδα έχετε διαβάσει" />
+        </label>
+        <button type="button" class="btn-sm btn-outline" id="ins-more-recap" onclick="runExtraInsight('recap')" disabled>🧭 Ανακεφαλαίωση</button>
+        <span class="sample-hint">Γράφεται μόνο από όσα έχετε διαβάσει ως εκεί: τίποτα από τη συνέχεια.</span>
+      </div>
+      <div class="ins-ask">
+        <label class="form-label" for="ins-ask-input">💬 Ρωτήστε το βιβλίο</label>
+        <div class="ins-ask-row">
+          <input type="text" id="ins-ask-input" class="form-input" maxlength="500" placeholder="π.χ. Γιατί φεύγει ο ήρωας από την πόλη;" onkeydown="if (event.key === 'Enter') askBook()" />
+          <button type="button" class="btn-sm btn-primary" id="ins-ask-btn" onclick="askBook()" disabled>💬 Ερώτηση</button>
+        </div>
+        <p class="sample-hint">Η απάντηση βγαίνει μόνο από το βιβλίο, με τις σελίδες όπου στηρίζεται. Κάθε ερώτηση είναι ένα μεγάλο αίτημα Gemini.</p>
+        <div id="ins-answers" class="ins-answers" translate="no"></div>
+      </div>
+    </div>
+
     <!-- Progress -->
     <div class="card" id="ins-progress-card" style="display:none" aria-live="polite">
       <div class="progress-header" style="display:flex; justify-content:space-between; align-items:center">
@@ -1108,6 +1149,7 @@
         <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('docx')">⬇️ DOCX</button>
         <button type="button" class="btn btn-sm btn-secondary" onclick="exportInsight('txt')">⬇️ TXT</button>
         <button type="button" class="btn btn-sm btn-primary" id="ins-audio-btn" onclick="generateInsightAudio()">🎧 Δημιουργία ήχου</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="ins-glossary-btn" onclick="addInsightNamesToGlossary()" style="display:none" title="Τα ονόματα και οι όροι μπαίνουν στο Γλωσσάρι με την ελληνική τους γραφή, ώστε η μετάφραση να τα γράφει παντού ίδια">➕ Ονόματα στο Γλωσσάρι</button>
       </div>
       <div id="ins-audio-box" style="display:none; margin-top:14px">
         <audio id="ins-audio-player" controls preload="none" style="width:100%"></audio>
@@ -1525,7 +1567,7 @@
         <h4>🎧 Ηχητικό βιβλίο</h4>
         <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια. Με <strong>📖 Κείμενο</strong> το κείμενο φωτίζεται καθώς ακούγεται· πατήστε μια πρόταση για να πάτε εκεί.</p>
         <h4>💡 Book Insights</h4>
-        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου, στην οθόνη ή ως PDF, DOCX ή TXT. Χρειάζεται κλειδί Gemini.</p>
+        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου, στην οθόνη ή ως PDF, DOCX ή TXT. Στο <strong>🔎 Περισσότερα για το βιβλίο</strong>: πρόσωπα &amp; όροι (που περνούν και στο Γλωσσάρι), περίληψη ανά κεφάλαιο, η ιστορία ως τώρα έως τη σελίδα σας, οπισθόφυλλο χωρίς να αποκαλύπτει το τέλος, αποσπάσματα ελεγμένα λέξη προς λέξη, οδηγός μελέτης, χρονολόγιο και ερωτήσεις στο βιβλίο. Χρειάζεται κλειδί Gemini.</p>
         <h4>🔑 Κλειδιά Gemini</h4>
         <p>Η μετάφραση με AI γίνεται με το Google Gemini. Ένα δωρεάν κλειδί φτιάχνεται στο <strong>aistudio.google.com/apikey</strong> και το προσθέτει ο διαχειριστής στο <strong>🔑 Gemini API Key</strong>. Χωράνε έως 8 κλειδιά, που δουλεύουν εκ περιτροπής.</p>
         <h4>🧰 Επίσης</h4>
@@ -1570,6 +1612,10 @@
           <details>
             <summary>Μπορώ να δοκιμάσω πρώτα λίγες σελίδες;</summary>
             <p>Ναι: με <strong>🧪 Μετάφραση δείγματος</strong> μεταφράζονται μόνο οι σελίδες που ορίζετε (στα EPUB, τα κεφάλαια), με τις ίδιες ρυθμίσεις. Η <strong>📊 Εκτίμηση</strong> λέει πόσα αιτήματα Gemini θέλει το δείγμα και πόσα όλο το βιβλίο. Αν σας αρέσει, πατήστε <strong>🌐 Μετάφραση ολόκληρου του βιβλίου</strong>. Το αρχείο του δείγματος κατεβαίνει με «_sample» στο όνομα.</p>
+          </details>
+          <details>
+            <summary>Μπορώ να κάνω ερωτήσεις για ένα βιβλίο;</summary>
+            <p>Ναι: στο <strong>💡 Book Insights</strong> → <strong>💬 Ρωτήστε το βιβλίο</strong>. Η απάντηση βγαίνει μόνο από το κείμενο του βιβλίου, με τις σελίδες όπου στηρίζεται· αν το βιβλίο δεν απαντά, το λέει. Οι ερωτήσεις κρατιούνται με το βιβλίο. Κάθε ερώτηση στέλνει όλο το βιβλίο (ή, σε πολύ μεγάλο, τα σχετικά μέρη του) σε ένα μεγάλο αίτημα Gemini.</p>
           </details>
           <details>
             <summary>Μπορώ να διαβάζω τα βιβλία σε e-reader ή tablet;</summary>
@@ -1621,7 +1667,7 @@
         <h4>🎧 Audiobook</h4>
         <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters. With <strong>📖 Text</strong> the text lights up as it is read; press a sentence to go there.</p>
         <h4>💡 Book Insights</h4>
-        <p>A short summary or a full synopsis of a book, on screen or as PDF, DOCX or TXT. It needs a Gemini key.</p>
+        <p>A short summary or a full synopsis of a book, on screen or as PDF, DOCX or TXT. Under <strong>🔎 More about the book</strong>: characters &amp; terms (which can go to the Glossary), chapter-by-chapter summaries, the story so far up to your page, a blurb that keeps the ending secret, quotes checked word for word, a study guide, a timeline, and questions to the book. It needs a Gemini key.</p>
         <h4>🔑 Gemini keys</h4>
         <p>AI translation uses Google Gemini. A free key is made at <strong>aistudio.google.com/apikey</strong>, and the administrator adds it under <strong>🔑 Gemini API Key</strong>. Up to 8 keys fit, and they take turns.</p>
         <h4>🧰 Also</h4>
@@ -1666,6 +1712,10 @@
           <details>
             <summary>Can I try a few pages first?</summary>
             <p>Yes: <strong>🧪 Translate the sample</strong> translates only the pages you choose (chapters, for an EPUB), with the same settings. The <strong>📊 Estimate</strong> says how many Gemini requests the sample needs, and how many the whole book. If you like it, press <strong>🌐 Translate the whole book</strong>. The sample's file downloads with “_sample” in its name.</p>
+          </details>
+          <details>
+            <summary>Can I ask questions about a book?</summary>
+            <p>Yes: in <strong>💡 Book Insights</strong> → <strong>💬 Ask the book</strong>. The answer comes only from the book's text, with the pages it rests on; when the book does not answer it, it says so. The questions are kept with the book. Each question sends the whole book (or, for a very long one, its related parts) in one large Gemini request.</p>
           </details>
           <details>
             <summary>Can I read the books on an e-reader or tablet?</summary>
@@ -1757,7 +1807,7 @@
 <div class="toast-container" id="toast-container"></div>
 
 <script src="app.js?v=2.19.2"></script>
-<script src="insights.js?v=2.10.0"></script>
+<script src="insights.js?v=2.11.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

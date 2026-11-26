@@ -15,6 +15,8 @@ const insState = {
 };
 
 const INS_LANG_LABELS = { greek: 'Ελληνικά', english: 'English', other: 'Γλώσσα εγγράφου' };
+// the insights of the "More about the book" card (backend/insights_more.py)
+const INS_EXTRA_TYPES = ['characters', 'chapter_summaries', 'blurb', 'quotes', 'study_guide', 'timeline', 'recap'];
 
 function _insApiOrigin() {
   return API.replace(/\/api$/, '');
@@ -74,6 +76,8 @@ function updateInsightsButtons() {
   set('ins-basic-synopsis-btn', canSynopsis);
   set('ins-adv-summary-btn', canSummary);
   set('ins-adv-synopsis-btn', canSynopsis);
+  INS_EXTRA_TYPES.forEach((t) => set(`ins-more-${t}`, canSummary));
+  set('ins-ask-btn', canSummary);
 
   const synReason = (a && !a.can_synopsis) ? (a.reasons?.synopsis || '') : '';
   const sumReason = (a && !a.can_summary) ? (a.reasons?.summary || '') : '';
@@ -123,6 +127,7 @@ function removeInsightsDocument() {
   document.getElementById('ins-selected-file').classList.remove('visible');
   document.getElementById('ins-upload-zone').style.display = '';
   document.getElementById('ins-result-card').style.display = 'none';
+  renderInsightQuestions([]);
   const inp = document.getElementById('ins-file-input');
   if (inp) inp.value = '';
   showInsightsError('');
@@ -231,6 +236,8 @@ async function loadInsightsAnalysis() {
     if (insState.jobId !== jobId) return;   // a different document was loaded while this one was analysed
     insState.analysis = a;
     if (a.file_name && !insState.fileName) insState.fileName = a.file_name;
+    setupRecapInput(a);
+    loadInsightQuestions(jobId);
     const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
     if (a.needs_scan_reading) {
       // a scanned book: Gemini Vision reads its pages first, when a summary or synopsis is asked for
@@ -359,6 +366,12 @@ function renderInsightResult(rec) {
   }
   const audioBtn = document.getElementById('ins-audio-btn');
   if (audioBtn) audioBtn.style.display = (rec.language === 'greek' || rec.language === 'english') ? '' : 'none';
+  const glossaryBtn = document.getElementById('ins-glossary-btn');
+  if (glossaryBtn) {
+    const named = rec.insight_type === 'characters' && rec.language === 'greek' && rec.source_language !== 'greek'
+      && rec.data && ((rec.data.people || []).length || (rec.data.terms || []).length);
+    glossaryBtn.style.display = named ? '' : 'none';
+  }
   document.getElementById('ins-result-card').style.display = '';
 }
 
@@ -433,5 +446,139 @@ async function generateInsightAudio() {
   } finally {
     setInsightsProgress(null);
     setInsightsBusy(false);
+  }
+}
+
+// ============================================================
+// More about the book: characters & terms, chapter by chapter, the story so far, blurb, quotes, study guide,
+// timeline, questions to the book (backend: backend/insights_more.py)
+// ============================================================
+
+function setupRecapInput(a) {
+  const input = document.getElementById('ins-recap-until');
+  const unit = document.getElementById('ins-recap-unit');
+  if (unit) unit.textContent = a && a.unit === 'chapter' ? 'κεφάλαιο' : 'σελίδα';
+  if (!input) return;
+  const first = Number(a && a.first_page) || 1;
+  const last = Number(a && a.last_page) || 0;
+  input.min = String(first);
+  if (last) input.max = String(last);
+  const current = parseInt(input.value, 10) || first;
+  input.value = String(last ? Math.min(Math.max(current, first), last) : Math.max(current, first));
+}
+
+async function _insRunTask(path, body) {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res, 'Η δημιουργία δεν ξεκίνησε'));
+  const started = await res.json();
+  if (started.duplicate) toast('Η ίδια δημιουργία εκτελείται ήδη — εμφανίζεται η πρόοδός της.', 'info');
+  return _insPollTask(started.task_id);
+}
+
+async function runExtraInsight(type) {
+  if (insState.busy) {
+    toast('Μια δημιουργία εκτελείται ήδη — περιμένετε να ολοκληρωθεί.', 'info');
+    return;
+  }
+  if (!insState.jobId) {
+    showInsightsError('Ανεβάστε πρώτα ένα βιβλίο ή έγγραφο.');
+    return;
+  }
+  const body = {
+    job_id: insState.jobId,
+    insight_type: type,
+    language: document.getElementById('ins-more-lang')?.value || 'auto',
+    api_key: getClientApiKey(),
+  };
+  if (type === 'recap') {
+    const until = parseInt(document.getElementById('ins-recap-until')?.value, 10);
+    if (!until || until < 1) {
+      showInsightsError('Γράψτε ως ποια σελίδα έχετε διαβάσει.');
+      return;
+    }
+    body.until = until;
+  }
+  showInsightsError('');
+  setInsightsBusy(true);
+  setInsightsProgress(2, 'Έναρξη…');
+  try {
+    const task = await _insRunTask('/insights/generate', body);
+    renderInsightResult(task.result);
+    toast('✅ Ολοκληρώθηκε!', 'success');
+  } catch (err) {
+    showInsightsError(_insFriendlyNetworkError(err));
+  } finally {
+    setInsightsProgress(null);
+    setInsightsBusy(false);
+  }
+}
+
+function renderInsightQuestions(list) {
+  const box = document.getElementById('ins-answers');
+  if (!box) return;
+  box.innerHTML = (list || []).map((r) => (
+    `<div class="ins-answer"><div class="ins-q">❓ ${escHtml(r.question || '')}</div>`
+    + `<div class="ins-a">${renderInsightMarkdown(r.answer || '')}</div></div>`
+  )).join('');
+}
+
+async function loadInsightQuestions(jobId) {
+  try {
+    const res = await fetch(`${API}/insights/${encodeURIComponent(jobId)}/questions`);
+    if (!res.ok || insState.jobId !== jobId) return;
+    renderInsightQuestions((await res.json()).questions || []);
+  } catch (_) {}
+}
+
+async function askBook() {
+  const input = document.getElementById('ins-ask-input');
+  const question = (input?.value || '').trim();
+  if (question.length < 3) {
+    showInsightsError('Γράψτε μια ερώτηση για το βιβλίο.');
+    return;
+  }
+  if (insState.busy) {
+    toast('Μια δημιουργία εκτελείται ήδη — περιμένετε να ολοκληρωθεί.', 'info');
+    return;
+  }
+  if (!insState.jobId) {
+    showInsightsError('Ανεβάστε πρώτα ένα βιβλίο ή έγγραφο.');
+    return;
+  }
+  const jobId = insState.jobId;
+  const lang = document.getElementById('ins-more-lang')?.value || 'auto';
+  showInsightsError('');
+  setInsightsBusy(true);
+  setInsightsProgress(2, 'Η ερώτηση στέλνεται…');
+  try {
+    await _insRunTask('/insights/ask', { job_id: jobId, question, language: lang, api_key: getClientApiKey() });
+    if (input) input.value = '';
+    await loadInsightQuestions(jobId);
+  } catch (err) {
+    showInsightsError(_insFriendlyNetworkError(err));
+  } finally {
+    setInsightsProgress(null);
+    setInsightsBusy(false);
+  }
+}
+
+async function addInsightNamesToGlossary() {
+  const rec = insState.record;
+  if (!rec || !insState.jobId || rec.insight_type !== 'characters') return;
+  try {
+    const res = await fetch(`${API}/insights/glossary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: insState.jobId, language: rec.language }),
+    });
+    if (!res.ok) throw new Error(await parseApiError(res, 'Η προσθήκη στο Γλωσσάρι απέτυχε'));
+    const data = await res.json();
+    toast(`➕ Προστέθηκαν ${data.added} όροι στο Γλωσσάρι.`, 'success');
+  } catch (err) {
+    showInsightsError(_insFriendlyNetworkError(err));
   }
 }

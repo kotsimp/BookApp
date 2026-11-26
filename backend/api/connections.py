@@ -93,6 +93,17 @@ def _is_comic(job) -> bool:
     return (job.layout_mode or "") == "comic" or (job.file_type or "") in ("cbz", "cbr", "zip")
 
 
+def _blurb(job) -> str:
+    """The book's back-cover blurb from Book Insights, in the translation's language first, as its description."""
+    from backend.book_insights import load_insight
+    order = ["greek", "english"] if (job.target_lang or "").lower() in ("greek", "el") else ["english", "greek"]
+    for lang in order:
+        rec = load_insight(OUTPUT_DIR / job.job_id, "blurb", lang)
+        if rec and rec.get("text"):
+            return rec["text"]
+    return ""
+
+
 def _entry(job, base: str) -> str:
     from backend.bilingual import _lang_code
     title = Path(job.file_name or "Book").stem
@@ -107,7 +118,7 @@ def _entry(job, base: str) -> str:
         f"<updated>{_iso(job.updated_at)}</updated>",
         "<author><name>BookApp</name></author>",
         f"<dc:language>{_lang_code(job.target_lang)}</dc:language>",
-        f"<content type=\"text\">{escape(langs)}</content>",
+        f"<content type=\"text\">{escape(_blurb(job) or langs)}</content>",
     ]
     cover_known = (OUTPUT_DIR / job.job_id / "cover_image.jpg").is_file() or (job.file_type or "") in ("pdf", "epub")
     if cover_known:
