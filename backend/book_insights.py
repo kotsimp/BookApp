@@ -22,6 +22,7 @@ if defective; output that still fails a critical check is never shown as a succe
 
 import re
 import json
+import unicodedata
 import time
 import uuid
 import asyncio
@@ -104,8 +105,55 @@ class InsightsError(Exception):
         self.http_status = http_status
         super().__init__(f"{code}: {detail or self.user_message}")
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"code": self.code, "message": self.user_message}
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"code": self.code, "message": self.user_message}
+        if self.code == "ai_output_rejected":
+            reasons = rejection_reasons(self.detail)
+            if reasons:
+                out["reasons"] = reasons
+        return out
+
+
+# Why a text was not shown, in words for the reader: one sentence per check that failed; unknown details are left out
+_REASON_RULES: List[Tuple["re.Pattern", Callable[["re.Match"], str]]] = [
+    (re.compile(r"empty or near-empty output"), lambda m: "Το AI δεν έγραψε σχεδόν τίποτα."),
+    (re.compile(r"(?:output|text) is not in Greek"), lambda m: "Το κείμενο δεν γράφτηκε στα ελληνικά."),
+    (re.compile(r"(?:output|text) is not in English"), lambda m: "Το κείμενο δεν γράφτηκε στα αγγλικά."),
+    (re.compile(r"names and titles must be written in Greek"),
+     lambda m: "Ονόματα και τίτλοι έμειναν με λατινικούς χαρακτήρες."),
+    (re.compile(r"(\d+)% of the words are in Latin script"),
+     lambda m: f"Το {m[1]}% των λέξεων ήταν γραμμένο με λατινικούς χαρακτήρες."),
+    (re.compile(r"prompt text leaked"), lambda m: "Το κείμενο περιείχε τις οδηγίες που δόθηκαν στο AI."),
+    (re.compile(r"one-sentence summary is not exactly one sentence"),
+     lambda m: "Η περίληψη δεν ήταν μία μόνο πρόταση."),
+    (re.compile(r"one-sentence summary has (\d+) words \(target (\d+)-(\d+)\)"),
+     lambda m: f"Η πρόταση είχε {m[1]} λέξεις αντί για {m[2]}–{m[3]}."),
+    (re.compile(r"the text is too short"), lambda m: "Το κείμενο βγήκε πολύ σύντομο."),
+    (re.compile(r"output too short: (\d+) words \(target (\d+)-(\d+)\)"),
+     lambda m: f"Το κείμενο βγήκε πολύ σύντομο: {m[1]} λέξεις αντί για {m[2]}–{m[3]}."),
+    (re.compile(r"output far too long: (\d+) words \(target (\d+)-(\d+)\)"),
+     lambda m: f"Το κείμενο βγήκε πολύ μεγάλο: {m[1]} λέξεις αντί για {m[2]}–{m[3]}."),
+    (re.compile(r"output \((\d+) words\) is almost as long as the source \((\d+)\)"),
+     lambda m: f"Το κείμενο βγήκε σχεδόν όσο το ίδιο το βιβλίο: {m[1]} από τις {m[2]} λέξεις."),
+    (re.compile(r"numbers not found in the source: (.+)"), lambda m: f"Αριθμοί που δεν υπάρχουν στο βιβλίο: {m[1]}."),
+    (re.compile(r"names not found in the (?:source|book): (.+)"), lambda m: f"Ονόματα που δεν υπάρχουν στο βιβλίο: {m[1]}."),
+    (re.compile(r"too similar to the existing synopsis"),
+     lambda m: "Το κείμενο ήταν σχεδόν ίδιο με τη σύνοψη που υπάρχει ήδη."),
+    (re.compile(r"too similar to the existing summary"),
+     lambda m: "Το κείμενο ήταν σχεδόν ίδιο με την περίληψη που υπάρχει ήδη."),
+]
+
+
+def rejection_reasons(detail: str) -> List[str]:
+    """'output too short: 820 words (target 1500-2500); ...' -> ['Το κείμενο βγήκε πολύ σύντομο: ...', ...]"""
+    found: List[str] = []
+    for part in (detail or "").split("; "):
+        for rx, say in _REASON_RULES:
+            m = rx.search(part.strip())
+            if m:
+                found.append(say(m))
+                break
+    return list(dict.fromkeys(found))
 
 
 # ---------------------------------------------------------------------------
@@ -498,17 +546,38 @@ def similarity(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+# A thousands separator: "1,200", "1.200" (Greek), "1 200" with a no-break or thin space
+_DIGIT_GROUP_RE = re.compile(r"(?<=\d)[.,\u00a0\u202f](?=\d{3}(?!\d))")
+
+
 def _unknown_numbers(output: str, source: str) -> List[str]:
-    src_nums = set(re.findall(r"\d+", source.replace(",", "").replace(".", "")))
+    src_nums = (set(re.findall(r"\d+", _DIGIT_GROUP_RE.sub("", source)))
+                | set(re.findall(r"\d+", source.replace(",", "").replace(".", ""))))
     # 3+ digits only (years, amounts): chapter numbers like "12" may be spelled out in the source
-    out_nums = re.findall(r"\b\d{3,}\b", output.replace(",", ""))
+    out_nums = re.findall(r"\b\d{3,}\b", _DIGIT_GROUP_RE.sub("", output))
     return sorted({n for n in out_nums if n not in src_nums})
+
+
+# Greek case endings, longest first: "Νίκος", "Νίκου", "Νίκο" and "Νίκε" are one name
+_GREEK_ENDINGS = ("ουσ", "εων", "ου", "οσ", "ησ", "ασ", "εσ", "ων", "οι", "α", "ο", "η", "ε", "ι", "υ", "σ")
+
+
+def _name_key(word: str) -> str:
+    """A name without accents, its Greek case ending or an English possessive."""
+    w = unicodedata.normalize("NFD", word.lower())
+    w = "".join(ch for ch in w if not unicodedata.combining(ch)).replace("ς", "σ")
+    w = re.sub(r"['’]s$", "", w)
+    for end in _GREEK_ENDINGS:
+        if w.endswith(end) and len(w) - len(end) >= 3:
+            return w[: -len(end)]
+    return w
 
 
 def _unknown_names(output: str, source: str) -> List[str]:
     """Capitalised tokens (not sentence-initial, not in headings) that never occur in the source."""
     src_words = {w.lower() for w in _WORD_RE.findall(source)}
     prefixes = {w[:5] for w in src_words if len(w) >= 5}
+    keys = {_name_key(w) for w in src_words}
     unknown = set()
     for line in output.split("\n"):
         if line.lstrip().startswith("#"):
@@ -516,7 +585,7 @@ def _unknown_names(output: str, source: str) -> List[str]:
         line = re.sub(r"\*\*[^*]+\*\*", " ", line)   # bold labels act as headings
         for m in re.finditer(r"(?<=[^\s.!?;:«\"(\-—])\s+([A-ZΑ-ΩΆΈΉΊΌΎΏ][\w’'-]{2,})", line):
             tok = m.group(1).strip("’'-").lower()
-            if tok in src_words or (len(tok) >= 5 and tok[:5] in prefixes):
+            if tok in src_words or (len(tok) >= 5 and tok[:5] in prefixes) or _name_key(tok) in keys:
                 continue
             unknown.add(m.group(1))
     return sorted(unknown)
@@ -537,7 +606,7 @@ def validate_output(text: str, insight_type: str, language: str, lo: int, hi: in
     if language == "greek" and greek_share >= 0.6:
         latin = _latin_share_outside_quotes(text)
         if latin > 0.04:
-            critical.append(f"{latin:.0%} of the words are in Latin script; names and titles must be written in Greek")
+            critical.append(f"{latin:.0%} of the words are in Latin script, but names and titles must be written in Greek")
         elif latin > 0.01:
             warnings.append("a few Latin-script words remain")
     if re.search(r"</?(?:SOURCE|DOCUMENT|TEXT)[^>]*>|ΚΕΙΜΕΝΟ ΠΡΟΣ ΕΠΙΜΕΛΕΙΑ|--- INPUT TEXT|STRICT RULES|TASK:", text):
@@ -563,14 +632,15 @@ def validate_output(text: str, insight_type: str, language: str, lo: int, hi: in
     if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and headings < 2:
         warnings.append("synopsis has fewer than two section headings")
 
+    # A long text names more people and numbers, so a few more unmatched ones are allowed (2,000 words: 3 and 5)
     nums = _unknown_numbers(text, source)
-    if len(nums) >= 2:
+    if len(nums) >= max(2, words // 600):
         critical.append(f"numbers not found in the source: {', '.join(nums[:5])}")
     elif nums:
-        warnings.append(f"number not found in the source: {nums[0]}")
+        warnings.append(f"numbers not found in the source: {', '.join(nums[:5])}")
     if source_language == language or (source_language == "other" and language not in OUTPUT_LANGUAGES):
         names = _unknown_names(text, source)
-        if len(names) > 3:
+        if len(names) > max(3, words // 400):
             critical.append(f"names not found in the source: {', '.join(names[:6])}")
         elif names:
             warnings.append(f"unverified names: {', '.join(names)}")

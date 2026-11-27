@@ -29,7 +29,9 @@ function _insFriendlyNetworkError(err) {
   return (err && err.message) ? err.message : 'Παρουσιάστηκε απρόσμενο σφάλμα.';
 }
 
-function showInsightsError(msg) {
+// `reasons`: the checks a rejected text failed, on a line of their own, each its own sentence. The ❌ stands apart
+// from the message, so the message is still a sentence the English screen knows.
+function showInsightsError(msg, reasons = []) {
   const box = document.getElementById('ins-error');
   if (!box) return;
   if (!msg) {
@@ -37,7 +39,23 @@ function showInsightsError(msg) {
     box.textContent = '';
     return;
   }
-  box.textContent = `❌ ${msg}`;
+  const text = document.createElement('span');
+  text.textContent = msg;
+  box.replaceChildren(document.createTextNode('❌ '), text);
+  const said = (Array.isArray(reasons) ? reasons : []).filter((r) => typeof r === 'string' && r.trim());
+  if (said.length) {
+    const why = document.createElement('div');
+    why.className = 'ins-error-reason';
+    const label = document.createElement('strong');
+    label.textContent = 'Αιτία:';
+    why.append(label);
+    for (const r of said) {
+      const one = document.createElement('span');
+      one.textContent = r;
+      why.append(document.createTextNode(' '), one);
+    }
+    box.append(why);
+  }
   box.style.display = '';
 }
 
@@ -284,7 +302,11 @@ function _insPollTask(taskId) {
         const t = await res.json();
         setInsightsProgress(t.progress || 0, t.step || '');
         if (t.status === 'done') return resolve(t);
-        if (t.status === 'error') return reject(new Error(t.error?.message || 'Η δημιουργία απέτυχε.'));
+        if (t.status === 'error') {
+          const failed = new Error(t.error?.message || 'Η δημιουργία απέτυχε.');
+          failed.reasons = t.error?.reasons || [];
+          return reject(failed);
+        }
       } catch (err) {
         failures += 1;
         if (failures >= 5) return reject(err);
@@ -560,7 +582,7 @@ function _insShowResult(rec) {
 
 function _insShowError(err) {
   setInsightsProgress(null);
-  showInsightsError(_insFriendlyNetworkError(err));
+  showInsightsError(_insFriendlyNetworkError(err), err?.reasons || []);
   _insReveal('ins-error');
 }
 

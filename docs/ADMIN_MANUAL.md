@@ -86,11 +86,11 @@ The application implements an asynchronous, event-driven API architecture:
     * leaked prompt text;
     * a one-sentence summary that isn't exactly one sentence of 15–50 words;
     * length below 60% or above 180% of the target, or above 90% of the source;
-    * two or more unknown numbers of three or more digits;
-    * more than three capitalised names absent from the source (same-language outputs only);
+    * unknown numbers of three or more digits: two or more, or `words // 600` in a long text. Thousands separators (`1,200`, Greek `1.200`, no-break and thin spaces) are removed from both texts first;
+    * capitalised names absent from the source (same-language outputs only): more than three, or `words // 400` in a long text. A name matches without accents and without its Greek case ending (`_name_key`: Νίκος, Νίκου and Νίκο are one name) or an English `’s`;
     * shingle similarity above 0.6 with the paired summary or synopsis.
 
-    One regeneration is made with the rejection reasons and `bypass_cache=True`. Output that still fails is never stored or shown (`ai_output_rejected`). Greek output also gets one proofreading call (temperature 0.1), kept only if heading count and length (±15%) are preserved.
+    One regeneration is made with the rejection reasons and `bypass_cache=True`. Output that still fails is never stored or shown (`ai_output_rejected`). The task's error then also carries `reasons`: one Greek sentence per failed check (`rejection_reasons()`; details it doesn't know are left out), shown under the message as **Αιτία:** and paired in `i18n.js` for the English screen. Greek output also gets one proofreading call (temperature 0.1), kept only if heading count and length (±15%) are preserved.
   * **Tasks:** in-memory background tasks. Identical in-flight requests (job, action, type, language) return the same `task_id` (`duplicate: true`). At most 2 generations run at once. Stored results are reused when the source hash and `INSIGHTS_VERSION` match. Errors carry a stable `code` and a Greek user message: `insufficient_text`, `too_short`, `unsupported_format`, `extraction_failed`, `language_detection_failed`, `no_api_key`, `quota_exhausted`, `rate_limited`, `auth_failed`, `network_error`, `ai_failed`, `ai_output_rejected`, `audio_failed`, `export_failed`.
   * **Audio:** narrates `speech_text(final_text)`, which only strips Markdown markers. Any failed chunk fails the task, so the audio never silently skips text. The MP3 is invalidated when the text is regenerated.
 * **Prompt library (`backend/translation_prompts.py`, `PROMPT_VERSION = "2026.11-q2"`):** single source for every Gemini text prompt.
@@ -949,13 +949,14 @@ The master runner automatically executes all test suites:
 41. `test_gemini_diagnostics.py`: Dedicated API Key Diagnostics & Stress-Test Suite (CRUD, error parsing, sliding-window rate limiting, per-model isolation, E2E 4-key rotation simulation, pool exhaustion, cooldown recovery, transient backoff/retry, concurrency, requests in flight per usable key (parallel_requests), and live key diagnostics).
 42. `test_scripted_editorial_pass.py`: Dedicated Sanitization & Scripted Editorial Pass Suite (verifying automated remediation of subword token bleed, code leaks, comedic calques, double accents, and stutters).
 43. `test_output_refinement.py`: Final Output Refinement stage (49 tests). `_call_gemini_api` tests cover the size-aware timeout and the cache gate. The stage tests cover: Covers: automatic triggering at the end of the translation and audiobook workflows; correction of injected errors; no-op on clean text; meaning safety for ambiguous phrasing and emphatic repetition; poetry, French and code-like spacing; idempotency; empty, malformed and undecodable inputs; rollback on re-export, document-swap and write failures; inspection-only behaviour for format-preserved DOCX; audio header, truncation and missing-section detection; healing of failed sections; rejection of corrupt re-assembly and timeouts; metadata added only when missing; disabled-stage pass-through; settings, env and per-job toggles; a no-network guarantee; and API security (path traversal, foreign files, running jobs).
-44. `test_book_insights.py`: Book Insights (32 tests). Gemini and edge-tts are mocked in-process on a private uvicorn port. Covers:
+44. `test_book_insights.py`: Book Insights (40 tests). Gemini and edge-tts are mocked in-process on a private uvicorn port. Covers:
     * Basic and Advanced modes; all five types in Greek and English; word-count and structure guidelines; ordering (extended synopsis > synopsis > short summary).
     * Summary vs synopsis distinctness; PDF/DOCX/DOC/TXT exports and export failure.
     * Minimum-length thresholds below and above the limit, with no API usage when ineligible.
     * Language detection (Greek/English/other/none); extraction failure; unsupported comics; missing key.
     * Quota, network, auth and generic AI failures; the quality-gate retry, and rejection of wrong-language or fabricated output (never stored).
     * Latin-script and condensation checks; the proofreading guard; English stutter collapse.
+    * Greek thousands separators and Greek name endings matched to the book; the higher limits for a long text; the `reasons` of a rejection and their English wording (Node).
     * Audio for all types with spoken text == final text; audio failure leaving no file; audio requiring generated text.
     * Duplicate and concurrent requests; result caching; map-reduce for long books.
     * File-endpoint traversal; XSS-safe Markdown rendering (Node); unchanged DocTranslate/Audiobook job state and downloads.

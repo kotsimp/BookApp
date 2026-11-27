@@ -1521,7 +1521,9 @@ function makeEl(id) {
   return { id, value: '', textContent: '', innerHTML: '', checked: false, disabled: false, title: '', href: '', dataset: {},
     scrollIntoView() { scrolled.push(id); },
     style: { display: '' }, attrs: {}, min: '', max: '', setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; },
-    removeAttribute() {}, appendChild() {}, click() {}, remove() {},
+    removeAttribute() {}, appendChild() {}, click() {}, remove() {}, children: [],
+    replaceChildren(...nodes) { this.children = []; this.textContent = ''; this.append(...nodes); },
+    append(...nodes) { this.children.push(...nodes); this.textContent += nodes.map((n) => n.data ?? n.textContent).join(''); },
     classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle() {} },
     closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
 }
@@ -1537,7 +1539,8 @@ const ctx = vm.createContext({ console, setTimeout: (fn) => { Promise.resolve().
     return { ok: true, status: 200, json: async () => (r ? r[1] : {}) }; },
   window: { location: { origin: 'http://127.0.0.1:8000', protocol: 'http:', href: '' }, addEventListener() {} },
   document: { documentElement: makeEl('html'), getElementById: getEl, querySelector: () => null, hidden: false,
-    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, body: { appendChild() {} } } });
+    querySelectorAll: () => [], addEventListener() {}, createElement: makeEl, createTextNode: (data) => ({ data }),
+    body: { appendChild() {} } } });
 vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
 vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8'), ctx);
 ctx.toast = () => {};
@@ -1601,6 +1604,19 @@ ctx.toast = () => {};
   await ctx.runExtraInsight('chapter');
   assert.strictEqual(generated(), sent, 'no request without a chapter');
   assert.ok(scrolled.includes('ins-error'), 'the page goes to the message too');
+  // a rejected text says which check it failed: each reason its own sentence, so the English screen knows it
+  responses['/insights/generate'] = { task_id: 'R1' };
+  responses['/insights/tasks/R1'] = { status: 'error', progress: 90, error: { code: 'ai_output_rejected',
+    message: 'Το AI παρήγαγε κείμενο που δεν πέρασε τον έλεγχο ποιότητας.',
+    reasons: ['Αριθμοί που δεν υπάρχουν στο βιβλίο: 200, 400.', 'Το κείμενο βγήκε πολύ σύντομο.'] } };
+  await ctx.runExtraInsight('blurb');
+  const errBox = getEl('ins-error');
+  const nodes = (n) => [n, ...(n.children || []).flatMap(nodes)];
+  const said = nodes(errBox).filter((n) => !(n.children || []).length).map((n) => n.data ?? n.textContent)
+    .filter((t) => t && t.trim());
+  assert.deepStrictEqual(said, ['❌ ', 'Το AI παρήγαγε κείμενο που δεν πέρασε τον έλεγχο ποιότητας.', 'Αιτία:',
+    'Αριθμοί που δεν υπάρχουν στο βιβλίο: 200, 400.', 'Το κείμενο βγήκε πολύ σύντομο.'], JSON.stringify(said));
+  assert.strictEqual(errBox.style.display, '');
   vm.runInContext("insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true };", ctx);
   assert.strictEqual(getEl('ins-ask-btn').disabled, false);
   vm.runInContext("insState.analysis = { has_api_key: false, can_summary: true };", ctx);

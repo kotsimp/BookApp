@@ -560,11 +560,11 @@ Every text is checked automatically before it is displayed:
 * correct language;
 * the right length (one sentence for the one-sentence summary);
 * headings for synopses;
-* no names or numbers that do not appear in the book;
+* no names or numbers that do not appear in the book. A Greek name counts as the book's in any of its forms (Νίκος, του Νίκου, τον Νίκο), and 1.200 is the same number as 1,200. A long text may hold a few more names and numbers the check can't match;
 * real condensation;
 * a synopsis that genuinely differs from the summary.
 
-Greek texts also get a proofreading pass. If a check fails, the text is regenerated once. If it still fails, you see an error instead of an unreliable text. Minor notes (e.g. length slightly outside the guideline) are shown above the result.
+Greek texts also get a proofreading pass. If a check fails, the text is regenerated once. If it still fails, you see an error instead of an unreliable text, with an **Αιτία:** line under it that says which check failed (for example *Το κείμενο βγήκε πολύ σύντομο: 820 λέξεις αντί για 1500–2500.*). Minor notes (e.g. length slightly outside the guideline) are shown above the result.
 
 ### 🎧 Listening
 Press **🎧 Create audio** under any result. The final text is narrated exactly as written, with a Greek or English neural voice matching the text's language. Play it in the page or **⬇️ Download MP3**.

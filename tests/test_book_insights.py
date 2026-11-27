@@ -359,6 +359,38 @@ class TestAnalysisAndLanguage(InsightsBase):
         self.assertTrue(any("numbers not found" in c for c in crit))
         self.assertTrue(any("names not found" in c for c in crit))
 
+    def test_greek_numbers_and_name_endings_are_the_book_s(self):
+        # Greek writes 1.200 for 1,200; the check once read it as "200" and rejected long texts with many numbers
+        en_src = "The ship left in 2387 with 1,200 settlers and 3,400 tonnes of cargo. " * 3
+        gr_src = "Το πλοίο έφυγε το 2387 με 1.200 αποίκους και 3.400 τόνους φορτίο. " * 3
+        for src in (en_src, gr_src):
+            self.assertEqual(bi._unknown_numbers("Έφυγε το 2387 με 1.200 αποίκους και 3.400 τόνους.", src), [])
+            self.assertEqual(bi._unknown_numbers("It left in 2387 with 1,200 settlers and 3,400 tonnes.", src), [])
+            self.assertEqual(bi._unknown_numbers("Το 1642 και το 1755, με 9.999 άνδρες.", src), ["1642", "1755", "9999"])
+        # a Greek name changes its ending with its case: Νίκος, του Νίκου, τον Νίκο
+        src = "Ο Νίκος είδε τη Μαρία. Ο Νίκος μίλησε στον Πέτρο και στην Ελένη στην Αθήνα. Ο Γιάννης ήρθε."
+        out = ("Η ιστορία ξεκινά με τον Νίκο και τη Μαρία. Η μητέρα του Νίκου, η Ελένη, ζει στην Αθήνα. "
+               "Ο φίλος του Πέτρου και του Γιάννη φεύγει με τον Κοβάλσκι.")
+        self.assertEqual(bi._unknown_names(out, src), ["Κοβάλσκι"])
+        self.assertEqual(bi._unknown_names("They met Nikos’s sister and the Captain’s men again.",
+                                           "Nikos waited. The Captain left. Nikos sailed."), [])
+
+    def test_a_long_text_may_hold_a_few_more_unmatched_details(self):
+        src = make_doc(_GR_SENTENCES, 4000)
+        body = "## Θέμα\n\n" + " ".join(_GR_SYNOPSIS_POOL * 30)   # about 1,900 words: three may be unmatched
+        n = bi._plain_words(body)
+        self.assertGreater(n, 1800)
+        two = body + " Το 1642 και το 1755 άλλαξαν όλα."
+        crit, warns = bi.validate_output(two, "extended_synopsis", "greek", 1500, 2500, src, "greek")
+        self.assertFalse(any("numbers" in c for c in crit), crit)
+        self.assertTrue(any("numbers not found" in w for w in warns))
+        three = body + " Το 1642, το 1755 και το 1821 άλλαξαν όλα."
+        crit, _ = bi.validate_output(three, "extended_synopsis", "greek", 1500, 2500, src, "greek")
+        self.assertTrue(any("numbers not found" in c for c in crit))
+        short = " ".join(_GR_SUMMARY_POOL * 3) + " Το 1642 και το 1755 άλλαξαν όλα."
+        crit, _ = bi.validate_output(short, "short_summary", "greek", 50, 300, src, "greek")
+        self.assertTrue(any("numbers not found" in c for c in crit), "a short text keeps the strict limit")
+
     def test_greek_latin_script_and_condensation_checks(self):
         src = make_doc(_EN_SENTENCES, 1000)
         mixed = " ".join(_GR_SUMMARY_POOL * 6) + " " + " ".join(["Lena Orel and Viktor Hale"] * 6)
@@ -569,6 +601,7 @@ class TestGeneration(InsightsBase):
             self.assertEqual(t["status"], "error", mode)
             self.assertIsNone(t["result"])
             self.assertIn("ποιότητας", t["error"]["message"])
+            self.assertTrue(t["error"].get("reasons"), f"{mode}: the screen says which check failed")
             st2, lst = api("GET", f"/insights/{job}")
             self.assertEqual(lst["insights"], [], "rejected text must not be stored")
 
@@ -748,6 +781,60 @@ class TestExportAudioAndSafety(InsightsBase):
 
 
 class TestInsightText(unittest.TestCase):
+    # Every check a text can fail, as book_insights and insights_more word it
+    REJECTIONS = [
+        "empty or near-empty output", "output is not in Greek", "the text is not in English",
+        "7% of the words are in Latin script, but names and titles must be written in Greek",
+        "names and titles must be written in Greek", "prompt text leaked into output",
+        "one-sentence summary is not exactly one sentence", "one-sentence summary has 61 words (target 20-40)",
+        "the text is too short", "output too short: 820 words (target 1500-2500)",
+        "output far too long: 4600 words (target 1500-2500)",
+        "output (950 words) is almost as long as the source (1000); it must condense",
+        "numbers not found in the source: 1642, 1755", "names not found in the source: Valdez, Thorne",
+        "names not found in the book: Κοβάλσκι", "too similar to the existing synopsis",
+        "too similar to the existing summary",
+    ]
+
+    def test_a_rejection_says_why(self):
+        from backend import book_insights
+        for detail in self.REJECTIONS:
+            self.assertEqual(len(book_insights.rejection_reasons(detail)), 1, detail)
+        e = book_insights.InsightsError(
+            "ai_output_rejected", "output too short: 820 words (target 1500-2500); "
+            "numbers not found in the source: 200, 400; names not found in the source: Άρη, Κοβάλσκι",
+            http_status=502)
+        self.assertEqual(e.to_dict()["reasons"], [
+            "Το κείμενο βγήκε πολύ σύντομο: 820 λέξεις αντί για 1500–2500.",
+            "Αριθμοί που δεν υπάρχουν στο βιβλίο: 200, 400.",
+            "Ονόματα που δεν υπάρχουν στο βιβλίο: Άρη, Κοβάλσκι."])
+        self.assertNotIn("reasons", book_insights.InsightsError("ai_output_rejected", "something new").to_dict())
+        self.assertNotIn("reasons", book_insights.InsightsError("quota_exhausted", "quota").to_dict())
+
+    def test_the_reasons_read_in_english_too(self):
+        import shutil, subprocess
+        from backend import book_insights
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js not available in PATH")
+        reasons = [r for d in self.REJECTIONS for r in book_insights.rejection_reasons(d)] + ["Αιτία:"]
+        harness = r"""
+const fs = require('fs'); const vm = require('vm');
+const ctx = vm.createContext({ console, MutationObserver: class { observe() {} }, CustomEvent: class {},
+  localStorage: { getItem: () => null, setItem() {} }, navigator: { language: 'el-GR' },
+  document: { documentElement: {}, addEventListener() {}, querySelectorAll: () => [], dispatchEvent() {} },
+  window: { alert() {}, confirm() { return true; }, prompt() {} }, NodeFilter: {} });
+vm.runInContext(fs.readFileSync('frontend/i18n.js', 'utf8') + ';globalThis.I18N = I18N;', ctx);
+const texts = JSON.parse(fs.readFileSync(0, 'utf8'));
+process.stdout.write(JSON.stringify(texts.map((t) => [ctx.I18N.text(t, 'en'), ctx.I18N.text(ctx.I18N.text(t, 'en'), 'el')])));
+"""
+        res = subprocess.run([node, "-e", harness], input=json.dumps(reasons), capture_output=True, text=True,
+                             encoding="utf-8", timeout=30, cwd=str(Path(__file__).resolve().parent.parent))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for greek, (english, back) in zip(reasons, json.loads(res.stdout)):
+            names = "".join(re.findall(r": (.+)\.$", greek))   # the names themselves stay as written
+            self.assertFalse(re.search(r"[Ͱ-Ͽ]", english.replace(names, "")), f"{greek} -> {english}")
+            self.assertEqual(back, greek)
+
     def test_only_meta_lines_are_dropped(self):
         from backend import book_insights
         for line, language in (("Ακολουθεί η εξέγερση των εργατών και η ήττα τους.", "greek"),
