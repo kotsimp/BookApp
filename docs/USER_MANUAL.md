@@ -560,7 +560,7 @@ Every text is checked automatically before it is displayed:
 * correct language;
 * the right length (one sentence for the one-sentence summary);
 * headings for synopses;
-* no names or numbers that do not appear in the book. A Greek name counts as the book's in any of its forms (Νίκος, του Νίκου, τον Νίκο), and 1.200 is the same number as 1,200. A long text may hold a few more names and numbers the check can't match;
+* no names or numbers that do not appear in the book. A Greek name counts as the book's in any of its forms (Νίκος, του Νίκου, τον Νίκο), and 1.200, 1,200 and 1 200 are the same number. A long text may hold a few more names and numbers the check can't match;
 * real condensation;
 * a synopsis that genuinely differs from the summary.
 

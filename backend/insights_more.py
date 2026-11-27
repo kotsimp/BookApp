@@ -321,7 +321,7 @@ def _common_checks(text: str, ctx: _Ctx, source: str, min_words: int = 20, names
     problems += language_problems(text, ctx.lang)
     if names and ctx.src_lang == ctx.lang:
         names = bi._unknown_names(text, source)
-        if len(names) > 3:
+        if len(names) > bi.unmatched_names_allowed(bi.count_words(text)):
             problems.append(f"names not found in the book: {', '.join(names[:6])}")
     return problems
 
@@ -978,7 +978,7 @@ async def _timeline(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
     problems = language_problems(own, ctx.lang)
     if ctx.src_lang == ctx.lang:
         names = bi._unknown_names(own, ctx.full)
-        if len(names) > 3:
+        if len(names) > bi.unmatched_names_allowed(bi.count_words(own)):
             problems.append(f"names not found in the book: {', '.join(names[:6])}")
     if problems:
         raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)

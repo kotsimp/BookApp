@@ -86,11 +86,11 @@ The application implements an asynchronous, event-driven API architecture:
     * leaked prompt text;
     * a one-sentence summary that isn't exactly one sentence of 15–50 words;
     * length below 60% or above 180% of the target, or above 90% of the source;
-    * unknown numbers of three or more digits: two or more, or `words // 600` in a long text. Thousands separators (`1,200`, Greek `1.200`, no-break and thin spaces) are removed from both texts first;
-    * capitalised names absent from the source (same-language outputs only): more than three, or `words // 400` in a long text. A name matches without accents and without its Greek case ending (`_name_key`: Νίκος, Νίκου and Νίκο are one name) or an English `’s`;
+    * unknown numbers of three or more digits: more than `unmatched_numbers_allowed(words)` (1 up to 1,599 words, then one more per 600 words: 2 at 2,000). A number matches in any thousands style (`1,200`, Greek `1.200`, `1'200`, a no-break, figure, thin or narrow space, and a plain space as typeset books print it: `1 200`). In a book that uses plain spaces, `1 200` can't be told from `1` and `200`, so both count as its own;
+    * capitalised names absent from the source (same-language outputs only): more than `unmatched_names_allowed(words)` (3, then one per 400 words: 5 at 2,000; the other kinds in `insights_more.py` use the same limit). A name matches without accents and without its Greek case ending (`_name_key`: Νίκος, Νίκου and Νίκο are one name) or an English `’s`;
     * shingle similarity above 0.6 with the paired summary or synopsis.
 
-    One regeneration is made with the rejection reasons and `bypass_cache=True`. Output that still fails is never stored or shown (`ai_output_rejected`). The task's error then also carries `reasons`: one Greek sentence per failed check (`rejection_reasons()`; details it doesn't know are left out), shown under the message as **Αιτία:** and paired in `i18n.js` for the English screen. Greek output also gets one proofreading call (temperature 0.1), kept only if heading count and length (±15%) are preserved.
+    One regeneration is made with the rejection reasons and `bypass_cache=True`. Output that still fails is never stored or shown (`ai_output_rejected`). The task's error then also carries `reasons`: one Greek sentence per failed check (`rejection_reasons()`, also for the other kinds' messages; details it doesn't know are left out), shown under the message as **Αιτία:** and paired in `i18n.js` for the English screen. `test_insights_quality_gate.py` reads every check's message from the code and fails when one has no reason or no English. Greek output also gets one proofreading call (temperature 0.1), kept only if heading count and length (±15%) are preserved.
   * **Tasks:** in-memory background tasks. Identical in-flight requests (job, action, type, language) return the same `task_id` (`duplicate: true`). At most 2 generations run at once. Stored results are reused when the source hash and `INSIGHTS_VERSION` match. Errors carry a stable `code` and a Greek user message: `insufficient_text`, `too_short`, `unsupported_format`, `extraction_failed`, `language_detection_failed`, `no_api_key`, `quota_exhausted`, `rate_limited`, `auth_failed`, `network_error`, `ai_failed`, `ai_output_rejected`, `audio_failed`, `export_failed`.
   * **Audio:** narrates `speech_text(final_text)`, which only strips Markdown markers. Any failed chunk fails the task, so the audio never silently skips text. The MP3 is invalidated when the text is regenerated.
 * **Prompt library (`backend/translation_prompts.py`, `PROMPT_VERSION = "2026.11-q2"`):** single source for every Gemini text prompt.
@@ -827,7 +827,7 @@ BookApp/
 ├── temp/
 │   ├── uploads/{job_id}/    # Uploaded input documents (+ <name>.scantext.json: the text read from a scanned book)
 │   └── outputs/{job_id}/    # Translated books, checkpoints, audiobooks (+ <name>.chapters.json, <name>.sync.json), insights/, bilingual/
-├── tests/                   # 66 automated test suites (sandboxed)
+├── tests/                   # 67 automated test suites (sandboxed)
 ├── eval/passages.json       # Translation quality evaluation passages
 ├── scripts/                 # eval_translation_quality.py (quality evaluation runner), make_icons.py (redraws frontend/icon.svg, favicon.ico, icon-*.png, apple-touch-icon.png)
 ├── requirements.txt
@@ -895,10 +895,10 @@ The repository includes a comprehensive master test runner with **100% endpoint 
 > **Tests never see your data:** `run_all_tests.py` works in a throw-away copy on a free port, with an empty database and no API keys. A running BookApp on port 8000 is not used. Test files refuse to run outside this sandbox.
 
 ```bash
-# Execute all 62 test suites (Full Master Suite):
+# Execute all 67 test suites (Full Master Suite):
 .\.venv\Scripts\python run_all_tests.py
 
-# Fast execution (57 local static, unit, contract, UI, and queue suites):
+# Fast execution (62 local static, unit, contract, UI, and queue suites):
 .\.venv\Scripts\python run_all_tests.py --fast
 
 # Selected suites:
@@ -1001,7 +1001,9 @@ The master runner automatically executes all test suites:
 
 66. `test_book_insights_more.py`: More Book Insights (31 tests). Gemini is a stand-in that also makes the mistakes the checks must catch. Covers: pages and units (TXT pages, EPUB chapters); chapters from headings, EPUB items or equal parts; named parts from a contents list without page numbers (not the contents page, not the acknowledgments) and PDF bookmarks; long parts in pieces cut at page ends, one title in the output language; a refrain is no contents list; characters from the work's own pages only (no title page, contents, epigraph names, acknowledgments or notes), short forms folded into the full name and kept for the Glossary, names given both ways as terms, a description in the wrong language blanked with the name kept; one chapter in detail (only its text sent, kept, pieces numbered, bad numbers refused, through the API with the analysis' chapter list); sections at once give exactly the result of one by one, `_each` keeps the order, skips or stops as each kind requires and cancels the rest; a Greek question about a long English book finds its passage through search words, spreads over the book without any, and takes the chapter overview along; characters with invented names dropped, first pages and Glossary pairs; chapter summaries with a left-out chapter asked again; a recap that never sees pages after the chosen one; the blurb as the catalogue description; quotes verified word for word on their real page; the study guide's four sections (theme titles are not taken for invented names); page markers and italics tidied in the text; the timeline in story order and the told-order fallback; wrong language and quota; stored results reused without requests; questions with cited pages, kept newest first and once; relevant pages of a long book; the summary types unchanged; and through the API every kind, PDF export, the Glossary, questions, input checks, comics refused, the analysis page range and an existing summary.
 
-All test suites pass: **`61/61 PASS in --fast mode`** on Windows 11 (Python 3.15). The full run (66 suites, with the 5 network suites) last passed at 62 suites, on Windows 11 and on Linux (Ubuntu 20.04 under WSL, Python 3.11, bsdtar instead of 7-Zip).
+67. `test_insights_quality_gate.py`: the Book Insights checks never reject a faithful text and still reject an invented one (11 tests). An extended synopsis of a Greek book was once rejected every time: the other suites' stand-ins copied the book's own name forms and wrote almost no numbers, so they could not show it. Covers: a number of the book in eight thousands styles, in the book and in the text, both ways, and an invented one caught in each; decimals, dates and numbers side by side; 38 Greek names in their cases (the accent may move), the book having one form and the text another, both ways; invented names caught; English possessives. Then the whole pipeline with a stand-in that writes like a real model (names in other cases, the other language's number style, a space as thousands separator, the top of each length range): all five summary and synopsis types, Greek and English, from a Greek and an English book, read whole and from notes, succeed; the same with invented names and numbers is rejected with its reasons; one chapter, the story so far, the blurb, the timeline, chapter summaries and the study guide succeed from a Greek book in Greek and an English book in English. Last, every message a check can produce, read from the code (`ast`), has a reason, and every reason has its English in `i18n.js` (Node). Run against the code before the fix, it fails in 396 places.
+
+All test suites pass: **`62/62 PASS in --fast mode`** on Windows 11 (Python 3.15). The full run (67 suites, with the 5 network suites) last passed at 62 suites, on Windows 11 and on Linux (Ubuntu 20.04 under WSL, Python 3.11, bsdtar instead of 7-Zip).
 
 ---
 

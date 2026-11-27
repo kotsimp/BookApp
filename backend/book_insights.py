@@ -141,6 +141,17 @@ _REASON_RULES: List[Tuple["re.Pattern", Callable[["re.Match"], str]]] = [
      lambda m: "Το κείμενο ήταν σχεδόν ίδιο με τη σύνοψη που υπάρχει ήδη."),
     (re.compile(r"too similar to the existing summary"),
      lambda m: "Το κείμενο ήταν σχεδόν ίδιο με την περίληψη που υπάρχει ήδη."),
+    # the other kinds (backend/insights_more.py)
+    (re.compile(r"unreadable answer"), lambda m: "Η απάντηση του AI δεν είχε μορφή που διαβάζεται."),
+    (re.compile(r"no people or terms found"), lambda m: "Δεν βρέθηκαν πρόσωπα ή όροι του βιβλίου."),
+    (re.compile(r"(\d+) of (\d+) chapters were not summarised"),
+     lambda m: f"Δεν γράφτηκε περίληψη για {m[1]} από τα {m[2]} κεφάλαια."),
+    (re.compile(r"the blurb is too long"), lambda m: "Το κείμενο του οπισθόφυλλου βγήκε πολύ μεγάλο."),
+    (re.compile(r"no passage was found word for word"),
+     lambda m: "Κανένα απόσπασμα δεν βρέθηκε αυτούσιο στο βιβλίο."),
+    (re.compile(r"the guide needs its four sections"),
+     lambda m: "Ο οδηγός μελέτης δεν είχε και τις τέσσερις ενότητες."),
+    (re.compile(r"no events found"), lambda m: "Δεν βρέθηκαν γεγονότα."),
 ]
 
 
@@ -546,15 +557,21 @@ def similarity(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
-# A thousands separator: "1,200", "1.200" (Greek), "1 200" with a no-break or thin space
-_DIGIT_GROUP_RE = re.compile(r"(?<=\d)[.,\u00a0\u202f](?=\d{3}(?!\d))")
+# A thousands separator: "1,200", "1.200" (Greek), "1'200", or a no-break, figure, thin or narrow space
+_DIGIT_GROUP_RE = re.compile(r"(?<=\d)[.,'’\u00a0\u2007\u2008\u2009\u202f](?=\d{3}(?!\d))")
+# A number in groups of three, a plain space allowed too ("1 200", as typeset books print it)
+_GROUPED_RE = re.compile(r"(?<![\d.,])\d{1,3}(?:[ .,'’\u00a0\u2007\u2008\u2009\u202f]\d{3})+(?!\d)")
 
 
 def _unknown_numbers(output: str, source: str) -> List[str]:
-    src_nums = (set(re.findall(r"\d+", _DIGIT_GROUP_RE.sub("", source)))
-                | set(re.findall(r"\d+", source.replace(",", "").replace(".", ""))))
+    """Numbers of 3+ digits in `output` that the source never writes, in whatever thousands style either uses."""
+    merged = _DIGIT_GROUP_RE.sub("", source)
+    src_nums = (set(re.findall(r"\d+", merged)) | set(re.findall(r"\d+", merged.replace(",", "").replace(".", "")))
+                | {re.sub(r"\D", "", m) for m in _GROUPED_RE.findall(source)})
+    # a grouped number the source has is known as a whole; otherwise its parts are judged ("1922 300" is two)
+    rest = _GROUPED_RE.sub(lambda m: " " if re.sub(r"\D", "", m.group(0)) in src_nums else m.group(0), output)
     # 3+ digits only (years, amounts): chapter numbers like "12" may be spelled out in the source
-    out_nums = re.findall(r"\b\d{3,}\b", _DIGIT_GROUP_RE.sub("", output))
+    out_nums = re.findall(r"\b\d{3,}\b", _DIGIT_GROUP_RE.sub("", rest))
     return sorted({n for n in out_nums if n not in src_nums})
 
 
@@ -589,6 +606,16 @@ def _unknown_names(output: str, source: str) -> List[str]:
                 continue
             unknown.add(m.group(1))
     return sorted(unknown)
+
+
+# How many numbers and names the check can't match a text may hold. A long text names more, so it may hold more:
+# up to 1,599 words 1 number and 3 names; 2,000 words 2 and 5; 3,000 words 4 and 7
+def unmatched_numbers_allowed(words: int) -> int:
+    return max(1, words // 600 - 1)
+
+
+def unmatched_names_allowed(words: int) -> int:
+    return max(3, words // 400)
 
 
 def validate_output(text: str, insight_type: str, language: str, lo: int, hi: int,
@@ -632,15 +659,14 @@ def validate_output(text: str, insight_type: str, language: str, lo: int, hi: in
     if INSIGHT_TYPES[insight_type]["kind"] == "synopsis" and headings < 2:
         warnings.append("synopsis has fewer than two section headings")
 
-    # A long text names more people and numbers, so a few more unmatched ones are allowed (2,000 words: 3 and 5)
     nums = _unknown_numbers(text, source)
-    if len(nums) >= max(2, words // 600):
+    if len(nums) > unmatched_numbers_allowed(words):
         critical.append(f"numbers not found in the source: {', '.join(nums[:5])}")
     elif nums:
         warnings.append(f"numbers not found in the source: {', '.join(nums[:5])}")
     if source_language == language or (source_language == "other" and language not in OUTPUT_LANGUAGES):
         names = _unknown_names(text, source)
-        if len(names) > max(3, words // 400):
+        if len(names) > unmatched_names_allowed(words):
             critical.append(f"names not found in the source: {', '.join(names[:6])}")
         elif names:
             warnings.append(f"unverified names: {', '.join(names)}")
