@@ -393,6 +393,7 @@ function removeFile(prefix) {
   hideUploadProgress(prefix);
   state[prefix].file = null;
   state[prefix].jobId = null;
+  if (typeof onBookChanged === 'function') onBookChanged(prefix);
   if (prefix === 'tr') {
     _lastDetectedGenreInfo = null;
   }
@@ -714,6 +715,7 @@ async function uploadFile(prefix, file) {
     }
     hideUploadProgress(prefix);
     state[prefix].jobId = data.job_id;
+    if (typeof onBookChanged === 'function') onBookChanged(prefix);  // its series (library.js)
     state[prefix].estimatedPages = Number(data.estimated_pages || 0);
     if (prefix === 'tr' && typeof onMaxQualityToggle === 'function') onMaxQualityToggle();
 
@@ -2219,6 +2221,7 @@ function showResult(prefix, data) {
     if (audioLangSelect) {
       audioLangSelect.value = targetLang;
     }
+    if (typeof refreshEpubCharacters === 'function') refreshEpubCharacters();  // the EPUB's Characters page (library.js)
     playCompletionNotification('BookApp — Μετάφραση Ολοκληρώθηκε!', 'Το βιβλίο σας μεταφράστηκε με επιτυχία και είναι έτοιμο για λήψη ή ανάγνωση.');
   } else {
     meta.textContent = 'Your audiobook has been generated. Click below to download or listen to the MP3 file.';
@@ -2852,6 +2855,9 @@ function renderHistory(jobs) {
   const ownerTag = (j) => (me && me.role === 'admin' && j.owner && j.owner !== me.id && j.owner_name)
     ? ` · 👤 ${escHtml(j.owner_name)}` : '';
   const statusIcon = { done: '✅', running: '⏳', error: '❌', idle: '🔵' };
+  // its series and how far its reading apps have got (library.js, backend/reading_sync.py)
+  const shelfTag = (j) => (j.series ? ` · 📚 <span translate="no">${escHtml(j.series.name)}</span> #${Number(j.series.position) || 1}` : '')
+    + (j.reading && j.reading.percentage != null ? ` · 📍 ${Math.round(Number(j.reading.percentage) * 100)}%` : '');
 
   grid.innerHTML = displayJobs.map(j => `
     <div class="history-item" data-job-id="${escHtml(j.job_id)}" data-mode="${escHtml(j.mode || '')}" data-file-name="${escHtml(j.file_name || '')}" onclick="openHistoryJob(this.dataset.jobId, this.dataset.mode, this.dataset.fileName)">
@@ -2861,7 +2867,7 @@ function renderHistory(jobs) {
         <div class="history-meta">
           ${j.mode ? escHtml(j.mode.charAt(0).toUpperCase() + j.mode.slice(1)) : 'Uploaded'} ·
           ${statusIcon[j.status] || ''} ${escHtml(j.status)}
-          ${j.progress > 0 && j.status !== 'done' ? `· ${Number(j.progress) || 0}%` : ''}${ownerTag(j)}
+          ${j.progress > 0 && j.status !== 'done' ? `· ${Number(j.progress) || 0}%` : ''}${ownerTag(j)}${shelfTag(j)}
         </div>
       </div>
       ${j.has_output ? `<span style="color:var(--emerald);font-size:0.8rem;font-weight:600">⬇️ Ready</span>` : ''}
@@ -2943,6 +2949,7 @@ async function loadHistoryJob(jobId, mode, tab = null) {
     stopJobTracking(prefix);
     state[prefix].jobId = jobId;
     state[prefix].file = null;
+    if (typeof onBookChanged === 'function') onBookChanged(prefix);
     switchTab(targetTab);
 
     if (data.file_name) {
@@ -4420,6 +4427,7 @@ const glossaryState = {
 async function openGlossaryModal() {
   document.getElementById('glossary-modal').style.display = 'flex';
   await loadGlossary();
+  if (typeof loadGlossarySuggestions === 'function') await loadGlossarySuggestions();  // library.js
 }
 
 function closeGlossaryModal() {
@@ -4463,6 +4471,7 @@ async function openDevicesModal() {
     if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load the devices settings'));
     const data = await res.json();
     showOpdsState(data.opds || {});
+    if (typeof showSyncState === 'function') showSyncState(data.sync || {}, data.sync_user || '');
   } catch (e) {
     setDevicesStatus('opds-status', `❌ ${e.message}`);
   }
@@ -5424,6 +5433,7 @@ async function returnLoneQueuedFileToCard(q) {
 
   state.tr.jobId = item.job_id;  // set first: the emptied queue then leaves the Upload Card to this file
   state.tr.file = null;
+  if (typeof onBookChanged === 'function') onBookChanged('tr');
   state.tr.estimatedPages = Number(info.total_pages || 0);
   _keepQueuedSettings = false;
   renderBatchQueue(emptied || { items: [] });
@@ -5552,6 +5562,14 @@ async function init() {
       if (e.target === devicesModal) closeDevicesModal();
     });
   }
+  for (const [id, close] of [['series-modal', 'closeSeriesModal'], ['backup-modal', 'closeBackupModal']]) {
+    const modal = document.getElementById(id);  // library.js
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal && typeof window[close] === 'function') window[close]();
+      });
+    }
+  }
 
   // Global keyboard shortcuts (Ctrl+S, Ctrl+F in editor; Esc to close modals)
   document.addEventListener('keydown', (e) => {
@@ -5571,6 +5589,10 @@ async function init() {
       const devicesModal = document.getElementById('devices-modal');
       if (devicesModal && devicesModal.style.display !== 'none') {
         closeDevicesModal();
+      }
+      for (const [id, close] of [['series-modal', 'closeSeriesModal'], ['backup-modal', 'closeBackupModal']]) {
+        const modal = document.getElementById(id);
+        if (modal && modal.style.display !== 'none' && typeof window[close] === 'function') window[close]();
       }
       const readerModal = document.getElementById('reader-modal');
       if (readerModal && readerModal.style.display !== 'none') {

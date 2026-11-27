@@ -425,6 +425,7 @@ def _fold_short_names(store: Dict[str, Dict[str, Any]], key: str, out_key: str, 
         full.setdefault("aka", []).append((short[key], short[out_key]))
         full["aka"] += short.pop("aka", [])
         full[out_key] = full[out_key] or ""
+        full["intro"] = full.get("intro") or short.get("intro") or ""
         for t in text_keys:  # the fullest description wins
             if len(short[t]) > len(full[t]):
                 full[t] = short[t]
@@ -456,6 +457,8 @@ async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
                     value = str(item.get(k) or "").strip()
                     if len(value) > len(entry[k]):
                         entry[k] = value
+                if not entry.get("intro"):  # as the reader first meets them (the EPUB's Characters page)
+                    entry["intro"] = str(item.get(text_keys[0]) or "").strip()
     for name in [k for k in people if k in terms]:  # a ship, a planet or a place named both ways: a term
         del people[name]
     for store, key, out_key, text_keys in ((people, "name", "name_out", ("role", "relations")),
@@ -493,7 +496,7 @@ async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
         for item in sorted(entries, key=lambda i: off_language(own([i])), reverse=True):
             if not language_problems(own(entries), ctx.lang):
                 break
-            for k in ("role", "relations", "definition"):
+            for k in ("role", "relations", "definition", "intro"):
                 if k in item:
                     item[k] = ""
             blanked += 1
@@ -501,6 +504,9 @@ async def _characters(ctx: _Ctx) -> Tuple[str, Dict[str, Any]]:
     problems = language_problems(own(entries), ctx.lang)
     if problems:
         raise InsightsError("ai_output_rejected", "; ".join(problems), http_status=502)
+    for item in entries:  # a first description in another language is not shown on the EPUB's page either
+        if item.get("intro") and language_problems(item["intro"], ctx.lang):
+            item["intro"] = ""
     w = _words(ctx.lang)
 
     def line(name: str, out: str, desc: str, first: Optional[int]) -> str:

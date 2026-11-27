@@ -43,9 +43,32 @@ def _owner() -> str:
 
 @router.get("/api/connections")
 async def connections_status():
-    """The signed-in user's e-reader link: whether one exists (it is shown only when made)."""
+    """The signed-in user's e-reader link and reading-position sync: whether each exists (shown only when made)."""
     from backend.connections import opds_status
-    return {"opds": opds_status(_owner())}
+    from backend.reading_sync import status
+    return {"opds": opds_status(_owner()), "sync": await asyncio.to_thread(status, _owner()),
+            "sync_user": _sync_user_name()}
+
+
+def _sync_user_name() -> str:
+    """The user name to sign in to sync with: the BookApp one (any name with accounts off)."""
+    from backend.request_context import current_user
+    return str((current_user() or {}).get("username") or "")
+
+
+@router.post("/api/connections/sync")
+async def connections_new_sync_password():
+    """A new reading-position sync password (KOReader, Readest): shown this once; the previous one stops working."""
+    from backend.reading_sync import new_password
+    password = await asyncio.to_thread(new_password, _owner())
+    return {"path": "/kosync", "username": _sync_user_name(), "password": password}
+
+
+@router.delete("/api/connections/sync")
+async def connections_remove_sync_password():
+    from backend.reading_sync import remove_password
+    await asyncio.to_thread(remove_password, _owner())
+    return {"status": "removed"}
 
 
 @router.post("/api/connections/opds")
@@ -252,10 +275,11 @@ async def opds_book(request: Request, token: str, job_id: str, kind: str, filena
         if kind not in allowed:
             raise HTTPException(404, "Not found.")
         if kind == "bilingual-epub":
-            return await main.download_bilingual(job_id, format="epub")
+            return await main.serve_bilingual(job_id, format="epub", served_name=_file_name(job, kind))
         as_download = request if request.method != "HEAD" else Request({**request.scope, "method": "GET"},
                                                                         request.receive)
-        return await main.download_output(as_download, job_id, format=kind, layout=None)
+        return await main.serve_output(as_download, job_id, format=kind, layout=None,
+                                       served_name=_file_name(job, kind))
     finally:
         reset_current_user(ctx)
 

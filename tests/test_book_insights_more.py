@@ -419,6 +419,9 @@ class ModuleTests(unittest.TestCase):
         names = [p["name"] for p in rec["data"]["people"]]
         self.assertEqual(names, ["Elena Markou", "Nikos"], "a name the book does not have is dropped")
         self.assertEqual(rec["data"]["people"][0]["first"], 1)
+        # how the reader first meets them, for the EPUB's Characters page (no later turns of the story)
+        self.assertTrue(all(p.get("intro") for p in rec["data"]["people"]), rec["data"]["people"])
+        self.assertTrue(all(t.get("intro") for t in rec["data"]["terms"]), rec["data"]["terms"])
         self.assertIn("- **Ελένη Μάρκου** (Elena Markou) — Η φύλακας του φάρου. Σχέσεις: Αδελφή του Νίκου. · σ. 1",
                       rec["text"])
         self.assertIn("## Πρόσωπα", rec["text"])

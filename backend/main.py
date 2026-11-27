@@ -35,7 +35,7 @@ from backend.job_manager import (
     job_owner,
 )
 from backend import auth
-from backend.request_context import current_user, set_current_user, reset_current_user, can_view_owner
+from backend.request_context import current_user, current_user_id, set_current_user, reset_current_user, can_view_owner
 from backend.parsers import count_pages, parse_document
 from backend.translator import translate_document
 from backend.tts_engine import (
@@ -45,6 +45,7 @@ from backend.tts_engine import (
 from backend.exporter import export_text
 from backend import comic_build
 from backend import format_sync
+from backend import epub_extras, reading_sync
 from backend.format_preserver import translate_docx_in_place, translate_epub_in_place
 from backend.ai_polisher import POLISH_STATUS
 # ---------------------------------------------------------------------------
@@ -166,10 +167,15 @@ def _is_own_origin(origin: str, headers) -> bool:
     return False
 
 
+def _is_sync_path(path: str) -> bool:
+    """The reading-position sync server (backend/api/sync.py): reading apps sign in with headers, not cookies."""
+    return path == "/kosync" or path.startswith("/kosync/")
+
+
 @app.middleware("http")
 async def refuse_cross_site_changes(request: Request, call_next):
     """CORS only hides responses: a form on any website could still POST here (upload, start, pause, clean-up)."""
-    if request.method not in ("GET", "HEAD", "OPTIONS"):
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _is_sync_path(request.url.path):
         origin = request.headers.get("origin", "")
         site = request.headers.get("sec-fetch-site")
         # Browsers send Sec-Fetch-Site only to HTTPS and localhost addresses; they send Origin with every POST.
@@ -265,6 +271,25 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    return response
+
+
+_SYNC_CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
+              "Access-Control-Allow-Headers": "x-auth-user, x-auth-key, content-type, accept",
+              "Access-Control-Max-Age": "600"}
+
+
+@app.middleware("http")
+async def sync_server_cors(request: Request, call_next):
+    """A reading app in a browser (Readest on the web) may call the sync server from another site: it signs in with
+    its headers, never with BookApp's cookies, so any site may. Outermost, ahead of the CORS rules of the app."""
+    if not _is_sync_path(request.url.path):
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        from fastapi.responses import Response
+        return Response(status_code=204, headers=_SYNC_CORS)
+    response = await call_next(request)
+    response.headers.update(_SYNC_CORS)
     return response
 
 # Directories, MIME types and job-id/path helpers live in backend/api/common.py (shared with routers)
@@ -953,6 +978,10 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
     usage = usage_cm.__enter__()          # counts every Gemini call of this job (incl. child tasks)
     doc_pages = 0                         # the document's page count: a sample shows its own while it runs
     page_range = None
+    # the book's register of names is kept with it; the earlier books of its series lend it their names
+    from backend import book_names, glossary as glossary_mod
+    names_ctx = book_names.begin_job(Path(output_path).parent)
+    terms_ctx = glossary_mod.use_job_terms(_series_terms(job_id))
     try:
         job = get_job(job_id)
         if not job:
@@ -1232,6 +1261,7 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
             done_chunks=final_total,
             total_chunks=final_total,
         )
+        await asyncio.to_thread(_learn_from_translation, job_id, out_dir, is_comic_flow)
     except asyncio.CancelledError:
         logger.info(f"[{job_id}] Translation task was cancelled.")
         mark_interrupted(job_id)
@@ -1250,11 +1280,47 @@ async def _run_translation(job_id, file_path, file_type, source_lang, target_lan
         else:
             update_job(job_id, status="error", error=err_str)
     finally:
+        glossary_mod.reset_job_terms(terms_ctx)
+        book_names.end_job(names_ctx)
         usage_cm.__exit__(None, None, None)
         update_job(job_id, gemini_usage=dict(usage))
         if page_range and doc_pages:
             update_job(job_id, total_pages=doc_pages)  # the next sample and the estimate see the whole document
         unregister_task(job_id)
+
+
+def _series_terms(job_id: str) -> dict:
+    """The names of the earlier books of the book's series, for its translation (never stops a translation)."""
+    from backend import series
+    try:
+        terms = series.series_terms(job_id, OUTPUT_DIR)
+        if terms:
+            logger.info(f"[{job_id}] {len(terms)} name(s) from the earlier books of its series.")
+        return terms
+    except Exception as e:
+        logger.warning(f"[{job_id}] Names of the series not read: {e}")
+        return {}
+
+
+def _learn_from_translation(job_id: str, out_dir: Path, comic: bool) -> None:
+    """After a translation: the names it used are kept with the book and offered for the Glossary."""
+    from backend import glossary_learning
+    try:
+        job = get_job(job_id)
+        if not job:
+            return
+        title = Path(job.file_name or job_id).stem
+        owner = job.owner or current_user_id()  # a book from before accounts: the administrator who translated it
+        if comic:
+            glossary_learning.learn_from_comic(owner, job_id, title, out_dir, job.target_lang)
+            return
+        texts = _translated_texts(job, out_dir)
+        if texts:
+            translated = texts[0].read_text(encoding="utf-8", errors="replace")
+            glossary_learning.learn_from_translation(owner, job_id, title, out_dir, translated,
+                                                     job.source_lang, job.target_lang)
+    except Exception as e:
+        logger.warning(f"[{job_id}] Names of the translation not learnt: {e}")
 
 
 @app.post("/api/audiobook")
@@ -1613,6 +1679,12 @@ def comic_source_pdf(job, out_dir: Path) -> Optional[Path]:
 
 @app.api_route("/api/download/{job_id}", methods=["GET", "HEAD"])
 async def download_output(request: Request, job_id: str, format: Optional[str] = None, layout: Optional[str] = None):
+    """Download the output file for a completed job (see serve_output)."""
+    return await serve_output(request, job_id, format, layout)
+
+
+async def serve_output(request: Request, job_id: str, format: Optional[str] = None, layout: Optional[str] = None,
+                       served_name: str = ""):
     """
     Download the output file for a completed job.
     If 'format' is requested (e.g. ?format=pdf), dynamically converts the translated
@@ -1817,11 +1889,19 @@ async def download_output(request: Request, job_id: str, format: Optional[str] =
     if not out_path or not out_path.exists():
         raise HTTPException(404, f"Output file for job '{job_id}' not found.")
 
+    if out_path.suffix.lower() == ".epub" and job and not is_comic_job:
+        # with the 👥 Characters page when the book asks for it (a copy: the EPUB itself stays as it is)
+        out_path = await asyncio.to_thread(epub_extras.served_epub, out_dir, out_path, job.target_lang)
     media_type = MIME_MAP.get(out_path.suffix.lower(), "application/octet-stream")
     download_name = out_path.name
     sample = getattr(job, "sample_range", None) if job else None
     if sample and out_path.suffix.lower() not in (".mp3", ".m4b"):  # also after an audiobook made from the sample
         download_name = f"{out_path.stem}_sample_p{sample[0]}-{sample[1]}{out_path.suffix}"  # not the whole book
+    if job and not is_head and out_path.suffix.lower() in (".epub", ".pdf", ".cbz", ".cbr", ".docx", ".txt"):
+        # a reading app syncing its position names the book by this file (backend/reading_sync.py)
+        kind = out_path.suffix.lstrip(".").lower()
+        await asyncio.to_thread(reading_sync.note_file, current_user_id(), job_id, kind, out_path, download_name,
+                                served_name)
     return FileResponse(
         path=str(out_path),
         media_type=media_type,
@@ -1876,6 +1956,10 @@ def _build_bilingual(job, out_dir: Path, translated_file: Path, fmt: str, target
 @app.get("/api/download/{job_id}/bilingual")
 async def download_bilingual(job_id: str, format: str = "pdf"):
     """The translation with its original: each passage of the original, smaller and grey, then its translation."""
+    return await serve_bilingual(job_id, format)
+
+
+async def serve_bilingual(job_id: str, format: str = "pdf", served_name: str = ""):
     from backend.bilingual import EXPORTERS
     _validate_job_id(job_id)
     job = get_job(job_id)
@@ -1900,6 +1984,10 @@ async def download_bilingual(job_id: str, format: str = "pdf"):
         await asyncio.to_thread(_build_bilingual, job, out_dir, texts[0], fmt, target)
     sample = getattr(job, "sample_range", None)
     name = f"{stem}_bilingual" + (f"_sample_p{sample[0]}-{sample[1]}" if sample else "") + f".{fmt}"
+    if fmt == "epub":
+        target = await asyncio.to_thread(epub_extras.served_epub, out_dir, target, job.target_lang)
+    await asyncio.to_thread(reading_sync.note_file, current_user_id(), job_id, f"bilingual-{fmt}", target, name,
+                            served_name)
     return FileResponse(path=str(target), media_type=MIME_MAP.get(f".{fmt}", "application/octet-stream"), filename=name)
 
 
@@ -2045,6 +2133,7 @@ def _jobs_in_scope(scope: str = "mine"):
 async def all_jobs(include_tests: bool = False, scope: str = "mine"):
     """Returns the requester's jobs for Session History (see _jobs_in_scope). Hides test-generated jobs by default."""
     jobs, names = _jobs_in_scope(scope)
+    shelf, positions = await asyncio.to_thread(_bookshelf)
     return [
         {
             "job_id": j.job_id,
@@ -2062,10 +2151,25 @@ async def all_jobs(include_tests: bool = False, scope: str = "mine"):
             "has_output": j.output_path is not None,
             "owner": j.owner or "",
             "owner_name": names.get(j.owner, ""),
+            "series": shelf.get(j.job_id),
+            "reading": positions.get(j.job_id),
         }
         for j in jobs
         if include_tests or not is_test_job_identifier(j.job_id, j.file_name)
     ]
+
+
+def _bookshelf() -> tuple:
+    """{job_id: {"name", "position"}} of the requester's series, and {job_id: reading position} of their apps."""
+    from backend import series
+    owner = current_user_id()
+    shelf = {}
+    for s in series.list_series(owner):
+        for i, jid in enumerate(s["books"]):
+            shelf[jid] = {"id": s["id"], "name": s["name"], "position": i + 1}
+    positions = {jid: {"percentage": p.get("percentage"), "timestamp": p.get("timestamp")}
+                 for jid, p in reading_sync.book_positions(owner).items()}
+    return shelf, positions
 
 
 @app.delete("/api/jobs/tests/cleanup")
@@ -2325,13 +2429,16 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
         f for f in out_dir.glob("*.txt") if not f.name.endswith("_original.txt")
     ]
     txt_file = txt_files[0] if txt_files else _translation_text_path(job, out_dir, job_id, req.translated_text)
+    before = txt_file.read_text(encoding="utf-8", errors="replace") if txt_file.is_file() else ""
 
     # Save edited text (and patch format-preserved documents in place)
     preserved, updated = await _save_preserving_format(job, txt_file, req.translated_text)
     base_name = txt_file.stem
+    learnt = await asyncio.to_thread(_learn_from_edit, job, out_dir, before, req.translated_text) if job else []
 
     if format_sync.is_comic_output(job, out_dir):
-        return {"status": "saved", "job_id": job_id, "output_path": str(txt_file), "artwork_unchanged": True}
+        return {"status": "saved", "job_id": job_id, "output_path": str(txt_file), "artwork_unchanged": True,
+                "names_learnt": learnt}
 
     # Re-export active format if job has a text-exportable format
     fmt = ((job.output_format if job else "docx") or "docx").lower().lstrip(".")
@@ -2357,7 +2464,21 @@ async def update_job_text(job_id: str, req: UpdateTextRequest):
             except Exception:
                 pass
 
-    return {"status": "saved", "job_id": job_id, "output_path": str(export_path), "updated_in_place": updated}
+    return {"status": "saved", "job_id": job_id, "output_path": str(export_path), "updated_in_place": updated,
+            "names_learnt": learnt}
+
+
+def _learn_from_edit(job, out_dir: Path, before: str, after: str) -> list:
+    """A name the user wrote another way everywhere: kept with the book, offered for the Glossary (never fails a save)."""
+    from backend import glossary_learning
+    try:
+        changes = glossary_learning.learn_from_edit(job.owner or current_user_id(), job.job_id,
+                                                    Path(job.file_name or job.job_id).stem, out_dir, before, after,
+                                                    job.source_lang, job.target_lang)
+        return [{"source": s, "before": b, "after": a} for s, b, a in changes]
+    except Exception as e:
+        logger.warning(f"[{job.job_id}] Names of the edit not learnt: {e}")
+        return []
 
 
 class SettingsRequest(BaseModel):
@@ -2757,12 +2878,13 @@ async def polish_translation(req: PolishRequest):
 # ---------------------------------------------------------------------------
 from backend.api import refine as _refine_api, insights as _insights_api, pairing as _pairing_api  # noqa: E402
 from backend.api import auth as _auth_api, connections as _connections_api  # noqa: E402
+from backend.api import library as _library_api, sync as _sync_api  # noqa: E402
 
 # Register the routers' routes directly on the app (no prefix/dependencies), so they appear as plain APIRoute
 # entries in app.routes exactly like routes declared here (FastAPI >= 0.16x nests include_router() routers,
 # which hides them from code that inspects app.routes, e.g. the API contract and coverage tests).
 for _api_router in (_refine_api.router, _insights_api.router, _pairing_api.router, _auth_api.router,
-                    _connections_api.router):
+                    _connections_api.router, _library_api.router, _sync_api.router):
     app.router.routes.extend(_api_router.routes)
 
 

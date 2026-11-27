@@ -2099,6 +2099,10 @@ async def translate_comic_document(
             renamed = _harmonize_comic_names(render_pages, glossary_names)
             if renamed:
                 logger.info(f"[{job_id}] One spelling per name: {renamed} balloon(s) adjusted.")
+            # kept with the book: the next volume of its series writes them the same way (backend/book_names.py)
+            from backend.book_names import save_comic_names
+            save_comic_names(out_dir_cp, _comic_name_choices(name_votes, name_spelled, glossary_names),
+                             source_lang, target_lang)
 
             # Apply detected redactions and Greek text rendering cleanly on the PDF document
             for p_idx, items in sorted(render_pages.items()):

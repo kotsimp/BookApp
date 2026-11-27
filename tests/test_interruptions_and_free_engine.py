@@ -302,7 +302,7 @@ class TestGlossarySlash(Case):
 
     def test_route_accepts_slashes(self):
         import re
-        route = next(r for r in main.app.routes if "/api/glossary/" in getattr(r, "path", ""))
+        route = next(r for r in main.app.routes if getattr(r, "path", "") == "/api/glossary/{term:path}")
         self.assertTrue(re.match(route.path_regex, "/api/glossary/AI/ML"))
 
 

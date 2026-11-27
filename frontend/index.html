@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.19.0" />
-  <script src="i18n.js?v=1.11.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.20.0" />
+  <script src="i18n.js?v=1.12.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -189,6 +189,16 @@
           ➕ Add More
         </button>
         <button class="remove-file-btn" onclick="removeFile('tr')" aria-label="Remove file">✕</button>
+      </div>
+      <div class="series-row" id="tr-series-row" style="display:none">
+        <label class="series-field"><span>📚 Σειρά βιβλίων</span>
+          <select id="tr-series-select" class="form-select-sm" onchange="onBookSeriesChange()" aria-label="Η σειρά του βιβλίου"></select>
+        </label>
+        <label class="series-field"><span>Βιβλίο #</span>
+          <input type="number" id="tr-series-position" class="sample-input" min="1" inputmode="numeric" onchange="onBookSeriesChange()" aria-label="Η θέση του βιβλίου στη σειρά" />
+        </label>
+        <button type="button" class="btn-sm btn-outline" onclick="openSeriesModal()">⚙️ Σειρές</button>
+        <span class="series-note" id="tr-series-note"></span>
       </div>
       <div id="tr-genre-hint" class="genre-badge-hint" style="display:none"></div>
       <div id="tr-scan-choice" class="scan-choice" style="display:none">
@@ -553,6 +563,10 @@
           <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'epub')" title="Κατέβασμα ως EPUB e-book" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(16,185,129,0.4); color:var(--emerald)">📱 EPUB</button>
           <button type="button" class="btn btn-outline" onclick="downloadOutput('tr', 'txt')" title="Κατέβασμα ως Plain Text" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(124,58,237,0.4); color:var(--violet)">📃 TXT</button>
           <button type="button" class="btn btn-outline" id="tr-bilingual-btn" onclick="downloadBilingual()" title="Πρωτότυπο και μετάφραση μαζί, παράγραφο προς παράγραφο (PDF, DOCX ή EPUB)" style="font-size:0.82rem; padding:6px 12px; font-weight:600; border-color:rgba(245,158,11,0.5); color:var(--amber)">🔀 Δίγλωσσο</button>
+        </div>
+        <div class="result-extras" id="tr-epub-extras" style="display:none">
+          <label class="result-extras-toggle"><input type="checkbox" id="tr-epub-characters" onchange="setEpubCharacters(this.checked)" /> <span>👥 Σελίδα «Πρόσωπα» στην αρχή του EPUB</span></label>
+          <span class="result-extras-note" id="tr-epub-characters-note"></span>
         </div>
         <button class="btn btn-outline" onclick="copyTranslatedText()" id="tr-copy-btn" style="display:inline-flex; align-items:center; gap:8px; border-color:var(--violet); color:var(--violet); font-weight:600">
           📋 Αντιγραφή Κειμένου
@@ -1112,7 +1126,14 @@
           <input type="number" id="ins-recap-until" class="sample-input" min="1" value="1" inputmode="numeric" aria-label="Έως ποια σελίδα έχετε διαβάσει" />
         </label>
         <button type="button" class="btn-sm btn-outline" id="ins-more-recap" onclick="runExtraInsight('recap')" disabled>🧭 Ανακεφαλαίωση</button>
+        <button type="button" class="btn-sm btn-outline" id="ins-recap-position" onclick="useReadingPosition()" style="display:none" title="Η θέση που έστειλε το KOReader ή το Readest (📲 Συσκευές)">📍 Από τη θέση ανάγνωσης</button>
         <span class="sample-hint">Γράφεται μόνο από όσα έχετε διαβάσει ως εκεί: τίποτα από τη συνέχεια.</span>
+        <span class="sample-hint" id="ins-recap-position-note"></span>
+      </div>
+      <div class="ins-series" id="ins-series" style="display:none">
+        <span class="ins-recap-title">📚 Πριν από αυτό το βιβλίο</span>
+        <span class="sample-hint" id="ins-series-name"></span>
+        <div id="ins-series-books" class="ins-series-books"></div>
       </div>
       <div class="ins-recap-row" id="ins-chapter-row">
         <span class="ins-recap-title">📖 Ένα κεφάλαιο</span>
@@ -1186,9 +1207,13 @@
           <option value="all">Όλοι οι χρήστες</option>
         </select>
       </span>
-      <button class="clear-history-btn" id="clear-history-btn" onclick="clearAllHistory()" style="display:none">
-        🗑️ Clear All
-      </button>
+      <span class="history-tools">
+        <button type="button" class="history-tool-btn" onclick="openSeriesModal()" title="Τα βιβλία μιας σειράς γράφουν τα ονόματα ίδια">📚 Σειρές</button>
+        <button type="button" class="history-tool-btn" onclick="openBackupModal()" title="Όλα τα βιβλία σας σε ένα αρχείο ZIP, και επαναφορά">💾 Αντίγραφο ασφαλείας</button>
+        <button class="clear-history-btn" id="clear-history-btn" onclick="clearAllHistory()" style="display:none">
+          🗑️ Clear All
+        </button>
+      </span>
     </div>
     <div class="history-grid" id="history-grid">
       <p style="color:var(--text-muted); font-size:0.9rem;">No jobs yet. Upload a document to get started.</p>
@@ -1464,6 +1489,29 @@
         Κατηγοριοποιημένο γλωσσάρι όρων για αυτόματη αντικατάσταση και τροφοδοσία του AI Polish. Επιλέξτε κατηγορία για φιλτράρισμα ή αναζητήστε συγκεκριμένο όρο.
       </p>
 
+      <!-- What the Glossary learns from the translations (backend/glossary_learning.py) -->
+      <details class="glossary-suggestions" id="glossary-suggestions" style="display:none" open>
+        <summary>💡 Προτάσεις από τις μεταφράσεις σας <span class="glossary-count-badge" id="glossary-suggestions-count">0</span></summary>
+        <p class="glossary-suggestions-help">Τα ονόματα που έγραψαν οι μεταφράσεις σας, και όσα γράψατε αλλιώς στον Έλεγχο &amp; Διόρθωση (παντού, π.χ. με Replace All). Όσα δεχτείτε μπαίνουν στο Γλωσσάρι και γράφονται ίδια σε κάθε επόμενο βιβλίο.</p>
+        <div class="glossary-suggestions-actions">
+          <button type="button" class="btn-sm btn-primary" id="glossary-accept-all-btn" onclick="acceptAllSuggestions()" title="Όλες εκτός από όσες έχουν ⚠️ ή άλλη γραφή στο Γλωσσάρι">✅ Αποδοχή όλων</button>
+          <span class="glossary-suggestions-legend">✏️ δική σας διόρθωση · ⚠️ και συνηθισμένη λέξη · ↔️ το Γλωσσάρι το γράφει αλλιώς</span>
+        </div>
+        <div class="glossary-table-wrapper" style="max-height:260px">
+          <table class="glossary-table">
+            <thead>
+              <tr>
+                <th>Source Term (English)</th>
+                <th>Target Translation (Greek)</th>
+                <th>Από</th>
+                <th style="width:92px; text-align:center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="glossary-suggestions-tbody"></tbody>
+          </table>
+        </div>
+      </details>
+
       <!-- Category Filter Tabs & Quick Search -->
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap">
         <div class="glossary-category-tabs" id="glossary-category-tabs" style="display:flex; gap:8px; flex-wrap:wrap">
@@ -1557,6 +1605,77 @@
           <button type="button" class="btn-sm btn-outline" id="opds-remove-btn" onclick="removeOpdsLink()">🗑️ Κατάργηση</button>
         </div>
       </section>
+      <section class="devices-section" id="sync-section">
+        <h3>🔄 Συγχρονισμός θέσης ανάγνωσης (KOReader, Readest)</h3>
+        <p>Το KOReader και το Readest στέλνουν εδώ πού σταματήσατε σε κάθε βιβλίο, ώστε να συνεχίζετε σε άλλη συσκευή από το ίδιο σημείο. Το Ιστορικό δείχνει πόσο έχετε διαβάσει, και «Η ιστορία ως τώρα» γράφεται ως εκεί με ένα κλικ.</p>
+        <div id="sync-details" class="devices-sync" style="display:none">
+          <label class="devices-field"><span>Διακομιστής</span>
+            <span class="devices-link"><input type="text" id="sync-server" class="form-input" readonly translate="no" /><button type="button" class="btn-sm btn-outline" onclick="copySyncDetail('sync-server')">📋 Αντιγραφή</button></span>
+          </label>
+          <label class="devices-field"><span>Όνομα χρήστη</span>
+            <span class="devices-link"><input type="text" id="sync-username" class="form-input" readonly translate="no" /><button type="button" class="btn-sm btn-outline" onclick="copySyncDetail('sync-username')">📋 Αντιγραφή</button></span>
+          </label>
+          <label class="devices-field"><span>Κωδικός συγχρονισμού</span>
+            <span class="devices-link"><input type="text" id="sync-password" class="form-input" readonly translate="no" /><button type="button" class="btn-sm btn-outline" onclick="copySyncDetail('sync-password')">📋 Αντιγραφή</button></span>
+          </label>
+        </div>
+        <div class="devices-status" id="sync-status" aria-live="polite"></div>
+        <p class="devices-note">KOReader: <code>Tools → Progress sync → Custom sync server</code>, μετά <code>Login</code>. Readest: <code>KOReader Sync</code> στις ρυθμίσεις του. Βάλτε τη διεύθυνση, το όνομα χρήστη και τον κωδικό που φαίνονται εδώ.</p>
+        <p class="devices-note">Αναγνωρίζονται τα βιβλία που κατεβάσατε από το BookApp (με λήψη ή από τον κατάλογο). Ο κωδικός φαίνεται μόνο τη στιγμή που φτιάχνεται· ένας νέος σταματά τον παλιό.</p>
+        <div class="devices-actions">
+          <button type="button" class="btn-sm btn-primary" id="sync-new-btn" onclick="newSyncPassword()">🔑 Νέος κωδικός συγχρονισμού</button>
+          <button type="button" class="btn-sm btn-outline" id="sync-remove-btn" onclick="removeSyncPassword()" style="display:none">🗑️ Κατάργηση</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="series-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="series-modal-title">📚 Σειρές βιβλίων</div>
+      <button class="modal-close" onclick="closeSeriesModal()" aria-label="Κλείσιμο">✕</button>
+    </div>
+    <div class="modal-body devices-body">
+      <p>Τα βιβλία μιας σειράς γράφουν τα ονόματα ίδια: κάθε βιβλίο μεταφράζεται με τα ονόματα των προηγούμενων, όπως τα έγραψε η μετάφρασή τους και όπως τα διορθώσατε. Το Γλωσσάρι σας υπερισχύει. Η σειρά των βιβλίων εδώ είναι η σειρά τους στη σειρά.</p>
+      <div class="series-new">
+        <input type="text" id="series-new-name" class="form-input" maxlength="80" placeholder="Όνομα νέας σειράς" aria-label="Όνομα νέας σειράς" />
+        <button type="button" class="btn-sm btn-primary" onclick="createSeriesFromModal()">➕ Νέα σειρά</button>
+      </div>
+      <div id="series-list" class="series-list"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="backup-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="backup-modal-title">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="backup-modal-title">💾 Αντίγραφο ασφαλείας</div>
+      <button class="modal-close" onclick="closeBackupModal()" aria-label="Κλείσιμο">✕</button>
+    </div>
+    <div class="modal-body devices-body">
+      <section class="devices-section">
+        <h3>💾 Αντίγραφο των βιβλίων σας</h3>
+        <p>Ένα αρχείο ZIP με όλα τα βιβλία σας: τα πρωτότυπα, τις μεταφράσεις, το Book Insights, τα εξώφυλλα, τις σειρές, τις θέσεις ανάγνωσης και το Γλωσσάρι. Με αυτό τα επαναφέρετε εδώ ή σε άλλον διακομιστή BookApp.</p>
+        <label class="result-extras-toggle"><input type="checkbox" id="backup-audio" /> <span>Μαζί και τα ηχητικά βιβλία (MP3, M4B: πολύ μεγαλύτερο αρχείο)</span></label>
+        <div class="devices-status" id="backup-status" aria-live="polite"></div>
+        <div class="devices-actions">
+          <button type="button" class="btn-sm btn-primary" id="backup-start-btn" onclick="startBackup()">💾 Δημιουργία αντιγράφου</button>
+          <button type="button" class="btn-sm btn-outline" id="backup-download-btn" onclick="downloadBackup()" style="display:none">⬇️ Λήψη αντιγράφου</button>
+        </div>
+        <p class="devices-note">Δεν περιέχει κλειδιά API, λογαριασμούς ή ρυθμίσεις του διακομιστή. Το αρχείο μένει για λήψη 24 ώρες.</p>
+      </section>
+      <section class="devices-section">
+        <h3>📥 Επαναφορά από αντίγραφο</h3>
+        <p>Τα βιβλία του αρχείου προστίθενται στα δικά σας· όσα υπάρχουν ήδη μένουν όπως είναι. Οι όροι του Γλωσσαρίου προστίθενται μόνο όπου δεν υπάρχει ήδη όρος για την ίδια λέξη.</p>
+        <input type="file" id="restore-file" accept=".zip,application/zip" aria-label="Αρχείο αντιγράφου ασφαλείας" />
+        <div class="upload-bar" id="restore-bar" style="display:none" role="progressbar" aria-label="Ανέβασμα αντιγράφου" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar-fill" id="restore-bar-fill" style="width:0%"></div></div>
+        <div class="devices-status" id="restore-status" aria-live="polite"></div>
+        <div class="devices-actions">
+          <button type="button" class="btn-sm btn-primary" id="restore-start-btn" onclick="startRestore()">📥 Επαναφορά</button>
+        </div>
+      </section>
     </div>
   </div>
 </div>
@@ -1605,11 +1724,19 @@
           <li><strong>☀️ / 🌙</strong>: φωτεινό θέμα τη μέρα, σκοτεινό τη νύχτα· πατήστε το για να το αλλάξετε.</li>
           <li><strong>📚 Γλωσσάρι</strong>: σταθερή μετάφραση για ονόματα και όρους σε όλο το βιβλίο.</li>
           <li><strong>🕑 Ιστορικό εργασιών</strong>: κατεβάζετε ξανά ή συνεχίζετε παλαιότερες εργασίες.</li>
-          <li><strong>📲 Συσκευές</strong>: κατάλογος για εφαρμογές e-reader (OPDS).</li>
+          <li><strong>📲 Συσκευές</strong>: κατάλογος για εφαρμογές e-reader (OPDS) και συγχρονισμός της θέσης ανάγνωσης με το KOReader και το Readest.</li>
+          <li><strong>📚 Σειρές</strong> (στο Ιστορικό ή κάτω από το αρχείο): τα βιβλία μιας σειράς γράφουν τα ονόματα ίδια, όπως τα έγραψαν τα προηγούμενα βιβλία και όπως τα διορθώσατε.</li>
+          <li><strong>💡 Προτάσεις στο Γλωσσάρι</strong>: μετά από κάθε μετάφραση προτείνονται τα ονόματα που χρησιμοποίησε, και όσα γράψατε αλλιώς στον Έλεγχο &amp; Διόρθωση. Μπαίνουν στο Γλωσσάρι μόνο αν τα δεχτείτε.</li>
+          <li><strong>👥 Σελίδα «Πρόσωπα»</strong>: στην αρχή του EPUB, από τα 👥 Πρόσωπα &amp; όροι του Book Insights, όπως τα γνωρίζει ο αναγνώστης όταν πρωτοεμφανίζονται.</li>
+          <li><strong>💾 Αντίγραφο ασφαλείας</strong> (στο Ιστορικό): όλα τα βιβλία σας σε ένα ZIP, για φύλαξη ή για μεταφορά σε άλλον διακομιστή.</li>
         </ul>
 
         <h3>💬 Συχνές ερωτήσεις</h3>
         <div class="help-faq">
+          <details>
+            <summary>Πώς συνεχίζω την ανάγνωση σε άλλη συσκευή;</summary>
+            <p>Στο <strong>📲 Συσκευές</strong> φτιάξτε κωδικό συγχρονισμού. Στο KOReader ανοίξτε το μενού εργαλείων, το <strong>Progress sync</strong>, βάλτε τη διεύθυνση ως δικό σας διακομιστή και συνδεθείτε με το όνομα χρήστη και τον κωδικό. Στο Readest βάλτε τα ίδια στο <strong>KOReader Sync</strong>. Συγχρονίζονται τα βιβλία που κατεβάσατε από το BookApp· η θέση σας φαίνεται στο Ιστορικό (📍) και στη «Η ιστορία ως τώρα».</p>
+          </details>
           <details>
             <summary>Χρειάζομαι κλειδί Gemini;</summary>
             <p>Όχι απαραίτητα. Χωρίς κλειδί η εφαρμογή χρησιμοποιεί τη δωρεάν μετάφραση της Google και μετά το MyMemory, με χαμηλότερη ποιότητα και μικρά όρια (η Google συχνά αρνείται μεγάλα κείμενα). Με ένα δωρεάν κλειδί Gemini η μετάφραση γίνεται με AI και είναι πολύ καλύτερη. Τα Book Insights χρειάζονται κλειδί.</p>
@@ -1728,11 +1855,19 @@
           <li><strong>☀️ / 🌙</strong>: the light theme by day, the dark one at night; press it to switch.</li>
           <li><strong>📚 Glossary</strong>: a fixed translation for names and terms across the whole book.</li>
           <li><strong>🕑 Session History</strong>: download again or continue earlier jobs.</li>
-          <li><strong>📲 Devices</strong>: a catalogue for e-reader apps (OPDS).</li>
+          <li><strong>📲 Devices</strong>: a catalogue for e-reader apps (OPDS) and reading-position sync with KOReader and Readest.</li>
+          <li><strong>📚 Series</strong> (in Session History or under the file): the books of a series write the names the same way, as the earlier books wrote them and as you corrected them.</li>
+          <li><strong>💡 Glossary suggestions</strong>: after each translation, the names it used are suggested, and those you wrote another way in Review &amp; Edit. They go into the Glossary only if you accept them.</li>
+          <li><strong>👥 «Characters» page</strong>: at the start of the EPUB, from 👥 Characters &amp; terms in Book Insights, as the reader first meets them.</li>
+          <li><strong>💾 Backup</strong> (in Session History): all your books in one ZIP, to keep them safe or to move them to another server.</li>
         </ul>
 
         <h3>💬 Frequently asked questions</h3>
         <div class="help-faq">
+          <details>
+            <summary>How do I carry on reading on another device?</summary>
+            <p>In <strong>📲 Devices</strong>, make a sync password. In KOReader open the tools menu, then <strong>Progress sync</strong>, enter the address as a custom sync server and log in with the user name and the password. In Readest enter the same under <strong>KOReader Sync</strong>. The books you downloaded from BookApp are synced; your position shows in Session History (📍) and in «The story so far».</p>
+          </details>
           <details>
             <summary>Do I need a Gemini key?</summary>
             <p>Not necessarily. Without a key the app uses Google's free translation and then MyMemory, with lower quality and small limits (Google often refuses long texts). With a free Gemini key the translation is done by AI and is much better. Book Insights need a key.</p>
@@ -1876,8 +2011,9 @@
   <button type="button" class="btn-sm btn-outline" onclick="hideFileReady()" aria-label="Κλείσιμο">✖</button>
 </div>
 
-<script src="app.js?v=2.22.0"></script>
-<script src="insights.js?v=2.16.0"></script>
+<script src="app.js?v=2.23.0"></script>
+<script src="insights.js?v=2.17.0"></script>
+<script src="library.js?v=1.0.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

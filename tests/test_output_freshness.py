@@ -134,11 +134,11 @@ class TestChapters(Case):
 
 
 class TestCrossSite(unittest.TestCase):
-    def status(self, method, site, origin, **more):
+    def status(self, method, site, origin, path="/api/upload", **more):
         headers = {"origin": origin, **{k.replace("_", "-"): v for k, v in more.items()}}
         if site:
             headers["sec-fetch-site"] = site
-        request = SimpleNamespace(method=method, headers=headers)
+        request = SimpleNamespace(method=method, headers=headers, url=SimpleNamespace(path=path))
 
         async def passed(_request):
             return SimpleNamespace(status_code=200)
@@ -148,6 +148,9 @@ class TestCrossSite(unittest.TestCase):
     def test_only_foreign_websites_are_refused(self):
         self.assertEqual(self.status("POST", "cross-site", "https://evil.example"), 403)
         self.assertEqual(self.status("POST", "cross-site", "null"), 403)
+        # the reading-position sync server signs reading apps in with headers, never with cookies
+        self.assertEqual(self.status("PUT", "cross-site", "tauri://localhost", path="/kosync/syncs/progress"), 200)
+        self.assertEqual(self.status("PUT", "cross-site", "https://evil.example", path="/kosyncx"), 403)
         self.assertEqual(self.status("POST", "cross-site", "http://127.0.0.1:5173"), 200)
         self.assertEqual(self.status("POST", "same-origin", "http://192.168.1.5:8000"), 200)
         self.assertEqual(self.status("GET", "cross-site", "https://evil.example"), 200)

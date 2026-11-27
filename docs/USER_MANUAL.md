@@ -10,6 +10,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Help: Guide & FAQ](#-help-guide--faq)
    - [Light by Day, Dark at Night](#--light-by-day-dark-at-night)
    - [Devices: E-reader Catalogue](#-devices-e-reader-catalogue)
+   - [Reading-Position Sync (KOReader, Readest)](#-reading-position-sync-koreader-readest)
    - [Signing In & Your Account](#-signing-in--your-account)
    - [Managing Users (Administrators)](#-managing-users-administrators)
 2. [Operating Modes: Basic Mode vs Advanced Mode](#2-operating-modes-basic-mode-vs-advanced-mode)
@@ -35,6 +36,9 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [Gemini AI Polish & Proofreading](#-gemini-ai-polish--proofreading)
    - [Gemini Multi-Key API Pool & Auto-Failover](#-gemini-multi-key-api-pool--auto-failover)
    - [Categorized Custom Glossary](#-categorized-custom-glossary)
+   - [The Glossary Learns From Your Translations](#-the-glossary-learns-from-your-translations)
+   - [Book Series: the Same Names in Every Book](#-book-series-the-same-names-in-every-book)
+   - [A "Characters" Page in the EPUB](#-a-characters-page-in-the-epub)
    - [In-Place Layout & Style Preservation](#in-place-layout--style-preservation)
    - [Automatic Final Quality Check](#-automatic-final-quality-check-final-output-refinement)
 4. [Audiobook Generation](#4-audiobook-generation)
@@ -52,6 +56,7 @@ Welcome to the **DocTranslate & AudioBook Generator** user guide. This applicati
    - [More About the Book](#-more-about-the-book)
    - [Ask the Book](#-ask-the-book)
 6. [Session History & Task Management](#6-session-history--task-management)
+   - [Backup & Restore](#-backup--restore)
 7. [Frequently Asked Questions & Troubleshooting](#7-frequently-asked-questions--troubleshooting)
 
 ---
@@ -90,6 +95,16 @@ The **📲 Συσκευές** button in the tab bar opens the link for your read
 * **A download stays on "Downloading…":** some reading apps check a link before downloading it; the catalogue now answers that check (it used to refuse it, and such an app waited for ever). If an iPhone app still waits while Readest downloads the same book, the app may refuse plain `http://` downloads: use the server's `https://` address in the catalogue link if you have one, or Readest. Also: a comic's EPUB used to be made far larger than its scans (4–7.5 MB a page, 600 MB or more for a long comic), and while a comic's files were being made (when the catalogue opens) the server sent everything else, downloads too, at a crawl. Comic files are now made at the scan's own size, about a quarter of that, by a separate process that does not slow the server: open the catalogue, wait a minute while they are made, then download. A book (not a comic) downloads in seconds; if one stays on "Downloading…", check that the e-reader reaches the server (the same address works in its browser).
 * The link is secret: whoever has it sees your books, so don't share it. It is shown only when made; a new link stops the old one, and **🗑️ Κατάργηση** stops it for good.
 * If you opened BookApp as `localhost`, put the server's network address (e.g. `192.168.1.10`) in its place on the e-reader. The e-reader must reach the server (same network, or through your HTTPS address).
+
+### 🔄 Reading-Position Sync (KOReader, Readest)
+BookApp is also a sync server for **KOReader** and **Readest**: they send it where you stopped in each book, and you carry on from the same place on another device (a Kobo at home, the phone on the bus). BookApp then knows how far you have read: Session History shows **📍 42%** on the book, and Book Insights writes **🧭 Η ιστορία ως τώρα** up to there with one click.
+1. In **📲 Συσκευές → 🔄 Συγχρονισμός θέσης ανάγνωσης**, press **🔑 Νέος κωδικός συγχρονισμού**. You see three things to copy: the **server** (`http://<server>:8000/kosync`), your **user name** (your BookApp one; with user accounts off, any name) and the **sync password**. The password shows only now; a new one stops the old one, and **🗑️ Κατάργηση** stops syncing.
+2. **KOReader:** open a book, then the tools menu (🔧) → **Progress sync** → **Custom sync server**, enter the server address, then **Login** with the user name and the password. Choose when it syncs (for example on every page turn, or when the book is closed) in the same menu.
+3. **Readest:** in its settings, **KOReader Sync**: enter the same server, user name and password.
+* **Which books:** those you downloaded from BookApp, from the e-reader catalogue or with a download button, while signed in as yourself (with user accounts, the books you download count for your own sync password). KOReader recognises a book by a fingerprint of its file (or of its file name, if you chose that in KOReader); BookApp notes the fingerprint of every file it hands out. Positions in other books are synced between your devices too, but BookApp cannot show them with a book.
+* **The story so far:** in Book Insights (Advanced Mode, **🔎 Περισσότερα για το βιβλίο**), a book with a synced position shows **📍 Έχετε διαβάσει 42% (σελίδα 120).** and the button **📍 Από τη θέση ανάγνωσης**, which puts that page (an EPUB: chapter) in the box; then press **🧭 Ανακεφαλαίωση**. The page is worked out from how much of the book's text lies before your position, so it can be a page or two off.
+* KOReader's **Register** is not needed: the account is the one in BookApp. (Register with the same name and password simply succeeds.)
+* The reading device must reach the server, as for the catalogue. Readest in a web browser needs the server's `https://` address.
 
 ### 🔐 Signing In & Your Account
 
@@ -418,7 +433,35 @@ Click **⚙️ Glossary** in the top navigation to configure persistent domain t
 * Add and edit custom translation pairs across all 3 categories with live search and filtering.
 * **Domain Isolation:** When translating literature, poetry, or comics, technical IT/DevOps terms (e.g. `pod`, `sandbox`) are automatically ignored to prevent awkward translations in fiction.
 * **Terms inside a Greek sentence:** in a finished Greek translation, an English term that was left inside a Greek sentence stays and gets its Greek translation once, in parentheses (for example `το kernel (πυρήνας)`), because a Greek noun cannot replace it without the right case and gender. A term alone on its line is replaced.
+* **The AI's own list of names follows the Glossary:** for a long book the AI first makes a list of its names and how to write them; wherever the Glossary (or the book's series) writes a name another way, the list is corrected before the translation starts, so the AI is never given two spellings for one name.
 
+### 💡 The Glossary Learns From Your Translations
+After each translation, the names it used (people, places, ships, invented terms) are offered for the Glossary, so your next books write them the same way. They appear at the top of the Glossary window, under **💡 Προτάσεις από τις μεταφράσεις σας**:
+* **✓** puts one in the Glossary (General category), **✕** dismisses it (it is not offered again with the same spelling). **✅ Αποδοχή όλων** adds all of them except the marked ones below.
+* **✏️ Your corrections come first:** when you write a name another way everywhere in **✏️ Review & Edit** (for example with Find & Replace → Replace All, `Κίτον` → `Κήτον`), the new spelling is offered, in its nominative even if you changed `του Θησέα` and `ο Θησέας`. A name changed in one place only is taken for a local fix and not offered.
+* **⚠️ also an ordinary word:** a one-word name that the book also uses as a plain English word (*Will*, *Hope*, *Mark*). A Glossary rule would apply to the word too, so decide for yourself.
+* **↔️ the Glossary writes it another way:** shows the Glossary's spelling. Accepting replaces it.
+* Only names are offered (people, places, ships: every word capitalised but small ones like *of* or *the*), and only those the finished translation really writes, in any Greek case: not a name the AI was told but did not use, nor one the original does not have. Phrases and everyday objects in the AI's own list (*In the cold rain*, *lantern*) are never offered. A place written with a lowercase word (*Greywater lighthouse*) is not offered either: add it yourself if you want it. A translation into English offers its pairs the Glossary's way round (*Nick* → *Νίκος*).
+* Nothing goes into the Glossary unless you accept it: the Glossary serves every book (and, with user accounts, every user). With user accounts, each user sees the suggestions from their own books.
+* Graphic novels offer their names too, as prose writes them (*FRODO* → *Frodo*); a name lettered only in capitals, which has lost its accents, is not offered.
+
+### 📚 Book Series: the Same Names in Every Book
+Link the books of a series, and each one is translated with the names the books before it used: as their translations wrote them, with your corrections in the editor, and the Greek names of their **👥 Πρόσωπα & όροι**. Your Glossary still comes first.
+* **Under the file, in the Translation tab:** **📚 Σειρά βιβλίων** puts the book in a series (**➕ Νέα σειρά…** makes one) and **Βιβλίο #** sets its place. The line next to it says how many names come from the earlier books. Do this **before you translate** the book.
+* **📚 Σειρές** (in Session History, or **⚙️ Σειρές** next to the series) lists your series: rename or delete one (its books stay), move books up and down (**↑ ↓**), take one out (**✕**) or add one (**➕ Προσθήκη βιβλίου…**), also books you uploaded together for the batch queue.
+* The book nearest before wins: if you corrected a name in book 2, book 3 uses your spelling, not book 1's.
+* Session History shows the series and the book's place, for example **📚 The Expanse #3**.
+* **Book Insights:** for a book that is not the first, **📚 Πριν από αυτό το βιβλίο** (Advanced Mode, below **🧭 Η ιστορία ως τώρα**) shows the summary of each earlier book, to remember what happened before. An earlier book without a summary has **📄 Άνοιγμα**, which opens it in Book Insights to make one.
+* Graphic novels work the same way: volume 2 writes each name as volume 1 did.
+
+### 👥 A "Characters" Page in the EPUB
+The translated EPUB can start with a page listing the book's people and key terms, for long novels with many names:
+1. In Book Insights, make **👥 Πρόσωπα & όροι** in the language of the translation (Greek for a translation into Greek).
+2. After the translation, under the download buttons, tick **👥 Σελίδα «Πρόσωπα» στην αρχή του EPUB**. The line next to it says how many people and terms it will list.
+* The page comes after the cover and the table of contents, before chapter 1, and is in the table of contents as **Πρόσωπα** (*Characters*). Each name is written as the translation writes it (with your corrections), with the original name, and what the reader learns where the person first appears: nothing the story reveals later. (A list made before this feature has no first description; it shows the person's role, which may say more: make the list again for one without spoilers.)
+* The bilingual EPUB has it too, and so do EPUBs from the e-reader catalogue. It is a copy: the EPUB itself is not changed, and unticking the box gives the book without the page.
+
+### In-Place Layout & Style Preservation
 ### In-Place Layout & Style Preservation
 * **Word Documents (`.docx`):** Preserves font sizes, font families (Times New Roman, Arial, Calibri), **Bold**, *Italics*, underline, tables, and nested drawings. Bullet points from Wingdings/Symbol are converted to clean standard Unicode bullets (`•`).
 * **Front Matter Preservation:** Line-level header/footer cleaning preserves prologues, epigraphs, and tables of contents on the opening pages.
@@ -626,6 +669,14 @@ The **Session History** panel at the bottom of the page tracks all jobs (with us
 * **Deleting Individual Jobs:** Click **✕** on any history item to remove it from database, queue, and disk.
 * **Clearing All History:** Click **🗑️ Clear All** (with confirmation) to delete all jobs, books and results while preserving the translation cache. This can't be undone.
 * **Your work is kept until you delete it:** restarting BookApp never removes jobs, books or results, whatever their age or file name. As history only shrinks when you delete, remove what you no longer need to free disk space.
+* **📚 and 📍 on a book:** its series and place in it, and how far your reading apps have got (see [Reading-Position Sync](#-reading-position-sync-koreader-readest)).
+
+### 💾 Backup & Restore
+**💾 Αντίγραφο ασφαλείας** (in Session History) puts all your books in one ZIP file: the uploaded originals, the translations and their files, Book Insights, covers, the names lists, your series, your reading positions and the Glossary. Keep it safe, or use it to move your books to another BookApp server (for example from the Ubuntu server to the Synology).
+1. **Make a backup:** press **💾 Δημιουργία αντιγράφου** (tick **Μαζί και τα ηχητικά βιβλία** to include MP3 and M4B audiobooks: a much larger file). The progress shows; when it is ready, **⬇️ Λήψη αντιγράφου** downloads it. A large library takes a few minutes; the file stays ready to download for 24 hours. A book being translated at that moment is left out (the message says how many).
+2. **Restore:** choose the ZIP under **📥 Επαναφορά από αντίγραφο** and press **📥 Επαναφορά**. The books are added to yours. A book that is already here stays as it is; one that another user on this server also has comes in as a copy of your own. Glossary terms are added only where the Glossary has no term for that word, so your own spellings are never replaced.
+* With user accounts, a backup holds your own books (an administrator's: also the books from before accounts), and a restore adds them to the account that restores them.
+* A backup never contains Gemini API keys, user accounts or server settings. It is checked before anything is restored: a file that is not a BookApp backup, holds paths outside a book's folders, or does not fit on the server's disk is refused with the reason.
 
 ---
 

@@ -110,6 +110,10 @@ async def translate_segments_with_gemini(
         if len(full_text) > 18000:
             dossier = await _extract_entity_dossier(full_text, api_key, session=session, target_lang=target_lang)
             if dossier:
+                from backend.book_names import record_dossier
+                from backend.glossary import align_dossier
+                dossier = align_dossier(dossier, style, target_lang)  # the Glossary's (and the series') spellings
+                record_dossier(dossier)  # kept with the book of the running translation
                 system += dossier_header("translation", target_lang) + dossier + "\n"
         glossary = load_glossary(style=style) or {}
         low = full_text.lower()

@@ -51,3 +51,11 @@ data/setup_code.txt
 # Per-user e-reader link hashes (📲 Devices)
 data/connections.json
 data/.connections.json.*
+
+# Per-user library data: reading-position sync (sync password hashes, positions), series, Glossary suggestions
+data/reading_sync.json
+data/series.json
+data/glossary_suggestions.json
+data/.reading_sync.json.*
+data/.series.json.*
+data/.glossary_suggestions.json.*

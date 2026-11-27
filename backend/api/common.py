@@ -86,3 +86,10 @@ def purge_job(job_id: str) -> None:
     _jobs.pop(job_id, None)
     POLISH_STATUS.pop(job_id, None)
     db_delete_job(job_id)
+    # the book leaves its series, its reading positions and the Glossary's suggestions
+    from backend import glossary_learning, reading_sync, series
+    for forget in (series.forget_book, reading_sync.forget_book, glossary_learning.forget_book):
+        try:
+            forget(job_id)
+        except Exception:
+            pass

@@ -276,6 +276,7 @@ async function loadInsightsAnalysis() {
     setupRecapInput(a);
     setupChapterSelect(a);
     loadInsightQuestions(jobId);
+    if (typeof refreshInsightsLibrary === 'function') refreshInsightsLibrary(jobId);  // reading position, series
     const lang = a.detected_language ? (INS_LANG_LABELS[a.detected_language] || a.detected_language) : 'άγνωστη γλώσσα';
     if (a.needs_scan_reading) {
       // a scanned book: Gemini Vision reads its pages first, when a summary or synopsis is asked for

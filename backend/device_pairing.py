@@ -167,7 +167,8 @@ def is_trusted(client_host: Optional[str], cookie_token: Optional[str]) -> bool:
 
 def is_open_path(path: str) -> bool:
     # the e-reader catalogue checks its own secret link: a reading app cannot be paired (api/connections.py)
-    return any(path == p or path.startswith(p + "?") for p in OPEN_PATHS) or path.startswith("/opds/")
+    return (any(path == p or path.startswith(p + "?") for p in OPEN_PATHS) or path.startswith("/opds/")
+            or path == "/kosync" or path.startswith("/kosync/"))  # reading apps: their link / headers are the pass
 
 
 NOT_PAIRED_HTML = """<!doctype html><html lang="el"><head><meta charset="utf-8">

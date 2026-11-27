@@ -2120,3 +2120,48 @@ body.auth-on:not(.auth-admin) .auth-admin-only { display: none !important; }
   background: rgba(245, 158, 11, 0.08);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
+
+/* ---- The library (library.js): series, the EPUB's Characters page, reading-position sync, backups ---- */
+.devices-section + .devices-section { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px; }
+.devices-body code { font-size: 0.78rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.devices-field { display: block; margin: 0 0 6px; }
+.devices-field > span:first-child { display: block; font-size: 0.76rem; color: var(--text-muted); margin-bottom: 2px; }
+.devices-body input[type="file"] { max-width: 100%; font-size: 0.82rem; margin: 0 0 6px; }
+.result-extras { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 12px; margin-top: 12px; font-size: 0.85rem; }
+.result-extras-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-primary); }
+.result-extras-note { font-size: 0.78rem; color: var(--text-muted); }
+.series-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; font-size: 0.84rem; color: var(--text-secondary); }
+.series-field { display: inline-flex; align-items: center; gap: 6px; }
+.series-field .sample-input { width: 64px; }
+.series-note { flex: 1 1 220px; font-size: 0.78rem; color: var(--text-muted); }
+.series-new { display: flex; gap: 8px; margin: 0 0 12px; }
+.series-new .form-input { flex: 1; min-width: 0; }
+.series-new .btn-primary { width: auto; }
+.series-item { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 10px; }
+.series-item-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.series-item-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.series-books { margin: 8px 0; padding-left: 1.4em; }
+.series-books li { padding: 2px 0; }
+.series-books li > * { vertical-align: middle; }
+.series-book-actions { display: inline-flex; gap: 4px; margin-left: 8px; }
+.series-item select { max-width: 100%; }
+.btn-icon-sm { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); min-width: 26px; height: 26px; padding: 0 6px; cursor: pointer; font-size: 0.85rem; }
+.btn-icon-sm:hover:not(:disabled) { color: var(--text-primary); border-color: var(--violet); }
+.btn-icon-sm:disabled { opacity: 0.35; cursor: default; }
+.history-title { flex-wrap: wrap; gap: 8px; }
+.history-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.history-tool-btn { background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease; }
+.history-tool-btn:hover { color: var(--text-primary); border-color: var(--violet); }
+.glossary-suggestions { border: 1px solid rgba(245, 158, 11, 0.4); border-radius: var(--radius-md); padding: 8px 12px; margin-bottom: 14px; }
+.glossary-suggestions summary { cursor: pointer; font-weight: 600; color: var(--text-primary); }
+.glossary-suggestions-help { font-size: 0.8rem; color: var(--text-muted); margin: 6px 0; }
+.glossary-suggestions-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 6px 0 8px; }
+.glossary-suggestions-actions .btn-primary { width: auto; }
+.glossary-suggestions-legend { font-size: 0.76rem; color: var(--text-muted); }
+.sugg-tag { font-size: 0.8rem; margin-left: 4px; white-space: nowrap; }
+.sugg-books { font-size: 0.78rem; color: var(--text-muted); }
+.ins-series { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.88rem; color: var(--text-secondary); }
+.ins-series-books { flex: 1 1 100%; }
+.ins-series-book { margin: 4px 0; }
+.ins-series-book summary { cursor: pointer; }
+.ins-series-summary { font-size: 0.85rem; line-height: 1.55; padding: 6px 0 6px 1em; color: var(--text-secondary); }

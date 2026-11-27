@@ -165,8 +165,9 @@ def cookie_secure(scheme: str) -> bool:
 
 
 def is_open_path(path: str) -> bool:
-    # the e-reader catalogue: reading apps cannot sign in, so its secret link is the pass (api/connections.py)
-    return path in OPEN_PATHS or path.startswith("/opds/")
+    # the e-reader catalogue: reading apps cannot sign in, so its secret link is the pass (api/connections.py);
+    # the reading-position sync server signs its apps in with their own headers (api/sync.py)
+    return path in OPEN_PATHS or path.startswith("/opds/") or path == "/kosync" or path.startswith("/kosync/")
 
 
 def is_admin_path(method: str, path: str) -> bool:

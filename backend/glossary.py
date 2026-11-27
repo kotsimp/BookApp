@@ -10,6 +10,7 @@ import re
 import time
 import logging
 import threading
+import contextvars
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -18,6 +19,20 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 GLOSSARY_FILE = CONFIG_DIR / "glossary.json"
 _glossary_lock = threading.RLock()
+
+# Names one translation run adds to the Glossary while it runs: those of the earlier books of its series
+# (backend/series.py). The user's own Glossary wins over them. English -> Greek, as the Glossary.
+_JOB_TERMS: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar("bookapp_job_terms", default={})
+
+
+def use_job_terms(terms: Dict[str, str]) -> contextvars.Token:
+    """For the translation running in this context (its tasks and threads inherit it)."""
+    return _JOB_TERMS.set({k: v for k, v in (terms or {}).items() if isinstance(k, str) and isinstance(v, str)
+                           and k.strip() and v.strip()})
+
+
+def reset_job_terms(token: contextvars.Token) -> None:
+    _JOB_TERMS.reset(token)
 
 CATEGORIES_META: Dict[str, Dict[str, str]] = {
     "technical": {
@@ -178,13 +193,56 @@ def load_glossary(category: Optional[str] = None, style: Optional[str] = None) -
             if k.lower() not in _IT_GENERAL_BLOCKLIST:
                 merged[k] = v
         merged.update(_safe_cat("literary"))
-        return merged
+        return _with_job_terms(merged)
 
     # Merge all categories (literary, general, technical)
     merged = {}
     for cat_name in ("literary", "general", "technical"):
         merged.update(_safe_cat(cat_name))
+    return _with_job_terms(merged)
+
+
+def _with_job_terms(merged: Dict[str, str]) -> Dict[str, str]:
+    """The running translation's series names after the user's terms (which win, also against other capitals)."""
+    extra = _JOB_TERMS.get()
+    if not extra:
+        return merged
+    taken = {k.casefold() for k in merged}
+    for k, v in extra.items():
+        if k.casefold() not in taken:
+            merged[k] = v
+            taken.add(k.casefold())
     return merged
+
+
+_DOSSIER_LINE_RE = re.compile(r"^(\s*(?:[-*•–]\s*|\d+[.)]\s+)?)(.+?)(\s*(?:->|→|=>)\s*)(.+?)\s*$")
+
+
+def align_dossier(dossier: str, style: Optional[str] = None, target_lang: str = "greek") -> str:
+    """The AI's register of names, with the Glossary's spelling (and the series') wherever they name the same
+    thing: two rules for one name would leave the choice to the model. English -> Greek terms; for a translation into
+    English the register runs Greek -> English, so the term is looked up by its Greek."""
+    if not dossier:
+        return dossier
+    terms = load_glossary(style=style)
+    if not terms:
+        return dossier
+    greek = (target_lang or "").lower() in ("greek", "el")
+    by_source = ({k.casefold(): v for k, v in terms.items()} if greek
+                 else {v.casefold(): k for k, v in terms.items()})
+    lines = []
+    for line in dossier.split("\n"):
+        m = _DOSSIER_LINE_RE.match(line)
+        if m:
+            source = re.split(r"\s*[(\[]", m.group(2).strip().strip("*_`\"'«»“”‘’ "), maxsplit=1)[0].strip()
+            wanted = by_source.get(source.casefold())
+            if wanted:
+                rest = m.group(4)
+                old = re.split(r"\s*[(\[]|\s+[—–-]\s|[,;:/]", rest, maxsplit=1)[0].strip().strip("*_`\"'«»“”‘’ ")
+                if old and old.casefold() != wanted.casefold():
+                    line = m.group(1) + m.group(2) + m.group(3) + rest.replace(old, wanted)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def load_categorized_glossary() -> Dict[str, Any]:

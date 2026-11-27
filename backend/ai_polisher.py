@@ -1423,6 +1423,11 @@ async def polish_text_with_gemini(
 
         system_instruction = base_system_instruction
         if entity_dossier:
+            if dossier_mode == "translation":  # the Glossary's (and the series') spellings; kept with the book
+                from backend.book_names import record_dossier
+                from backend.glossary import align_dossier
+                entity_dossier = align_dossier(entity_dossier, style, target_lang)
+                record_dossier(entity_dossier)
             system_instruction += dossier_header(dossier_mode, target_lang) + f"{entity_dossier}\n"
 
         # Inject contextually-relevant user glossary rules (style-aware: excludes IT/DevOps terms for literature)
@@ -2642,6 +2647,12 @@ async def translate_and_polish_direct_with_gemini(
 
         system_instruction = direct_prompt
         if entity_dossier:
+            # the Glossary's (and the series') spellings win; the register is kept with the book (the checkpoint
+            # that holds it is deleted when the translation is done)
+            from backend.book_names import record_dossier
+            from backend.glossary import align_dossier
+            entity_dossier = align_dossier(entity_dossier, style, target_lang)
+            record_dossier(entity_dossier, out_dir)
             system_instruction += dossier_header("translation", target_lang) + f"{entity_dossier}\n"
 
         # Inject matching glossary terms (style-aware: excludes IT/DevOps terms for literature)
