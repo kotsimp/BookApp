@@ -137,6 +137,7 @@ Designed for maximum ease of use and zero cognitive load:
 * **1-Click Audiobook:**
   * Automatically preselects the natural Greek voice **Nestoras Neural** at the ideal literary pacing (-12% speed).
   * Click **`🎧 Generate Audiobook with AI (1-Click)`**.
+* **1-Click Insights:** the summary, the synopsis and **💬 Ρωτήστε το βιβλίο**; the other Book Insights are in Advanced Mode.
 * **Clean Interface:** Granular options (format pickers, layout selectors, speed/pitch fine-tune sliders, multi-voice grids) are hidden to maintain focus.
 
 ### ⚙️ Advanced Mode (Full Control)
@@ -540,6 +541,8 @@ Open the **💡 Book Insights** tab. Upload a PDF, DOCX or EPUB (or press **📎
 * **📝 1-Click Summary** — a short summary (about 150–300 words) of the main ideas or plot.
 * **📚 1-Click Synopsis** — a structured synopsis (about 800–1,200 words): subject, structure, themes, key developments, ending/conclusions.
 * The text is written automatically in the **language of the book**.
+* **💬 Ρωτήστε το βιβλίο** is in Basic Mode too (see [Ask the Book](#-ask-the-book)).
+* The other kinds (characters, chapter by chapter, the story so far, blurb, quotes, study guide, timeline) each need a choice or two, so they are in Advanced Mode. A line under the two buttons says so, and its **⚙️ Προχωρημένη Λειτουργία** button switches there.
 
 ### ⚙️ Advanced Mode
 | Summary types | Synopsis types |
@@ -570,7 +573,7 @@ Greek texts also get a proofreading pass. If a check fails, the text is regenera
 Press **🎧 Create audio** under any result. The final text is narrated exactly as written, with a Greek or English neural voice matching the text's language. Play it in the page or **⬇️ Download MP3**.
 
 ### 🔎 More About the Book
-The **🔎 Περισσότερα για το βιβλίο** card (in both modes) makes seven more kinds of text. Choose the **text language** first: the book's own, Greek or English. Like the summaries, each result shows on screen, downloads as PDF, DOCX or TXT, can be narrated, and is kept with the book: asking again gives the stored result at once, with no new Gemini requests. Each is checked before you see it (right language, nothing the book does not contain); a result that fails is not shown (the recap, blurb and study guide are first written once more).
+The **🔎 Περισσότερα για το βιβλίο** card (Advanced Mode) makes seven more kinds of text. Choose the **text language** first: the book's own, Greek or English. Like the summaries, each result shows on screen, downloads as PDF, DOCX or TXT, can be narrated, and is kept with the book: asking again gives the stored result at once, with no new Gemini requests. Each is checked before you see it (right language, nothing the book does not contain); a result that fails is not shown (the recap, blurb and study guide are first written once more).
 
 | Button | What you get | How it is checked |
 |---|---|---|
@@ -592,7 +595,8 @@ The **🔎 Περισσότερα για το βιβλίο** card (in both modes
 ### 💬 Ask the Book
 Type a question in **💬 Ρωτήστε το βιβλίο** and press Enter or **💬 Ερώτηση**.
 * The answer comes only from the book's text, with the pages it rests on, for example `(σ. 42)`. When the book does not answer the question, it says so instead of guessing.
-* It is written in the language of the question (or in the text language you chose).
+* The box has a card of its own, in both modes.
+* It is written in the language of the question (in Advanced Mode, or in the text language you chose in the card above).
 * A book of up to about 350,000 characters (about 200 pages) is sent whole. For a longer one, a small request to a light model first turns the question into search words in the book's own language (a Greek question about an English book shares no word with it), and the pages that hold them are sent, with the pages next to them. When none matches, pages spread over the whole book are sent. A **📑 Ανά κεφάλαιο** made earlier goes along as an overview, which helps questions about the whole story or its ending.
 * Each question is **one large Gemini request**. The same question asked again is answered from the cache.
 * The last 30 questions and answers are kept with the book and shown under the box.

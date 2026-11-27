@@ -8,8 +8,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="style.css?v=2.18.0" />
-  <script src="i18n.js?v=1.10.0"></script>
+  <link rel="stylesheet" href="style.css?v=2.19.0" />
+  <script src="i18n.js?v=1.11.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -1023,6 +1023,10 @@
         </button>
       </div>
       <p class="ins-reason" id="ins-basic-synopsis-reason" role="status" style="display:none"></p>
+      <div class="ins-basic-more">
+        <span>🔎 Πρόσωπα &amp; όροι, κεφάλαια, οπισθόφυλλο, αποσπάσματα, οδηγός μελέτης, χρονολόγιο και η ιστορία ως τώρα: στην Προχωρημένη Λειτουργία.</span>
+        <button type="button" class="btn-sm btn-outline" id="ins-basic-more-btn" onclick="setAppMode('advanced')">⚙️ Προχωρημένη Λειτουργία</button>
+      </div>
     </div>
 
     <!-- Advanced Mode -->
@@ -1080,8 +1084,8 @@
       <p style="font-size:0.75rem; color:var(--text-muted); margin:10px 0 0">Τα όρια λέξεων είναι οδηγίες· σε μικρά κείμενα το μήκος προσαρμόζεται ώστε να μην προστίθενται πληροφορίες που δεν υπάρχουν στο βιβλίο.</p>
     </div>
 
-    <!-- More about the book -->
-    <div class="card animate-in" id="ins-more-card">
+    <!-- More about the book (Advanced Mode: each kind has its choices) -->
+    <div class="card animate-in mode-advanced-only" id="ins-more-card">
       <div class="card-title">
         <span class="card-title-icon">🔎</span>
         Περισσότερα για το βιβλίο
@@ -1116,8 +1120,15 @@
         <button type="button" class="btn-sm btn-outline" id="ins-more-chapter" onclick="toggleChapterInsight()" aria-pressed="false" disabled>📖 Αναλυτικά</button>
         <span class="sample-hint">Μόνο το κεφάλαιο που διαλέγετε, αναλυτικά: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει. Ξανά το κουμπί το κρύβει.</span>
       </div>
+    </div>
+
+    <!-- Ask the book (both modes: one box) -->
+    <div class="card animate-in" id="ins-ask-card">
+      <div class="card-title">
+        <span class="card-title-icon">💬</span>
+        <label for="ins-ask-input">Ρωτήστε το βιβλίο</label>
+      </div>
       <div class="ins-ask">
-        <label class="form-label" for="ins-ask-input">💬 Ρωτήστε το βιβλίο</label>
         <div class="ins-ask-row">
           <input type="text" id="ins-ask-input" class="form-input" maxlength="500" placeholder="π.χ. Γιατί φεύγει ο ήρωας από την πόλη;" onkeydown="if (event.key === 'Enter') askBook()" />
           <button type="button" class="btn-sm btn-primary" id="ins-ask-btn" onclick="askBook()" disabled>💬 Ερώτηση</button>
@@ -1574,7 +1585,7 @@
         <h4>🎧 Ηχητικό βιβλίο</h4>
         <p>Ανεβάστε PDF, DOCX ή EPUB, διαλέξτε φωνή και ρυθμό αφήγησης και ξεκινήστε. Το ακούτε στο ενσωματωμένο πρόγραμμα αναπαραγωγής ή το κατεβάζετε ως MP3 ή ως M4B με κεφάλαια. Με <strong>📖 Κείμενο</strong> το κείμενο φωτίζεται καθώς ακούγεται· πατήστε μια πρόταση για να πάτε εκεί.</p>
         <h4>💡 Book Insights</h4>
-        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου. Στο <strong>🔎 Περισσότερα για το βιβλίο</strong> διαλέγετε τη <strong>Γλώσσα κειμένου</strong> και ένα από τα παρακάτω:</p>
+        <p>Σύντομη περίληψη ή πλήρης σύνοψη ενός βιβλίου με ένα κλικ, και <strong>💬 Ρωτήστε το βιβλίο</strong>. Στην <strong>Προχωρημένη Λειτουργία</strong> διαλέγετε επίσης τύπο, γλώσσα και μορφή, και στο <strong>🔎 Περισσότερα για το βιβλίο</strong> τη <strong>Γλώσσα κειμένου</strong> και ένα από τα παρακάτω:</p>
         <ul>
           <li><strong>👥 Πρόσωπα &amp; όροι</strong>: ποιος είναι ποιος και οι βασικοί όροι, με τη σελίδα όπου πρωτοεμφανίζονται. Ονόματα που δεν υπάρχουν στο βιβλίο αφαιρούνται, όπως και ο συγγραφέας και όσοι μόνο παρατίθενται (π.χ. σε μότο). Με <strong>➕ Ονόματα στο Γλωσσάρι</strong> η ελληνική τους γραφή περνά στο Γλωσσάρι, ώστε η μετάφραση να τα γράφει παντού ίδια.</li>
           <li><strong>📑 Ανά κεφάλαιο</strong>: λίγες γραμμές για κάθε κεφάλαιο ή μέρος του βιβλίου, με τις σελίδες του. Ένα πολύ μεγάλο μέρος χωρίζεται σε κομμάτια, π.χ. «(2/4)». Με <strong>📖 Ένα κεφάλαιο</strong> διαλέγετε ένα μόνο κεφάλαιο και πατάτε <strong>📖 Αναλυτικά</strong>: τι συμβαίνει, ποιοι εμφανίζονται, πώς τελειώνει.</li>
@@ -1697,7 +1708,7 @@
         <h4>🎧 Audiobook</h4>
         <p>Upload a PDF, DOCX or EPUB, choose a voice and a narration pace, and start. Listen in the built-in player or download it as MP3 or as M4B with chapters. With <strong>📖 Text</strong> the text lights up as it is read; press a sentence to go there.</p>
         <h4>💡 Book Insights</h4>
-        <p>A short summary or a full synopsis of a book. Under <strong>🔎 More about the book</strong> you choose the <strong>Text language</strong> and one of these:</p>
+        <p>A short summary or a full synopsis of a book in one click, and <strong>💬 Ask the book</strong>. In <strong>Advanced Mode</strong> you also choose the type, language and format, and under <strong>🔎 More about the book</strong> the <strong>Text language</strong> and one of these:</p>
         <ul>
           <li><strong>👥 Characters &amp; terms</strong>: who is who and the key terms, with the page where each first appears. Names the book does not contain are dropped, as are the author and people only quoted (e.g. in epigraphs). <strong>➕ Names to the Glossary</strong> puts their Greek spelling in the Glossary, so a translation writes them the same everywhere.</li>
           <li><strong>📑 Chapter by chapter</strong>: a few lines for each chapter or part of the book, with its pages. A very long part comes in pieces, e.g. “(2/4)”. With <strong>📖 One chapter</strong> you choose just one chapter and press <strong>📖 In detail</strong>: what happens, who appears, how it ends.</li>
@@ -1866,7 +1877,7 @@
 </div>
 
 <script src="app.js?v=2.22.0"></script>
-<script src="insights.js?v=2.15.0"></script>
+<script src="insights.js?v=2.16.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
 <script src="auth.js?v=1.0.1"></script>
 </body>

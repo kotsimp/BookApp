@@ -22,6 +22,13 @@ function _insApiOrigin() {
   return API.replace(/\/api$/, '');
 }
 
+// The language of a "More about the book" text or an answer. Basic Mode has no language choice (its card is
+// Advanced only), so there it is the book's (an answer: its question's), whatever the hidden list still says.
+function _insTextLang() {
+  if (typeof currentAppMode !== 'undefined' && currentAppMode === 'basic') return 'auto';
+  return document.getElementById('ins-more-lang')?.value || 'auto';
+}
+
 function _insFriendlyNetworkError(err) {
   if (err && (err.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(String(err.message || '')))) {
     return 'Δεν υπάρχει σύνδεση με τον διακομιστή. Ελέγξτε ότι η εφαρμογή εκτελείται και τη σύνδεσή σας στο διαδίκτυο.';
@@ -537,7 +544,7 @@ async function runExtraInsight(type) {
   const body = {
     job_id: insState.jobId,
     insight_type: type,
-    language: document.getElementById('ins-more-lang')?.value || 'auto',
+    language: _insTextLang(),
     api_key: getClientApiKey(),
   };
   if (type === 'recap') {
@@ -592,7 +599,7 @@ function _chapterShown() {
   const card = document.getElementById('ins-result-card');
   const rec = insState.record;
   const chosen = parseInt(document.getElementById('ins-chapter-select')?.value, 10);
-  const lang = document.getElementById('ins-more-lang')?.value || 'auto';
+  const lang = _insTextLang();
   return Boolean(card && card.style.display !== 'none' && rec && rec.insight_type === 'chapter'
     && Number(rec.chapter) === chosen && (lang === 'auto' || lang === rec.language));
 }
@@ -685,7 +692,7 @@ async function askBook() {
     return;
   }
   const jobId = insState.jobId;
-  const lang = document.getElementById('ins-more-lang')?.value || 'auto';
+  const lang = _insTextLang();
   showInsightsError('');
   setInsightsBusy(true);
   setInsightsProgress(2, 'Η ερώτηση στέλνεται…');

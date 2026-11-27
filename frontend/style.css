@@ -1965,7 +1965,10 @@ html:not([lang="en"]) .help-lang[lang="en"] { display: none; }
 .ins-more-btn small { font-size: 0.74rem; font-weight: 500; opacity: 0.8; }
 .ins-recap-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.88rem; color: var(--text-secondary); }
 .ins-recap-title { font-weight: 600; color: var(--text-primary); }
-.ins-ask { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ins-ask { margin-top: 0; }
+.ins-basic-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 14px;
+  font-size: 0.8rem; color: var(--text-muted); }
+.ins-basic-more span { flex: 1 1 240px; }
 .ins-ask-row { display: flex; gap: 8px; align-items: center; }
 .ins-ask-row .form-input { flex: 1; min-width: 0; }
 .ins-ask-row .btn-primary { width: auto; flex: none; padding: 10px 16px; }

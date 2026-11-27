@@ -1510,6 +1510,16 @@ ctx.toast = () => {};
                       "ins-recap-until", "ins-ask-input", "ins-ask-btn", "ins-answers", "ins-glossary-btn"):
             self.assertIn(f'id="{el_id}"', index)
         self.assertIn('id="ins-answers" class="ins-answers"', index)
+        # Basic Mode: the summary, the synopsis and the question box; the other kinds, with their choices, Advanced
+        self.assertIn('class="card animate-in mode-advanced-only" id="ins-more-card"', index)
+        ask_card = index.split('id="ins-ask-card"', 1)[1].split('<!-- Progress -->', 1)[0]
+        self.assertNotIn("mode-", index.split('id="ins-ask-card"', 1)[0].rsplit("<div", 1)[1], "asked in both modes")
+        for el_id in ("ins-ask-input", "ins-ask-btn", "ins-answers"):
+            self.assertIn(f'id="{el_id}"', ask_card)
+        more_card = index.split('id="ins-more-card"', 1)[1].split('id="ins-ask-card"', 1)[0]
+        self.assertNotIn("ins-ask-input", more_card)
+        basic_card = index.split('id="ins-basic-card"', 1)[1].split("<!-- Advanced Mode -->", 1)[0]
+        self.assertIn("onclick=\"setAppMode('advanced')\"", basic_card, "Basic says where the rest is")
         self.assertIn('id="ins-more-chapter" onclick="toggleChapterInsight()" aria-pressed="false"', index)
         self.assertIn('onclick="closeInsightResult()"', index, "every result can be closed")
         harness = r"""
@@ -1544,6 +1554,7 @@ const ctx = vm.createContext({ console, setTimeout: (fn) => { Promise.resolve().
 vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8'), ctx);
 vm.runInContext(fs.readFileSync('frontend/insights.js', 'utf8'), ctx);
 ctx.toast = () => {};
+vm.runInContext("currentAppMode = 'advanced'", ctx);  // the "More about the book" card and its language list
 (async () => {
   // readiness
   vm.runInContext("insState.jobId = 'B1'; insState.analysis = { has_api_key: true, can_summary: true, can_synopsis: true, chapters: [] };", ctx);
@@ -1670,6 +1681,13 @@ ctx.toast = () => {};
   assert.strictEqual(getEl('ins-ask-input').value, '', 'the box empties after a question');
   assert.ok(getEl('ins-answers').innerHTML.includes('Who &lt;keeps&gt; it?'), 'questions are escaped');
   assert.ok(getEl('ins-answers').innerHTML.includes('<strong>Ελένη</strong>'));
+  // Basic Mode has no language list (its card is Advanced only): the answer is in the book's or question's language
+  vm.runInContext("currentAppMode = 'basic'", ctx);
+  getEl('ins-ask-input').value = 'Who keeps it?';
+  await ctx.askBook();
+  assert.strictEqual(JSON.parse(calls.filter((c) => c.url.endsWith('/insights/ask')).pop().opts.body).language, 'auto',
+    'Basic Mode: the hidden list is not used');
+  vm.runInContext("currentAppMode = 'advanced'", ctx);
   getEl('ins-ask-input').value = '?';
   const n = calls.length;
   await ctx.askBook();
