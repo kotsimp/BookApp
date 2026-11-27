@@ -44,12 +44,21 @@ class SeriesError(ValueError):
 def _load() -> Dict[str, Any]:
     try:
         data = json.loads(STORE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        return {o: m for o, m in data.items() if isinstance(m, dict)} if isinstance(data, dict) else {}
     except FileNotFoundError:
         return {}
     except Exception as e:
-        logger.warning(f"series.json unreadable, starting empty: {e}")
+        logger.warning(f"series.json unreadable, starting empty (a copy is kept as series.json.corrupt): {e}")
+        keep_unreadable(STORE)
         return {}
+
+
+def keep_unreadable(store: Path) -> None:
+    """The next save replaces an unreadable store: its content is kept next to it first (as the Glossary does)."""
+    try:
+        store.with_name(store.name + ".corrupt").write_bytes(store.read_bytes())
+    except OSError as e:
+        logger.warning(f"Could not keep a copy of {store.name}: {e}")
 
 
 def _save(data: Dict[str, Any]) -> None:
@@ -177,7 +186,12 @@ def place(owner: str, job_id: str, series_id: Optional[str], position: Optional[
 
 
 def forget_book(job_id: str) -> None:
-    """A deleted book leaves every series."""
+    forget_books({job_id})
+
+
+def forget_books(job_ids) -> None:
+    """Deleted books leave every series (the series stay)."""
+    gone = set(job_ids)
     with _lock:
         data = _load()
         changed = False
@@ -185,8 +199,8 @@ def forget_book(job_id: str) -> None:
             if not isinstance(mine, dict):
                 continue
             for entry in mine.values():
-                if isinstance(entry, dict) and job_id in (entry.get("books") or []):
-                    entry["books"] = [b for b in entry["books"] if b != job_id]
+                if isinstance(entry, dict) and gone & set(entry.get("books") or []):
+                    entry["books"] = [b for b in entry["books"] if b not in gone]
                     changed = True
         if changed:
             _save(data)
@@ -219,7 +233,7 @@ def series_terms(job_id: str, outputs: Path, owner: Optional[str] = None) -> Dic
     nearest before this one wins; names the translations used (with the user's corrections) win over the Greek
     names of a 👥 Characters & terms list."""
     from backend.book_insights import load_insight
-    from backend.book_names import english_greek, load, name_like
+    from backend.book_names import english_greek, load, name_like, rendered_as_name
     from backend.insights_more import glossary_items
     characters: Dict[str, str] = {}
     translated: Dict[str, str] = {}
@@ -230,7 +244,7 @@ def series_terms(job_id: str, outputs: Path, owner: Optional[str] = None) -> Dic
         try:
             rec = load_insight(out_dir, "characters", "greek")
             for src, dst in glossary_items(rec) if rec else []:
-                if name_like(src):  # its names, not its common terms ("logbook")
+                if name_like(src) and rendered_as_name(dst):  # its names, not its common terms ("logbook")
                     characters[src] = dst
             names = load(out_dir)
             for n in names["names"]:

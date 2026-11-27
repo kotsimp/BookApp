@@ -2246,8 +2246,9 @@ async def clear_all_jobs(scope: str = "mine"):
                 except Exception:
                     pass
     if TEMP_DIR.exists():
+        from backend.backup import BACKUP_DIR
         for child in TEMP_DIR.iterdir():
-            if child in (UPLOAD_DIR, OUTPUT_DIR):
+            if child in (UPLOAD_DIR, OUTPUT_DIR, BACKUP_DIR):  # a backup being made or downloaded is no job's file
                 continue
             try:
                 if child.is_dir():
@@ -2256,12 +2257,20 @@ async def clear_all_jobs(scope: str = "mine"):
                     child.unlink(missing_ok=True)
             except Exception:
                 pass
+    from backend.database import db_clear_all_jobs, db_get_all_job_ids
+    gone = set(_jobs) | (db_get_all_job_ids() or set())
     _jobs.clear()
     POLISH_STATUS.clear()
     from backend.queue_manager import clear_queue
     clear_queue()
-    from backend.database import db_clear_all_jobs
     db_clear_all_jobs()
+    # the books leave their series, reading positions and the Glossary's suggestions (as purge_job does for one)
+    from backend import glossary_learning, reading_sync, series
+    for forget in (series.forget_books, reading_sync.forget_books, glossary_learning.forget_books):
+        try:
+            forget(gone)
+        except Exception as e:
+            logger.warning(f"Clear all: {forget.__module__} not tidied: {e}")
     return {"status": "cleared", "count": 0}
 
 

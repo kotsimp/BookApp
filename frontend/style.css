@@ -2127,7 +2127,7 @@ body.auth-on:not(.auth-admin) .auth-admin-only { display: none !important; }
 .devices-field { display: block; margin: 0 0 6px; }
 .devices-field > span:first-child { display: block; font-size: 0.76rem; color: var(--text-muted); margin-bottom: 2px; }
 .devices-body input[type="file"] { max-width: 100%; font-size: 0.82rem; margin: 0 0 6px; }
-.result-extras { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 12px; margin-top: 12px; font-size: 0.85rem; }
+.result-extras { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 12px; margin-top: 4px; font-size: 0.85rem; flex-basis: 100%; } /* a line of its own among the buttons */
 .result-extras-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-primary); }
 .result-extras-note { font-size: 0.78rem; color: var(--text-muted); }
 .series-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; font-size: 0.84rem; color: var(--text-secondary); }

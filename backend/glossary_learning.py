@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,9 @@ def _load() -> Dict[str, Any]:
     except FileNotFoundError:
         return {}
     except Exception as e:
-        logger.warning(f"glossary_suggestions.json unreadable, starting empty: {e}")
+        from backend.series import keep_unreadable
+        logger.warning(f"glossary_suggestions.json unreadable, starting empty (a copy is kept as .corrupt): {e}")
+        keep_unreadable(STORE)
         return {}
 
 
@@ -63,6 +65,11 @@ def _mine(data: Dict[str, Any], owner: str) -> Dict[str, Any]:
     for key in ("items", "dismissed"):
         if not isinstance(mine.get(key), dict):
             mine[key] = {}
+    mine["items"] = {k: v for k, v in mine["items"].items() if isinstance(v, dict)}
+    for item in mine["items"].values():
+        if not isinstance(item.get("books"), dict):
+            item["books"] = {}
+    mine["dismissed"] = {k: v for k, v in mine["dismissed"].items() if isinstance(v, str)}
     return mine
 
 
@@ -121,9 +128,10 @@ def add(owner: str, pairs: Iterable[Tuple[str, str, str]], job_id: str, title: s
     return changed
 
 
-def listing(owner: str) -> List[Dict[str, Any]]:
+def listing(owner: str, alive: Optional[Callable[[str], bool]] = None) -> List[Dict[str, Any]]:
     """The suggestions, the user's corrections first, then those of more books, newest first; each says whether
-    the Glossary writes it another way and whether it is also an ordinary word."""
+    the Glossary writes it another way and whether it is also an ordinary word. `alive(job_id)`: whether a book still
+    exists; one only from books that are gone is left out."""
     glossary = _glossary_lookup()
     with _lock:
         data = _load()
@@ -134,6 +142,9 @@ def listing(owner: str) -> List[Dict[str, Any]]:
             known = glossary.get(key)
             if known and known[1].casefold() == str(item.get("target", "")).casefold():
                 stale.append(key)
+                continue
+            books = item.get("books") or {}
+            if alive is not None and books and not any(alive(j) for j in books):
                 continue
             out.append({"source": item.get("source", ""), "target": item.get("target", ""),
                         "origin": item.get("origin") or "translation",
@@ -153,10 +164,12 @@ def safe_to_accept(item: Dict[str, Any]) -> bool:
     return not item.get("glossary") and not item.get("ordinary_word")
 
 
-def accept(owner: str, sources: Optional[List[str]]) -> List[Tuple[str, str]]:
-    """Puts the chosen suggestions (all safe ones when `sources` is None) in the Glossary; returns them."""
+def accept(owner: str, sources: Optional[List[str]],
+           alive: Optional[Callable[[str], bool]] = None) -> List[Tuple[str, str]]:
+    """Puts the chosen suggestions (all safe ones when `sources` is None) in the Glossary; returns them. Only those
+    `listing` shows: "accept all" never takes one the user cannot see."""
     from backend.glossary import set_term
-    chosen = listing(owner)
+    chosen = listing(owner, alive)
     if sources is None:
         chosen = [s for s in chosen if safe_to_accept(s)]
     else:
@@ -193,7 +206,13 @@ def dismiss(owner: str, sources: List[str]) -> int:
 
 
 def forget_book(job_id: str) -> None:
-    """A deleted book is no longer named as a suggestion's source (a suggestion of no other book goes)."""
+    forget_books({job_id})
+
+
+def forget_books(job_ids) -> None:
+    """Deleted books are no longer named as a suggestion's source; a suggestion of no other book goes (a correction
+    the user made stays: it is theirs)."""
+    gone = set(job_ids)
     with _lock:
         data = _load()
         changed = False
@@ -203,8 +222,9 @@ def forget_book(job_id: str) -> None:
                 continue
             for key in list(items):
                 books = items[key].get("books") or {}
-                if job_id in books:
-                    books.pop(job_id)
+                if gone & set(books):
+                    for jid in gone & set(books):
+                        books.pop(jid)
                     changed = True
                     if not books and items[key].get("origin") != "edit":
                         del items[key]

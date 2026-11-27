@@ -35,6 +35,7 @@ FORMAT = "bookapp-backup"
 VERSION = 1
 KEEP_SECONDS = 24 * 3600
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_ENTRIES = 200_000  # a ZIP of millions of tiny entries is no backup of books
 DISK_MARGIN = 200 * 1024 * 1024
 MAX_RESTORE_BYTES = int(float(os.environ.get("BOOKAPP_MAX_RESTORE_GB", "50")) * 1024 ** 3)
 AUDIO_SUFFIXES = {".mp3", ".m4b", ".m4a", ".wav", ".ogg", ".opus", ".aac"}
@@ -234,6 +235,8 @@ def _safe_parts(parts: List[str]) -> bool:
 def _members(z: zipfile.ZipFile) -> Dict[str, List[Tuple[zipfile.ZipInfo, str, List[str]]]]:
     """{old job id: [(entry, "upload"|"output", path parts)]}; any other entry makes the file unusable."""
     by_job: Dict[str, List[Tuple[zipfile.ZipInfo, str, List[str]]]] = {}
+    if len(z.infolist()) > MAX_ENTRIES:
+        raise BackupError(f"Το αρχείο έχει πάρα πολλά αρχεία (πάνω από {MAX_ENTRIES}).")
     for info in z.infolist():
         name = info.filename
         if name == MANIFEST or name.endswith("/"):
@@ -270,6 +273,47 @@ def _text(value: Any, limit: int = 500) -> str:
     return str(value if value is not None else "")[:limit]
 
 
+# A backup is untrusted: its values become file names and choices of the app, so only safe ones are taken
+_LANG_RE = re.compile(r"[a-z][a-z-]{0,19}")
+FILE_TYPES = {"pdf", "docx", "doc", "epub", "cbz", "cbr", "zip", "txt"}
+OUTPUT_FORMATS = {"txt", "docx", "doc", "pdf", "epub", "cbz", "cbr", "mp3", "m4b"}
+LAYOUTS = {"standard", "literature", "poetry", "comic", "graphic_novel"}
+MODES = {"", "translate", "audiobook"}
+STATUSES = {"idle", "done", "error", "cancelled"}
+
+
+def _file_name(value: Any) -> str:
+    """As an upload's name is cleaned: one name, no folders, no characters a disk refuses, no reserved name."""
+    raw = _text(value, 300).replace("\\", "/").split("/")[-1]
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip(" .") or "document"
+    if Path(cleaned).stem.upper() in _RESERVED:
+        cleaned = f"file_{cleaned}"
+    return cleaned
+
+
+def _choice(value: Any, allowed: set, default):
+    v = _text(value, 40).strip().lower()
+    return v if v in allowed else default
+
+
+def _language(value: Any, default: str) -> str:
+    v = _text(value, 40).strip().lower()
+    return v if _LANG_RE.fullmatch(v) else default
+
+
+def _plain_options(value: Any) -> Optional[Dict[str, Any]]:
+    """Audiobook settings kept only as plain values (they fill the form again)."""
+    if not isinstance(value, dict):
+        return None
+    out = {}
+    for k, v in list(value.items())[:40]:
+        if isinstance(k, str) and len(k) <= 40 and (isinstance(v, (bool, int, float)) or v is None):
+            out[k] = v
+        elif isinstance(k, str) and len(k) <= 40 and isinstance(v, str):
+            out[k] = v[:200]
+    return out
+
+
 def _number(value: Any, kind=int, default=0):
     try:
         return kind(value)
@@ -281,32 +325,36 @@ def _record(raw: Dict[str, Any], job_id: str, owner: str, file_path: str, output
     """A job record from a backup's, with its new id, owner and paths; every value of the right type."""
     from backend.job_manager import _job_from_db_row, _job_to_db_dict
     meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-    status = _text(raw.get("status"), 20) or "idle"
+    status = _text(raw.get("status"), 20).lower()
     step = _text(raw.get("current_step"), 1000)
-    if status in ("running", "queued"):
+    if status not in STATUSES:  # running or queued in the backup (or anything else): not running here
         status, step = "idle", "Restored from a backup"
+    file_name = _file_name(raw.get("file_name"))
     clean_meta = {
-        "source_lang": _text(meta.get("source_lang"), 20) or "english",
-        "target_lang": _text(meta.get("target_lang"), 20) or "greek",
+        "source_lang": _language(meta.get("source_lang"), "english"),
+        "target_lang": _language(meta.get("target_lang"), "greek"),
         "reading_direction": "rtl" if meta.get("reading_direction") == "rtl" else "ltr",
         "quota_behavior": "fallback" if meta.get("quota_behavior") == "fallback" else "wait",
         "total_pages": _number(meta.get("total_pages")), "done_pages": _number(meta.get("done_pages")),
         "sample_range": meta.get("sample_range"),
         **{k: bool(meta.get(k)) for k in ("ai_polish", "max_quality", "scanned", "read_scanned_text")},
         **{k: meta.get(k) if isinstance(meta.get(k), dict) else None
-           for k in ("refinement_report", "revision_report", "gemini_usage", "audiobook_options")},
+           for k in ("refinement_report", "revision_report", "gemini_usage")},
+        "audiobook_options": _plain_options(meta.get("audiobook_options")),
         "final_refinement": meta.get("final_refinement") if isinstance(meta.get("final_refinement"), bool) else None,
         "owner": owner or "",
     }
     row = {
-        "job_id": job_id, "file_path": file_path, "file_name": _text(raw.get("file_name"), 300),
-        "file_type": _text(raw.get("file_type"), 10).lower(), "status": status, "mode": _text(raw.get("mode"), 20),
+        "job_id": job_id, "file_path": file_path, "file_name": file_name,
+        "file_type": _choice(raw.get("file_type"), FILE_TYPES, _choice(Path(file_name).suffix.lstrip("."), FILE_TYPES, "")),
+        "status": status, "mode": _choice(raw.get("mode"), MODES, ""),
         "progress": max(0, min(100, _number(raw.get("progress")))), "current_step": step,
         "total_chunks": _number(raw.get("total_chunks")), "done_chunks": _number(raw.get("done_chunks")),
         "created_at": _number(raw.get("created_at"), float, time.time()),
         "updated_at": _number(raw.get("updated_at"), float, time.time()),
-        "output_path": output_path, "output_format": _text(raw.get("output_format"), 10) or None,
-        "layout_mode": _text(raw.get("layout_mode"), 20) or "standard", "error": raw.get("error") and _text(raw["error"], 2000),
+        "output_path": output_path, "output_format": _choice(raw.get("output_format"), OUTPUT_FORMATS, None),
+        "layout_mode": _choice(raw.get("layout_mode"), LAYOUTS, "standard"),
+        "error": _text(raw["error"], 2000) if raw.get("error") else None,
         "metadata_json": json.dumps(clean_meta),
     }
     job = _job_from_db_row(row)

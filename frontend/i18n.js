@@ -1466,7 +1466,9 @@ const I18N = (() => {
     if (!found) return null;
     const out = render(found, lang);
     if (!notes) memory.set(owner, (notes = {}));
-    notes[slot] = { key: norm(out), pair: found.pair, vars: found.vars };
+    // a text of several known sentences has its parts, not one pair: without them the next switch failed and left
+    // the rest of the page in the other language
+    notes[slot] = { key: norm(out), pair: found.pair, vars: found.vars, parts: found.parts };
     return out;
   }
 

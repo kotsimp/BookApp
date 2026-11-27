@@ -157,6 +157,11 @@ class NamesTests(_TempStores):
         found = dict(book_names.names_used(noisy, orig, tr, "greek"))
         for phrase in ("In the cold rain", "and nobody said a word", "lantern", "old"):
             self.assertNotIn(phrase, found)
+        # ...and objects it wrote with a capital: the translation writes them without one
+        objects = "- Lantern -> φανάρι\n- Logbook -> ημερολόγιο πλοίου\n- Captain Hale -> καπετάνιος Χέιλ\n"
+        kept = dict(book_names.names_used(objects, "The Lantern, the Logbook, Captain Hale.",
+                                          "Το φανάρι, το ημερολόγιο πλοίου, ο καπετάνιος Χέιλ.", "greek"))
+        self.assertEqual(kept, {"Captain Hale": "καπετάνιος Χέιλ"}, "a title may lose its capital")
         self.assertEqual((found["the Weave"], found["Isle of Skye"]), ("η Ύφανση", "Νήσος Σκάι"), "small words allowed")
         # a translation into English: the register runs Greek -> English
         found = book_names.names_used("- Νίκος -> Nikos (male)\n- Ελένη -> Eleni", "Ο Νίκος και η Ελένη.",
@@ -256,6 +261,20 @@ class GlossaryLearningTests(_TempStores):
         items = {s["source"]: s for s in glossary_learning.listing("u1")}
         self.assertNotIn("Keeton", items)
         self.assertEqual(items["Bates"]["books"], [{"job_id": "j2", "title": "Two"}])
+
+    def test_suggestions_of_books_that_are_gone(self):
+        glossary_learning.add("u1", [("Keeton", "Κίτον", "translation")], "gone-1", "Gone")
+        glossary_learning.add("u1", [("Bates", "Μπέιτς", "translation")], "here-1", "Here")
+        alive = lambda jid: jid == "here-1"  # noqa: E731
+        self.assertEqual([s["source"] for s in glossary_learning.listing("u1", alive)], ["Bates"])
+        self.assertEqual(glossary_learning.accept("u1", None, alive), [("Bates", "Μπέιτς")],
+                         "accept all never takes one the window does not show")
+        self.assertNotIn("Keeton", glossary.load_glossary(category="all"))
+        glossary_learning.add("u1", [("Amanda", "Αμάντα", "edit")], "gone-2", "Gone too")
+        glossary_learning.forget_books({"gone-1", "gone-2"})
+        left = {s["source"]: s for s in glossary_learning.listing("u1")}
+        self.assertNotIn("Keeton", left, "a translation's name of a deleted book goes")
+        self.assertEqual(left["Amanda"]["books"], [], "the user's own correction stays")
 
     def test_a_comic_offers_names_as_prose_writes_them(self):
         out = self.dir / "comic"
@@ -409,6 +428,69 @@ class CharactersPageTests(_TempStores):
         with self.assertRaises(ValueError):
             epub_extras.add_page(made, self.dir / "twice.epub", "x", "Πρόσωπα")
 
+    def test_an_epub_2_book_gets_an_epub_2_page(self):
+        """A format-preserved book keeps its own EPUB: an EPUB 2 one (OEBPS folder, NCX only, as Calibre or Sigil make
+        them) gets an XHTML 1.1 page, which older readers expect."""
+        src = self.dir / "old.epub"
+        opf = ('<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+               'unique-identifier="id"><metadata/><manifest>'
+               '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+               "<item id='titlepage' href='Text/titlepage.xhtml' media-type='application/xhtml+xml'/>"
+               '<item id="c1" href="Text/chapter1.xhtml" media-type="application/xhtml+xml"/>'
+               '</manifest><spine toc="ncx"><itemref idref="titlepage"/><itemref idref="c1"/></spine></package>')
+        ncx = ('<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><navMap>'
+               '<navPoint id="n1" playOrder="1"><navLabel><text>Κεφάλαιο 1</text></navLabel>'
+               '<content src="Text/chapter1.xhtml"/></navPoint></navMap></ncx>')
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip")
+            z.writestr("META-INF/container.xml", '<?xml version="1.0"?><container version="1.0" '
+                       'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile '
+                       'full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", ncx)
+            z.writestr("OEBPS/Text/titlepage.xhtml", "<html/>")
+            z.writestr("OEBPS/Text/chapter1.xhtml", "<html/>")
+        rows = [{"name": "Κίτον", "original": "Keeton", "about": "Ο αφηγητής."}]
+        made = epub_extras.add_page(src, self.dir / "old_copy.epub",
+                                    lambda epub3: epub_extras.page_xhtml("greek", rows, [], epub3), "Πρόσωπα")
+        with zipfile.ZipFile(made) as z:
+            page = z.read("OEBPS/" + epub_extras.PAGE_FILE).decode()
+            opf2 = z.read("OEBPS/content.opf").decode()
+            ncx2 = z.read("OEBPS/toc.ncx").decode()
+        self.assertIn("XHTML 1.1", page)
+        self.assertNotIn("epub:type", page)
+        ET.fromstring(page.split("\n", 2)[2])
+        self.assertEqual(re.findall(r'idref="([^"]+)"', opf2), ["titlepage", epub_extras.PAGE_ID, "c1"],
+                         "after the title page (single-quoted attributes too)")
+        self.assertIn(f'<content src="{epub_extras.PAGE_FILE}"/>', ncx2, "the NCX's own folder is the page's")
+        self.assertIn('playOrder="2"', ncx2, "chapter 1 comes second now")
+
+    def test_an_opf_with_prefixed_elements(self):
+        """Older tools write <opf:package>, <opf:item>: the page's entries take the prefix (an unprefixed one would be
+        in no namespace, and the OPF invalid); hrefs written URL-encoded still find the NCX."""
+        src = self.dir / "prefixed.epub"
+        opf = ('<?xml version="1.0"?><opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0">'
+               '<opf:metadata/><opf:manifest><opf:item id="ncx" href="toc%20file.ncx" '
+               'media-type="application/x-dtbncx+xml"/><opf:item id="ch" href="ch.xhtml" '
+               'media-type="application/xhtml+xml"/></opf:manifest><opf:spine toc="ncx"><opf:itemref idref="ch"/>'
+               "</opf:spine></opf:package>")
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip")
+            z.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles>'
+                       "</container>")
+            z.writestr("content.opf", opf)
+            z.writestr("toc file.ncx", '<ncx><navMap><navPoint id="a" playOrder="1"/></navMap></ncx>')
+            z.writestr("ch.xhtml", "<html/>")
+        made = epub_extras.add_page(src, self.dir / "prefixed_copy.epub", "<html/>", "Πρόσωπα")
+        with zipfile.ZipFile(made) as z:
+            new_opf = z.read("content.opf").decode()
+            ncx = z.read("toc file.ncx").decode()
+        root = ET.fromstring(new_opf)
+        ns = "{http://www.idpf.org/2007/opf}"
+        self.assertIn(epub_extras.PAGE_ID, [i.get("id") for i in root.iter(f"{ns}item")], "a namespaced item")
+        self.assertEqual([r.get("idref") for r in root.iter(f"{ns}itemref")], [epub_extras.PAGE_ID, "ch"])
+        self.assertIn(epub_extras.PAGE_FILE, ncx, "the URL-encoded NCX was found")
+
     def test_the_translations_spelling_and_the_first_description(self):
         self.assertIsNone(epub_extras.entries(self.out, "greek"), "no 👥 list yet")
         self.record()
@@ -498,6 +580,33 @@ class ReadingSyncTests(_TempStores):
         self.assertEqual(reading_sync.book_positions("u9"), {})
         self.assertIn("job-1", reading_sync.book_positions("u1"))
 
+    def test_damaged_stores_are_kept_and_survived(self):
+        """A store that cannot be read is copied to .corrupt before the next save replaces it; one of the wrong shape
+        (a list where a dict was) is used for what is right in it."""
+        for store in (reading_sync.STORE, series.STORE, glossary_learning.STORE):
+            store.write_text("{not json", encoding="utf-8")
+        self.assertFalse(reading_sync.status("u1")["exists"])
+        self.assertEqual(series.list_series("u1"), [])
+        self.assertEqual(glossary_learning.listing("u1"), [])
+        for store in (reading_sync.STORE, series.STORE, glossary_learning.STORE):
+            self.assertEqual(store.with_name(store.name + ".corrupt").read_text(encoding="utf-8"), "{not json")
+        reading_sync.STORE.write_text(json.dumps({"accounts": [], "files": {"u1": []}, "progress": {"u1": {"d": 5}}}),
+                                      encoding="utf-8")
+        self.assertEqual(reading_sync.book_positions("u1"), {})
+        reading_sync.new_password("u1")
+        series.STORE.write_text(json.dumps({"u1": {"aaaaaaaaaaaa": ["not", "a", "dict"]}, "u2": "x"}), encoding="utf-8")
+        self.assertEqual(series.list_series("u1"), [])
+        self.assertEqual(series.create("u1", "Fresh")["name"], "Fresh")
+        glossary_learning.STORE.write_text(json.dumps({"u1": {"items": {"a": "x", "b": {"source": "B", "target": "Β",
+                                                                                      "books": []}},
+                                                              "dismissed": {"c": 1}}}), encoding="utf-8")
+        self.assertEqual([s["source"] for s in glossary_learning.listing("u1")], ["B"])
+        out = self.dir / "names_book"
+        out.mkdir()
+        (out / book_names.FILE_NAME).write_text("{broken", encoding="utf-8")
+        self.assertEqual(book_names.load(out), {"names": []})
+        self.assertTrue((out / (book_names.FILE_NAME + ".corrupt")).is_file(), "the user's corrections are kept")
+
     def test_the_same_file_for_two_users(self):
         path = self.dir / "shared.epub"
         path.write_bytes(os.urandom(5000))
@@ -572,6 +681,36 @@ class BackupFileTests(unittest.TestCase):
             with self.assertRaises(backup.BackupError) as ctx:
                 self.restore(data)
         self.assertIn("αρκετός χώρος", str(ctx.exception))
+
+    def test_a_crafted_record_cannot_steer_file_paths(self):
+        """A backup is untrusted: its file name and languages become parts of file paths (the healer joins the file
+        name to the uploads folder, a translation's file name holds its target language)."""
+        raw = {"job_id": "x", "file_name": "../../../../etc/passwd", "file_type": "exe", "status": "pwned",
+               "mode": "<script>", "output_format": "sh", "layout_mode": "../x", "error": "<b>bad</b>",
+               "metadata": {"source_lang": "../../en", "target_lang": "greek/../../tmp", "quota_behavior": "boom",
+                            "audiobook_options": {"voice_name": "Athina", "rate": "-10%", "nested": {"x": 1}, "n": 3}}}
+        rec = backup._record(raw, "new-id", "u1", "", None)
+        self.assertEqual(rec["file_name"], "passwd", "one name, no folders")
+        self.assertEqual(backup._record(dict(raw, file_name="..\\..\\CON.pdf"), "i", "u", "", None)["file_name"],
+                         "file_CON.pdf", "backslashes and reserved device names")
+        self.assertEqual(backup._record(dict(raw, file_name=" .. "), "i", "u", "", None)["file_name"], "document")
+        meta = rec["metadata"]
+        self.assertEqual((meta["source_lang"], meta["target_lang"]), ("english", "greek"), "plain words only")
+        self.assertEqual((rec["file_type"], rec["mode"], rec["output_format"], rec["layout_mode"], rec["status"]),
+                         ("", "", None, "standard", "idle"), "only known values")
+        self.assertEqual(meta["quota_behavior"], "wait")
+        self.assertEqual(meta["audiobook_options"], {"voice_name": "Athina", "rate": "-10%", "n": 3}, "plain values")
+        self.assertEqual(backup._record(dict(raw, file_name="Book.EPUB", file_type=None), "i", "u", "", None)["file_type"],
+                         "epub", "the type from the file's own name")
+
+    def test_a_zip_of_too_many_entries(self):
+        jid = str(uuid.uuid4())
+        data = _zip({f"jobs/{jid}/output/{n}.txt": "x" for n in range(30)},
+                    {"format": backup.FORMAT, "version": 1, "jobs": []})
+        with mock.patch.object(backup, "MAX_ENTRIES", 20):
+            with self.assertRaises(backup.BackupError) as ctx:
+                self.restore(data)
+        self.assertIn("πάρα πολλά αρχεία", str(ctx.exception))
 
     def test_a_record_from_a_backup(self):
         raw = {"job_id": "x", "file_name": "Book.pdf", "file_type": "PDF", "status": "running", "progress": "250",
@@ -925,6 +1064,30 @@ const english = (s) => { const t = en(s); assert.notStrictEqual(t, s, 'no Englis
 """
 
 
+class ZClearAllTests(unittest.TestCase):
+    """Last (classes run by name): Clear All empties the sandbox."""
+
+    def test_clear_all_keeps_backups_and_tidies_the_library(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        job_id = opds._translated_job(Path(tmp.name), "library_clear.pdf")
+        sid = _json("POST", f"{API}/series", {"name": "Cleared Saga"})[1]["id"]
+        _json("PUT", f"{API}/jobs/{job_id}/series", {"series_id": sid})
+        glossary_learning.add("", [("Clearwater", "Κλίαργουοτερ", "translation")], job_id, "library_clear")
+        backup.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        ready = backup.BACKUP_DIR / "ready-backup.zip"
+        ready.write_bytes(b"PK")
+        self.assertEqual(_json("DELETE", f"{API}/jobs")[0], 200)
+        self.assertTrue(ready.is_file(), "a backup being made or downloaded stays")
+        ready.unlink()
+        saga = next(s for s in _json("GET", f"{API}/series")[1]["series"] if s["id"] == sid)
+        self.assertEqual(saga["books"], [], "the series stays, without the deleted books")
+        self.assertNotIn("Clearwater", [s["source"] for s in _json("GET", f"{API}/glossary/suggestions")[1]["suggestions"]])
+        stored = json.loads(glossary_learning.STORE.read_text(encoding="utf-8"))
+        self.assertNotIn("clearwater", stored.get("", {}).get("items", {}), "removed, not only hidden")
+        _json("DELETE", f"{API}/series/{sid}")
+
+
 class PageTests(unittest.TestCase):
     def test_the_library_on_the_page(self):
         import shutil
@@ -934,6 +1097,44 @@ class PageTests(unittest.TestCase):
             self.skipTest("Node.js not available in PATH")
         res = subprocess.run([node, "-e", LIBRARY_HARNESS], capture_output=True, text=True, encoding="utf-8",
                              timeout=60)
+        self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
+
+    def test_switching_language_twice_over_joined_messages(self):
+        """A live check in Edge: after a message of several known sentences ("✅ 3 books restored. 1 were already
+        here.") had been switched once, the next language switch threw inside i18n.js and left every later text of
+        the page in the old language. The page's memory of that text lacked its parts."""
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js not available in PATH")
+        harness = r"""
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+const el = (tag) => ({ nodeType: 1, tagName: tag, closest: () => null, matches: () => false });
+const p = el('P');
+const nodes = [
+  { nodeType: 3, data: '✅ Επαναφέρθηκαν 3 βιβλία. 1 υπήρχαν ήδη.', parentElement: p },
+  { nodeType: 3, data: '💾 Αντίγραφο των βιβλίων σας', parentElement: p },
+];
+const root = Object.assign(el('HTML'), { lang: 'el' });
+const ctx = vm.createContext({ console, MutationObserver: class { observe() {} }, CustomEvent: class {},
+  localStorage: { getItem: () => 'el', setItem() {} }, navigator: { language: 'el-GR' },
+  NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
+  document: { documentElement: root, addEventListener() {}, querySelectorAll: () => [], dispatchEvent() {},
+    createTreeWalker: (r) => { let i = -1; return { currentNode: r, nextNode: () => nodes[++i] || null }; } },
+  window: { alert() {}, confirm() { return true; }, prompt() {} } });
+vm.runInContext(fs.readFileSync('frontend/i18n.js', 'utf8') + ';globalThis.I18N = I18N;', ctx);
+ctx.I18N.setLanguage('el', false);
+ctx.I18N.setLanguage('en', false);
+assert.strictEqual(nodes[0].data, '✅ 3 books restored. 1 were already here.');
+assert.strictEqual(nodes[1].data, '💾 A backup of your books', 'the texts after it are switched too');
+ctx.I18N.setLanguage('el', false);
+assert.strictEqual(nodes[0].data, '✅ Επαναφέρθηκαν 3 βιβλία. 1 υπήρχαν ήδη.', 'and back');
+ctx.I18N.setLanguage('en', false);
+assert.strictEqual(nodes[1].data, '💾 A backup of your books');
+process.stdout.write('OK');
+"""
+        res = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(res.stdout.strip(), "OK", res.stdout + res.stderr)
 
     def test_the_page_holds_the_controls(self):

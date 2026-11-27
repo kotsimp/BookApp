@@ -247,9 +247,8 @@ class SuggestionsRequest(BaseModel):
 @router.get("/api/glossary/suggestions")
 async def glossary_suggestions():
     from backend import glossary_learning
-    items = await asyncio.to_thread(glossary_learning.listing, _owner())
-    visible = [s for s in items if not s["books"] or any(_alive(b["job_id"]) for b in s["books"])]
-    return {"suggestions": visible, "safe": sum(1 for s in visible if glossary_learning.safe_to_accept(s))}
+    items = await asyncio.to_thread(glossary_learning.listing, _owner(), _alive)
+    return {"suggestions": items, "safe": sum(1 for s in items if glossary_learning.safe_to_accept(s))}
 
 
 @router.post("/api/glossary/suggestions/accept")
@@ -257,7 +256,7 @@ async def glossary_suggestions_accept(req: SuggestionsRequest):
     from backend import glossary_learning
     if not req.all and not req.sources:
         raise HTTPException(400, "Choose the suggestions to add.")
-    added = await asyncio.to_thread(glossary_learning.accept, _owner(), None if req.all else req.sources)
+    added = await asyncio.to_thread(glossary_learning.accept, _owner(), None if req.all else req.sources, _alive)
     return {"added": len(added), "terms": [{"source": s, "target": t} for s, t in added]}
 
 

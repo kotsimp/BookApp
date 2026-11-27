@@ -44,12 +44,18 @@ def _load() -> Dict[str, Any]:
     except FileNotFoundError:
         data = {}
     except Exception as e:
-        logger.warning(f"reading_sync.json unreadable, starting empty: {e}")
+        from backend.series import keep_unreadable
+        logger.warning(f"reading_sync.json unreadable, starting empty (a copy is kept as .corrupt): {e}")
+        keep_unreadable(STORE)
         data = {}
     for key in ("accounts", "files", "progress"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
-    data["files"] = {o: f for o, f in data["files"].items() if isinstance(f, dict) and "job_id" not in f}
+    data["accounts"] = {o: a for o, a in data["accounts"].items() if isinstance(a, dict)}
+    data["files"] = {o: {k: v for k, v in f.items() if isinstance(v, dict)}
+                     for o, f in data["files"].items() if isinstance(f, dict) and "job_id" not in f}
+    data["progress"] = {o: {k: v for k, v in p.items() if isinstance(v, dict)}
+                        for o, p in data["progress"].items() if isinstance(p, dict)}
     return data
 
 
@@ -120,11 +126,17 @@ def note_file(owner: str, job_id: str, kind: str, path: Path, *names: str) -> No
 
 
 def forget_book(job_id: str) -> None:
+    forget_books({job_id})
+
+
+def forget_books(job_ids) -> None:
+    """Deleted books: their files no longer name a book (the positions stay with the apps' own fingerprints)."""
+    gone = set(job_ids)
     with _lock:
         data = _load()
         changed = False
         for files in data["files"].values():
-            for k in [k for k, v in files.items() if v.get("job_id") == job_id]:
+            for k in [k for k, v in files.items() if v.get("job_id") in gone]:
                 del files[k]
                 changed = True
         if changed:

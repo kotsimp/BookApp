@@ -18,7 +18,8 @@ import re
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,9 @@ def entries(out_dir: Path, target_lang: str) -> Optional[Tuple[str, List[Dict[st
     return (lang, people, terms) if people or terms else None
 
 
-def page_xhtml(lang: str, people: List[Dict[str, str]], terms: List[Dict[str, str]]) -> str:
+def page_xhtml(lang: str, people: List[Dict[str, str]], terms: List[Dict[str, str]], epub3: bool = True) -> str:
+    """The page as XHTML for the book's EPUB version: an EPUB 2 book (many format-preserved ones) gets XHTML 1.1, which
+    older readers (Adobe's, on many e-readers) expect, without the EPUB 3 section and its namespace."""
     t = TEXTS[lang]
     code = "el" if lang == "greek" else "en"
     esc = html.escape
@@ -114,14 +117,23 @@ def page_xhtml(lang: str, people: List[Dict[str, str]], terms: List[Dict[str, st
         return f"<h2>{esc(title)}</h2>\n<dl>\n" + "\n".join(items) + "\n</dl>"
 
     body = "\n".join(b for b in (block(t["people"], people), block(t["terms"], terms)) if b)
+    style = ('<style type="text/css">dt{font-weight:bold;margin-top:0.8em}dd{margin:0.2em 0 0 1.2em}'
+             ".orig{font-weight:normal;font-style:italic}.note{font-size:0.85em;font-style:italic}</style>\n")
+    content = f'<h1>{esc(t["title"])}</h1>\n<p class="note">{esc(t["note"])}</p>\n{body}\n'
+    if epub3:
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n'
+            f'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="{code}" '
+            f'xml:lang="{code}">\n<head>\n<meta charset="utf-8"/>\n<title>{esc(t["title"])}</title>\n{style}</head>\n'
+            f'<body>\n<section epub:type="dramatis-personae">\n{content}</section>\n</body>\n</html>\n'
+        )
     return (
-        '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n'
-        f'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="{code}" '
-        f'xml:lang="{code}">\n<head>\n<meta charset="utf-8"/>\n<title>{esc(t["title"])}</title>\n'
-        "<style>dt{font-weight:bold;margin-top:0.8em}dd{margin:0.2em 0 0 1.2em}.orig{font-weight:normal;"
-        "font-style:italic}.note{font-size:0.85em;font-style:italic}</style>\n</head>\n"
-        f'<body>\n<section epub:type="dramatis-personae">\n<h1>{esc(t["title"])}</h1>\n'
-        f'<p class="note">{esc(t["note"])}</p>\n{body}\n</section>\n</body>\n</html>\n'
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n'
+        f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{code}">\n<head>\n'
+        '<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=utf-8"/>\n'
+        f'<title>{esc(t["title"])}</title>\n{style}</head>\n<body>\n<div class="dramatis-personae">\n'
+        f'{content}</div>\n</body>\n</html>\n'
     )
 
 
@@ -159,8 +171,9 @@ def _with_toc_entry_ncx(ncx: str, href: str, title: str) -> str:
     return ncx[: m.end()] + point + ncx[m.end():]
 
 
-def add_page(src: Path, dest: Path, xhtml: str, title: str) -> Path:
-    """A copy of the EPUB `src` with the page after its cover and contents, in its spine and table of contents."""
+def add_page(src: Path, dest: Path, page: Union[str, Callable[[bool], str]], title: str) -> Path:
+    """A copy of the EPUB `src` with the page after its cover and contents, in its spine and table of contents.
+    `page`: its XHTML, or a function giving it for the book's version (True: EPUB 3)."""
     with zipfile.ZipFile(src) as zin:
         names = zin.namelist()
         container = zin.read("META-INF/container.xml").decode("utf-8", "replace")
@@ -168,22 +181,28 @@ def add_page(src: Path, dest: Path, xhtml: str, title: str) -> Path:
         opf = zin.read(opf_path).decode("utf-8")
         if f'id="{PAGE_ID}"' in opf:
             raise ValueError("the EPUB already has the page")
+        package = re.search(r"<(?:\w+:)?package\b[^>]*>", opf)
+        epub3 = not (package and _attr(package.group(0), "version").startswith("2"))
+        xhtml = page(epub3) if callable(page) else page
         opf_dir = posixpath.dirname(opf_path)
         page_path = posixpath.join(opf_dir, PAGE_FILE) if opf_dir else PAGE_FILE
+        # an OPF may write its elements with a prefix (<opf:item>): the page's entries take the same one
+        found_manifest = re.search(r"<(\w+:)?manifest\b", opf)
+        prefix = (found_manifest.group(1) or "") if found_manifest else ""
         manifest = {}
         nav_path = ncx_path = ""
-        for tag in re.findall(r"<item\b[^>]*>", opf):
-            item_id, href = _attr(tag, "id"), _attr(tag, "href")
+        for tag in re.findall(r"<(?:\w+:)?item\b[^>]*>", opf):
+            item_id, href = _attr(tag, "id"), unquote(_attr(tag, "href"))
             full = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else posixpath.normpath(href)
             manifest[item_id] = href
             if "nav" in _attr(tag, "properties").split():
                 nav_path = full
             if _attr(tag, "media-type") == "application/x-dtbncx+xml":
                 ncx_path = full
-        item = f'<item id="{PAGE_ID}" href="{PAGE_FILE}" media-type="application/xhtml+xml"/>'
+        item = f'<{prefix}item id="{PAGE_ID}" href="{PAGE_FILE}" media-type="application/xhtml+xml"/>'
         opf = re.sub(r"</(\w+:)?manifest>", lambda m: item + m.group(0), opf, count=1)
         # after the cover, title page and contents at the start of the spine: before the book's first chapter
-        refs = list(re.finditer(r"<itemref\b[^>]*>", opf))
+        refs = list(re.finditer(r"<(?:\w+:)?itemref\b[^>]*>", opf))
         at = None
         for ref in refs:
             idref = _attr(ref.group(0), "idref")
@@ -191,7 +210,7 @@ def add_page(src: Path, dest: Path, xhtml: str, title: str) -> Path:
                 continue
             at = ref.start()
             break
-        itemref = f'<itemref idref="{PAGE_ID}"/>'
+        itemref = f'<{prefix}itemref idref="{PAGE_ID}"/>'
         if at is not None:
             opf = opf[:at] + itemref + opf[at:]
         else:
@@ -237,7 +256,7 @@ def served_epub(out_dir: Path, epub: Path, target_lang: str) -> Path:
     if dest.is_file() and dest.stat().st_mtime >= newest:
         return dest
     try:
-        return add_page(epub, dest, page_xhtml(lang, people, terms), TEXTS[lang]["title"])
+        return add_page(epub, dest, lambda epub3: page_xhtml(lang, people, terms, epub3), TEXTS[lang]["title"])
     except Exception as e:  # a book whose EPUB cannot take the page is still handed out
         logger.warning(f"Characters page not added to {epub.name}: {e}")
         return epub

@@ -131,6 +131,15 @@ def name_like(text: str) -> bool:
     return bool(significant) and len(words) <= 6 and all(w[:1].isupper() for w in significant)
 
 
+def rendered_as_name(text: str) -> bool:
+    """The translation writes it as a name: its last word and at least half of its words with a capital. A common
+    noun the register wrote with a capital ("Lantern") is translated without one ("φανάρι"); a title may lose its
+    capital ("καπετάνιος Ντόραν Χέιλ")."""
+    words = [w for w in _WORD_RE.findall(text or "") if w.lower() not in _CONNECTORS]
+    capitals = sum(1 for w in words if w[:1].isupper())
+    return bool(words) and words[-1][:1].isupper() and capitals * 2 >= len(words)
+
+
 def _script_fits(src: str, dst: str, target_greek: bool) -> bool:
     """English -> Greek in a translation into Greek, Greek -> English in one into English."""
     if target_greek:
@@ -159,7 +168,8 @@ def names_used(dossier: str, original: str, translated: str, target_lang: str) -
     dst_keys = text_keys(translated)
     found = []
     for src, dst in parse_dossier(dossier):
-        if not _script_fits(src, dst, greek) or not name_like(src) or dst.endswith(("-", "‐")):
+        if (not _script_fits(src, dst, greek) or not name_like(src) or not rendered_as_name(dst)
+                or dst.endswith(("-", "‐"))):
             continue
         if src_keys is not None and not occurs(src, src_keys):
             continue
@@ -176,7 +186,11 @@ def load(out_dir: Path) -> Dict:
     p = Path(out_dir) / FILE_NAME
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"names": []}
     except (OSError, ValueError):
+        from backend.series import keep_unreadable
+        keep_unreadable(p)  # it holds the user's corrections: kept before the next save replaces it
         return {"names": []}
     if not isinstance(data, dict) or not isinstance(data.get("names"), list):
         return {"names": []}
