@@ -1223,6 +1223,8 @@ const I18N_PAIRS = [
   ['Υπάρχει κωδικός από {d}. Τελευταίος συγχρονισμός: {t}.', 'A password exists since {d}. Last sync: {t}.'],
   ['Υπάρχει κωδικός από {d}. Καμία θέση δεν έχει σταλεί ακόμη.', 'A password exists since {d}. No position has been sent yet.'],
   ['Δεν υπάρχει κωδικός συγχρονισμού ακόμη.', 'There is no sync password yet.'],
+  ['Ανοίξατε τη σελίδα ως localhost: στο KOReader βάλτε τη διεύθυνση του διακομιστή στο δίκτυο (π.χ. 192.168.1.10) στη θέση του localhost, με /kosync στο τέλος.',
+    'You opened the page as localhost: in KOReader, put the server\'s network address (e.g. 192.168.1.10) in place of localhost, with /kosync at the end.'],
   ['Ο τωρινός κωδικός θα σταματήσει να λειτουργεί. Να φτιαχτεί νέος;', 'The current password will stop working. Make a new one?'],
   ['✅ Νέος κωδικός. Αντιγράψτε τον τώρα: δεν θα ξαναφανεί.', '✅ New password. Copy it now: it will not show again.'],
   ['Χωρίς λογαριασμούς χρηστών, το όνομα χρήστη μπορεί να είναι οποιοδήποτε.', 'Without user accounts, the user name can be any name.'],

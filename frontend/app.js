@@ -4464,8 +4464,11 @@ async function openDevicesModal() {
   const linkBox = document.getElementById('opds-link-box');
   if (linkBox) linkBox.style.display = 'none';
   const host = (window.location && window.location.hostname) || '';
-  const localNote = document.getElementById('opds-localhost-note');
-  if (localNote) localNote.style.display = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host) ? '' : 'none';
+  const onLocalhost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
+  for (const id of ['opds-localhost-note', 'sync-localhost-note']) {  // a reading device cannot reach "localhost"
+    const note = document.getElementById(id);
+    if (note) note.style.display = onLocalhost ? '' : 'none';
+  }
   try {
     const res = await fetch(`${API}/connections`);
     if (!res.ok) throw new Error(await parseApiError(res, 'Failed to load the devices settings'));

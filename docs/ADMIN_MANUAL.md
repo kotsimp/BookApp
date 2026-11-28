@@ -182,7 +182,7 @@ The application implements an asynchronous, event-driven API architecture:
   * `translate.googleapis.com:443` (HTTPS) for translation services.
   * `*.speech.microsoft.com:443` (WSS / HTTPS) for Microsoft Edge neural voice synthesis.
   * `generativelanguage.googleapis.com:443` (HTTPS) when using Google Gemini API keys.
-* **E-readers:** reading apps open the OPDS catalogue on the same port as the browser (`/opds/<token>/`), and KOReader / Readest sync their reading positions at `/kosync`; behind a reverse proxy nothing extra is needed for either (Readest in a web browser needs HTTPS).
+* **E-readers:** reading apps open the OPDS catalogue on the same port as the browser (`/opds/<token>/`), and KOReader / Readest sync their reading positions at `/kosync`; behind a reverse proxy nothing extra is needed for either (Readest in a web browser needs HTTPS). The address users enter in KOReader is the one they open BookApp with plus `/kosync`: `http://<server IP>:<BOOKAPP_PORT>/kosync` (the IP from `hostname -I` on Ubuntu or **Control Panel → Network** on a Synology; the port from `.env` or `docker ps`, e.g. `0.0.0.0:2000->8000`), or `https://<domain>/kosync` behind a proxy. **📲 Συσκευές** shows it (from the page's own address) when the password is made, and warns when the page was opened as `localhost`.
 
 ### Configuration & Security Notes
 * **Environment variables:**

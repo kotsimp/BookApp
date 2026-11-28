@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <link rel="stylesheet" href="style.css?v=2.21.0" />
-  <script src="i18n.js?v=1.13.0"></script>
+  <script src="i18n.js?v=1.14.0"></script>
   <script src="theme.js?v=1.0.0"></script>
   <!-- App icon: SVG for Chrome/Firefox/Edge, PNG/ICO for Safari, apple-touch-icon for the iPhone/iPad home screen -->
   <link rel="icon" href="favicon.ico" sizes="48x48" />
@@ -1620,6 +1620,7 @@
           </label>
         </div>
         <div class="devices-status" id="sync-status" aria-live="polite"></div>
+        <p class="devices-note" id="sync-localhost-note" style="display:none">Ανοίξατε τη σελίδα ως localhost: στο KOReader βάλτε τη διεύθυνση του διακομιστή στο δίκτυο (π.χ. 192.168.1.10) στη θέση του localhost, με /kosync στο τέλος.</p>
         <p class="devices-note">KOReader: <code>Tools → Progress sync → Custom sync server</code>, μετά <code>Login</code>. Readest: <code>KOReader Sync</code> στις ρυθμίσεις του. Βάλτε τη διεύθυνση, το όνομα χρήστη και τον κωδικό που φαίνονται εδώ.</p>
         <p class="devices-note">Αναγνωρίζονται τα βιβλία που κατεβάσατε από το BookApp (με λήψη ή από τον κατάλογο). Ο κωδικός φαίνεται μόνο τη στιγμή που φτιάχνεται· ένας νέος σταματά τον παλιό.</p>
         <div class="devices-actions">
@@ -1735,7 +1736,8 @@
         <div class="help-faq">
           <details>
             <summary>Πώς συνεχίζω την ανάγνωση σε άλλη συσκευή;</summary>
-            <p>Στο <strong>📲 Συσκευές</strong> φτιάξτε κωδικό συγχρονισμού. Στο KOReader ανοίξτε το μενού εργαλείων, το <strong>Progress sync</strong>, βάλτε τη διεύθυνση ως δικό σας διακομιστή και συνδεθείτε με το όνομα χρήστη και τον κωδικό. Στο Readest βάλτε τα ίδια στο <strong>KOReader Sync</strong>. Συγχρονίζονται τα βιβλία που κατεβάσατε από το BookApp· η θέση σας φαίνεται στο Ιστορικό (📍) και στη «Η ιστορία ως τώρα».</p>
+            <p>Στο <strong>📲 Συσκευές</strong> φτιάξτε κωδικό συγχρονισμού. Στο KOReader ανοίξτε ένα βιβλίο, το μενού εργαλείων (🔧), το <strong>Progress sync</strong>, βάλτε τη διεύθυνση ως δικό σας διακομιστή και επιλέξτε <strong>Login</strong> με το όνομα χρήστη και τον κωδικό. Στο Readest βάλτε τα ίδια στο <strong>KOReader Sync</strong>. Συγχρονίζονται τα βιβλία που κατεβάσατε από το BookApp· η θέση σας φαίνεται στο Ιστορικό (📍) και στη «Η ιστορία ως τώρα».</p>
+            <p><strong>Ποια διεύθυνση;</strong> Αυτή με την οποία ανοίγετε το BookApp στον browser, με <strong>/kosync</strong> στο τέλος, π.χ. <strong>http://192.168.1.10:8000/kosync</strong>. Το <strong>📲 Συσκευές</strong> τη δείχνει ακριβώς, αν ανοίξετε το BookApp με τη διεύθυνση του διακομιστή (όχι με localhost). Τη διεύθυνση IP του διακομιστή τη βρίσκετε στο Ubuntu με την εντολή <strong>hostname -I</strong> και στο Synology στο <strong>Πίνακας Ελέγχου → Δίκτυο</strong>· η θύρα είναι η 8000 ή όποια ορίσατε ως BOOKAPP_PORT. Με HTTPS: https://το-domain-σας/kosync. Ο διακομιστής πρέπει να έχει την ενημέρωση και η συσκευή ανάγνωσης να τον βλέπει στο δίκτυο.</p>
           </details>
           <details>
             <summary>Χρειάζομαι κλειδί Gemini;</summary>
@@ -1866,7 +1868,8 @@
         <div class="help-faq">
           <details>
             <summary>How do I carry on reading on another device?</summary>
-            <p>In <strong>📲 Devices</strong>, make a sync password. In KOReader open the tools menu, then <strong>Progress sync</strong>, enter the address as a custom sync server and log in with the user name and the password. In Readest enter the same under <strong>KOReader Sync</strong>. The books you downloaded from BookApp are synced; your position shows in Session History (📍) and in «The story so far».</p>
+            <p>In <strong>📲 Devices</strong>, make a sync password. In KOReader open a book, the tools menu (🔧), then <strong>Progress sync → Custom sync server</strong>, enter the address and choose <strong>Login</strong> with the user name and the password. In Readest enter the same under <strong>KOReader Sync</strong>. The books you downloaded from BookApp are synced; your position shows in Session History (📍) and in «The story so far».</p>
+            <p><strong>Which address?</strong> The one you open BookApp with in the browser, with <strong>/kosync</strong> at the end, for example <strong>http://192.168.1.10:8000/kosync</strong>. <strong>📲 Devices</strong> shows it exactly when you open BookApp with the server's address (not localhost). The server's IP address: the command <strong>hostname -I</strong> on Ubuntu, <strong>Control Panel → Network</strong> on a Synology; the port is 8000, or the BOOKAPP_PORT you set. With HTTPS: https://your-domain/kosync. The server must have the update, and the reading device must reach it on the network.</p>
           </details>
           <details>
             <summary>Do I need a Gemini key?</summary>
@@ -2011,7 +2014,7 @@
   <button type="button" class="btn-sm btn-outline" onclick="hideFileReady()" aria-label="Κλείσιμο">✖</button>
 </div>
 
-<script src="app.js?v=2.23.0"></script>
+<script src="app.js?v=2.24.0"></script>
 <script src="insights.js?v=2.17.0"></script>
 <script src="library.js?v=1.0.0"></script>
 <script src="pairing.js?v=2.9.0"></script>
